@@ -5,7 +5,7 @@ A Garmin watch application that **automatically detects when you fall asleep and
 ## How It Works
 
 1. Start the app from your watch menu.
-2. Lie down and relax — the app monitors your heart rate and movement.
+2. Lie down and relax the app monitors your heart rate and movement.
 3. During the first **2 minutes** it calibrates your resting heart-rate baseline.
 4. Once calibration is done it watches for simultaneous:
    - Heart-rate drop (default ≥ 8 BPM below baseline)
@@ -70,7 +70,7 @@ These appear in the Garmin Connect IQ companion app on your phone:
 
 - [Connect IQ SDK 8.x](https://developer.garmin.com/connect-iq/sdk/)
 - Visual Studio Code with the [Monkey C extension](https://marketplace.visualstudio.com/items?itemName=garmin.monkey-c)
-- A developer key (`developer_key.der`) — generate one via the SDK Manager
+- A developer key (`developer_key.der`) generate one via the SDK Manager
 
 ### Build from VS Code
 
@@ -123,7 +123,7 @@ The algorithm intentionally errs on the side of delayed detection (1–2 min lat
 
 - Connect IQ does **not** expose Garmin's native sleep-stage data (REM, light, deep). This app builds its own detection from raw sensor signals.
 - Accelerometer data at 25 Hz increases battery usage. The app uses a 10-second poll interval to balance responsiveness with power consumption.
-- Detection accuracy varies by individual — users with naturally low resting HR or those who stay very still while awake may need to adjust the HR Drop Threshold and Motion Sensitivity settings.
+- Detection accuracy varies by individual, users with naturally low resting HR or those who stay very still while awake may need to adjust the HR Drop Threshold and Motion Sensitivity settings.
 
 ## Privacy
 
