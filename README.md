@@ -1,4 +1,4 @@
-# Power Nap Auto-Wake — Garmin Connect IQ App
+# Power Nap Auto-Wake Garmin Connect IQ App
 
 A Garmin watch application that **automatically detects when you fall asleep and wakes you up** after a configurable nap duration (default 30 minutes). No manual alarm setting required.
 
