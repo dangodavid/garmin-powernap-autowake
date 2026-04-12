@@ -1,0 +1,14 @@
+project.manifest = manifest.xml
+
+# Base source files
+base.sourcePath = source
+
+# Base resources
+base.resourcePath = resources
+
+# String resources
+base.resourcePath = $(base.resourcePath);resources/strings
+base.resourcePath = $(base.resourcePath);resources/drawables
+base.resourcePath = $(base.resourcePath);resources/layouts
+base.resourcePath = $(base.resourcePath);resources/settings
+base.resourcePath = $(base.resourcePath);resources/properties

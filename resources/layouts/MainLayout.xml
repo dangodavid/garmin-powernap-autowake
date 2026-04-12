@@ -1,0 +1,3 @@
+<layout id="MainLayout">
+    <label id="titleLabel" x="center" y="10" font="Graphics.FONT_MEDIUM" justification="Graphics.TEXT_JUSTIFY_CENTER" color="Graphics.COLOR_WHITE" />
+</layout>

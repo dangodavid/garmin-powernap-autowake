@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="5">
+    <iq:application
+        id="com.powernap.autowake"
+        type="watchapp"
+        name="@Strings.AppName"
+        entry="PowerNapApp"
+        launcherIcon="@Drawables.LauncherIcon"
+        minApiLevel="4.0.0">
+
+        <iq:products>
+            <!-- Fenix 8 series -->
+            <iq:product id="fenix8"/>
+            <iq:product id="fenix843mm"/>
+            <iq:product id="fenix847mm"/>
+            <iq:product id="fenix851mm"/>
+            <!-- Fenix 7 Pro series -->
+            <iq:product id="fenix7pro"/>
+            <iq:product id="fenix7xpro"/>
+            <iq:product id="fenix7spro"/>
+            <!-- Forerunner series -->
+            <iq:product id="fr965"/>
+            <iq:product id="fr955"/>
+            <!-- Enduro -->
+            <iq:product id="enduro3"/>
+            <!-- Venu 3 series -->
+            <iq:product id="venu3"/>
+            <iq:product id="venu3s"/>
+            <!-- MARQ Gen 2 -->
+            <iq:product id="marq2"/>
+            <iq:product id="marq2aviator"/>
+            <!-- Tactix -->
+            <iq:product id="tactix8"/>
+        </iq:products>
+
+        <iq:permissions>
+            <iq:uses-permission id="Sensor"/>
+            <iq:uses-permission id="SensorHistory"/>
+            <iq:uses-permission id="Fit"/>
+        </iq:permissions>
+
+        <iq:languages>
+            <iq:language>eng</iq:language>
+            <iq:language>ron</iq:language>
+        </iq:languages>
+    </iq:application>
+</iq:manifest>

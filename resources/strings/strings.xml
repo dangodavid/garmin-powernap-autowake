@@ -1,0 +1,43 @@
+<strings>
+    <!-- App -->
+    <string id="AppName">Power Nap</string>
+
+    <!-- UI States -->
+    <string id="PowerNap">POWER NAP</string>
+    <string id="StatusMonitoring">Monitoring</string>
+    <string id="StatusCalibrating">Calibrating...</string>
+    <string id="WaitingForSleep">Waiting for sleep...</string>
+    <string id="PressToCancel">Press BACK to cancel</string>
+    <string id="NapDetected">NAP DETECTED</string>
+    <string id="FellAsleepAt">Fell asleep at</string>
+    <string id="WakeIn">Wake in:</string>
+    <string id="WakeUp">WAKE UP!</string>
+    <string id="NapLabel">Nap:</string>
+    <string id="AvgHrLabel">Avg HR:</string>
+    <string id="MinHrLabel">Min HR:</string>
+    <string id="VibratingLabel">VIBRATING</string>
+    <string id="PressAnyKey">Press any key to dismiss</string>
+    <string id="NapComplete">NAP COMPLETE</string>
+    <string id="DurationLabel">Duration:</string>
+    <string id="TimeLabel">Time:</string>
+    <string id="PressBackExit">Press BACK to exit</string>
+    <string id="HrBpm">BPM</string>
+    <string id="MinLabel">min</string>
+    <string id="NapDurationLabel">Nap duration:</string>
+    <string id="NoSleepTimeout">No sleep detected.\nPress BACK to exit.</string>
+
+    <!-- Settings titles -->
+    <string id="NapDurationTitle">Nap Duration (min)</string>
+    <string id="AlarmTypeTitle">Alarm Type</string>
+    <string id="HRDropTitle">HR Drop Threshold (BPM)</string>
+    <string id="MotionSensTitle">Motion Sensitivity</string>
+    <string id="AutoSaveTitle">Auto-Save Summary</string>
+
+    <!-- Settings values -->
+    <string id="VibrationOnly">Vibration Only</string>
+    <string id="ToneOnly">Tone Only</string>
+    <string id="VibrationAndTone">Vibration + Tone</string>
+    <string id="Low">Low</string>
+    <string id="Medium">Medium</string>
+    <string id="High">High</string>
+</strings>
