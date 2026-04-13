@@ -1,0 +1,6 @@
+<properties>
+    <property id="napDuration" type="number">30</property>
+    <property id="alarmType" type="number">0</property>
+    <property id="hrDropThreshold" type="number">8</property>
+    <property id="motionSensitivity" type="number">1</property>
+</properties>

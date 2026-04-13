@@ -1,0 +1,7 @@
+project.manifest = manifest.xml
+
+# Source files — test/ is included here but functions annotated with (:test)
+# are stripped automatically by the compiler in non-test builds
+base.sourcePath = source;test
+
+base.resourcePath = resources;resources/strings;resources/drawables;resources/layouts;resources/settings;resources/properties

@@ -1,0 +1,18 @@
+<strings>
+    <!-- App name (referenced by manifest) -->
+    <string id="AppName">Power Nap</string>
+
+    <!-- Companion app settings titles -->
+    <string id="NapDurationTitle">Nap Duration (min)</string>
+    <string id="AlarmTypeTitle">Alarm Type</string>
+    <string id="HRDropTitle">HR Drop Threshold (BPM)</string>
+    <string id="MotionSensTitle">Motion Sensitivity</string>
+
+    <!-- Companion app settings list values -->
+    <string id="VibrationOnly">Vibration Only</string>
+    <string id="ToneOnly">Tone Only</string>
+    <string id="VibrationAndTone">Vibration + Tone</string>
+    <string id="Low">Low</string>
+    <string id="Medium">Medium</string>
+    <string id="High">High</string>
+</strings>

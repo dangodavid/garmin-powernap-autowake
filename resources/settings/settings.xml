@@ -1,0 +1,22 @@
+<settings>
+    <setting propertyKey="@Properties.napDuration" title="@Strings.NapDurationTitle">
+        <settingConfig type="numeric" min="5" max="120" />
+    </setting>
+    <setting propertyKey="@Properties.alarmType" title="@Strings.AlarmTypeTitle">
+        <settingConfig type="list">
+            <listEntry value="0">@Strings.VibrationOnly</listEntry>
+            <listEntry value="1">@Strings.ToneOnly</listEntry>
+            <listEntry value="2">@Strings.VibrationAndTone</listEntry>
+        </settingConfig>
+    </setting>
+    <setting propertyKey="@Properties.hrDropThreshold" title="@Strings.HRDropTitle">
+        <settingConfig type="numeric" min="3" max="20" />
+    </setting>
+    <setting propertyKey="@Properties.motionSensitivity" title="@Strings.MotionSensTitle">
+        <settingConfig type="list">
+            <listEntry value="0">@Strings.Low</listEntry>
+            <listEntry value="1">@Strings.Medium</listEntry>
+            <listEntry value="2">@Strings.High</listEntry>
+        </settingConfig>
+    </setting>
+</settings>
