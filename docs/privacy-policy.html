@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — Power Nap Auto-Wake</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+      color: #1a1a1a;
+      background: #f9f9f9;
+    }
+
+    header {
+      background: #111;
+      color: #fff;
+      padding: 40px 24px 32px;
+      text-align: center;
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    header p {
+      margin-top: 6px;
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+
+    main {
+      max-width: 720px;
+      margin: 48px auto;
+      padding: 0 24px 80px;
+    }
+
+    section {
+      background: #fff;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      padding: 28px 32px;
+      margin-bottom: 20px;
+    }
+
+    h2 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #111;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    p { margin-bottom: 10px; color: #333; }
+    p:last-child { margin-bottom: 0; }
+
+    ul {
+      padding-left: 20px;
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    li { margin-bottom: 4px; }
+
+    .chip {
+      display: inline-block;
+      background: #e8f5e9;
+      color: #2e7d32;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 2px 10px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+    }
+
+    footer {
+      text-align: center;
+      font-size: 0.82rem;
+      color: #999;
+      padding-bottom: 40px;
+    }
+
+    a { color: #1a73e8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Power Nap Auto-Wake</h1>
+  <p>Privacy Policy &mdash; Garmin Connect IQ App</p>
+</header>
+
+<main>
+
+  <section>
+    <span class="chip">No data leaves your watch</span>
+    <h2>Overview</h2>
+    <p>
+      Power Nap Auto-Wake is a Garmin Connect IQ watchapp that detects when you fall
+      asleep and wakes you after a configurable nap duration. This policy explains what
+      sensor data the app accesses, how it is used, and what happens to it.
+    </p>
+    <p>
+      <strong>Short version:</strong> all data is processed on-device, in memory only.
+      Nothing is stored permanently, and nothing is transmitted anywhere.
+    </p>
+  </section>
+
+  <section>
+    <h2>Data Collected</h2>
+    <p>The app reads the following sensor data from your Garmin watch during an active nap session:</p>
+    <ul>
+      <li><strong>Heart rate</strong> &mdash; used to detect sleep onset (resting HR drop) and to compute average and minimum HR for the nap summary.</li>
+      <li><strong>Accelerometer</strong> &mdash; used to detect sustained immobility (a condition for sleep detection) and spontaneous waking.</li>
+    </ul>
+    <p>
+      This data is held in memory for the duration of the nap session only. When the app
+      exits, all sensor data is discarded.
+    </p>
+  </section>
+
+  <section>
+    <h2>Data Storage</h2>
+    <p>
+      The only value persisted between sessions is your chosen nap duration preference
+      (e.g. 30 minutes). This is stored locally on the watch via Garmin's standard
+      application properties mechanism. No health data is saved.
+    </p>
+    <p>
+      The app does not use Garmin's FitContributor API and does not write any records
+      to Garmin Connect activity logs.
+    </p>
+  </section>
+
+  <section>
+    <h2>Data Sharing and Transmission</h2>
+    <p>
+      No data is transmitted outside the watch. The app does not connect to the internet,
+      does not communicate with any server, and does not share data with third parties.
+    </p>
+  </section>
+
+  <section>
+    <h2>Third-Party Services</h2>
+    <p>
+      This app does not integrate with any third-party analytics, advertising, or
+      tracking services.
+    </p>
+  </section>
+
+  <section>
+    <h2>Children's Privacy</h2>
+    <p>
+      This app does not knowingly collect data from children. Because no data is stored
+      or transmitted, there is no special risk to any age group.
+    </p>
+  </section>
+
+  <section>
+    <h2>Changes to This Policy</h2>
+    <p>
+      If the data practices described here ever change, this page will be updated and
+      the "Last updated" date below will reflect the revision.
+    </p>
+  </section>
+
+  <section>
+    <h2>Contact</h2>
+    <p>
+      Questions or concerns about this privacy policy can be raised via the project's
+      GitHub repository:
+      <a href="https://github.com/dangodavid/garmin-powernap-autowake/issues"
+         target="_blank" rel="noopener">
+        github.com/dangodavid/garmin-powernap-autowake/issues
+      </a>
+    </p>
+  </section>
+
+</main>
+
+<footer>
+  <p>Last updated: April 2026 &nbsp;&middot;&nbsp; Power Nap Auto-Wake by David Dango</p>
+</footer>
+
+</body>
+</html>

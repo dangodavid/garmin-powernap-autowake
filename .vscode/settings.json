@@ -1,0 +1,5 @@
+{
+    "monkeyC.developerKeyPath": "/Users/daviddango/developer_key.der",
+    "monkeyC.typeCheckLevel": "Strict",
+    "monkeyC.optimizationLevel": "Basic"
+}

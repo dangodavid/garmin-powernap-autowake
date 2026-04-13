@@ -1,0 +1,5 @@
+# Build artifacts
+bin/
+
+# Developer tool context (local only)
+CLAUDE.md

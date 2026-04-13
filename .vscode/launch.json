@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run on Simulator",
+            "type": "monkeyc",
+            "request": "launch",
+            "device": "fenix8pro47mm",
+            "runTests": false
+        },
+        {
+            "name": "Run Unit Tests",
+            "type": "monkeyc",
+            "request": "launch",
+            "device": "fenix8pro47mm",
+            "runTests": true
+        }
+    ]
+}
