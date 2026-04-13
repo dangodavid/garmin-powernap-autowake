@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="5">
-    <iq:application id="a3f8c2d1-4b5e-6f7a-8c9d-0e1f2a3b4c5d" type="watch-app" name="@Strings.AppName" entry="PowerNapApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="4.0.0">
+    <iq:application id="4a69032f-739c-4d8e-bf3b-a0657ee9ff8b" type="watch-app" name="@Strings.AppName" entry="PowerNapApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="4.0.0">
         <iq:products>
             <!-- Fenix 8 series -->
             <!-- Fenix 7 series -->
