@@ -64,10 +64,11 @@ class SleepDetector {
 
     // Settings
     private var _napDurationMin as Number = 30;
-    private var _hrDropThreshold as Number = 8;
+    private var _hrDropThreshold as Number = 5;
     private var _motionThreshold as Float = 50.0f;   // millig
     private var _wakeMotionThreshold as Float = 200.0f;
-    private var _immobilityRequiredSec as Number = 180; // 3 minutes
+    private var _alarm as AlarmManager? = null;
+    private var _immobilityRequiredSec as Number = 120; // 2 minutes
 
     // Timeout: stop monitoring after 60 min with no sleep detected
     private const MONITORING_TIMEOUT_SEC = 3600;
@@ -78,39 +79,45 @@ class SleepDetector {
 
 
     // ────────────────────────────────────────────────────────────────────
-    function initialize() {
+    function initialize(alarm as AlarmManager?) {
+        _alarm = alarm;
         loadSettings();
     }
 
     //! Read user settings from application properties.
+    //! Wrapped in try/catch because Properties can throw if storage is
+    //! corrupt or the companion app sent an invalid value type.
     function loadSettings() as Void {
-        var val;
+        try {
+            var val;
 
-        val = Application.Properties.getValue("napDuration");
-        if (val != null && val instanceof Number) {
-            _napDurationMin = val as Number;
-            if (_napDurationMin < 5) { _napDurationMin = 5; }
-            if (_napDurationMin > 120) { _napDurationMin = 120; }
-        }
-
-        val = Application.Properties.getValue("hrDropThreshold");
-        if (val != null && val instanceof Number) {
-            _hrDropThreshold = val as Number;
-            if (_hrDropThreshold < 3) { _hrDropThreshold = 3; }
-            if (_hrDropThreshold > 20) { _hrDropThreshold = 20; }
-        }
-
-        val = Application.Properties.getValue("motionSensitivity");
-        if (val != null && val instanceof Number) {
-            var sens = val as Number;
-            // 0 = low (less sensitive, higher threshold), 1 = medium, 2 = high
-            if (sens == 0) {
-                _motionThreshold = 80.0f;
-            } else if (sens == 2) {
-                _motionThreshold = 30.0f;
-            } else {
-                _motionThreshold = 50.0f;
+            val = Application.Properties.getValue("napDuration");
+            if (val != null && val instanceof Number) {
+                _napDurationMin = val as Number;
+                if (_napDurationMin < 5) { _napDurationMin = 5; }
+                if (_napDurationMin > 120) { _napDurationMin = 120; }
             }
+
+            val = Application.Properties.getValue("hrDropThreshold");
+            if (val != null && val instanceof Number) {
+                _hrDropThreshold = val as Number;
+                if (_hrDropThreshold < 3) { _hrDropThreshold = 3; }
+                if (_hrDropThreshold > 20) { _hrDropThreshold = 20; }
+            }
+
+            val = Application.Properties.getValue("motionSensitivity");
+            if (val != null && val instanceof Number) {
+                var sens = val as Number;
+                if (sens == 0) {
+                    _motionThreshold = 80.0f;
+                } else if (sens == 2) {
+                    _motionThreshold = 30.0f;
+                } else {
+                    _motionThreshold = 50.0f;
+                }
+            }
+        } catch (e instanceof Lang.Exception) {
+            // Storage corrupt -- keep current/default values.
         }
     }
 
@@ -135,9 +142,15 @@ class SleepDetector {
         _tickSec = 60;
         _calibTickCount = 0;
 
-        // Enable heart rate sensor events
-        Sensor.setEnabledSensors([Sensor.SENSOR_HEARTRATE]);
-        Sensor.enableSensorEvents(method(:onSensor));
+        // Enable heart rate sensor events.
+        // Can throw if Battery Saver is active or another activity owns the sensor.
+        try {
+            Sensor.setEnabledSensors([Sensor.SENSOR_HEARTRATE]);
+            Sensor.enableSensorEvents(method(:onSensor));
+        } catch (e instanceof Lang.Exception) {
+            // HR sensor unavailable -- app will run with _currentHR stuck at 0.
+            // Calibration will fall back to 70 BPM baseline after 2 min.
+        }
 
         // Register for accelerometer data
         var options = {
@@ -169,12 +182,21 @@ class SleepDetector {
 
         // Calibration timer: 10-second ticks to collect 12 HR samples over 2 minutes.
         // Stopped automatically once calibration completes.
-        _calibTimer = new Timer.Timer();
-        _calibTimer.start(method(:onCalibTick), 10000, true);
+        // Timer creation can throw if the system timer limit is reached.
+        try {
+            _calibTimer = new Timer.Timer();
+            _calibTimer.start(method(:onCalibTick), 10000, true);
+        } catch (e instanceof Lang.Exception) {
+            _calibTimer = null;
+        }
 
-        // Production poll loop: 60-second ticks → countdown goes minute by minute.
-        _pollTimer = new Timer.Timer();
-        _pollTimer.start(method(:onPollTick), 60000, true);
+        // Production poll loop: 60-second ticks -> countdown goes minute by minute.
+        try {
+            _pollTimer = new Timer.Timer();
+            _pollTimer.start(method(:onPollTick), 60000, true);
+        } catch (e instanceof Lang.Exception) {
+            _pollTimer = null;
+        }
 
     }
 
@@ -188,7 +210,11 @@ class SleepDetector {
             _pollTimer.stop();
             _pollTimer = null;
         }
-        Sensor.enableSensorEvents(null);
+        try {
+            Sensor.enableSensorEvents(null);
+        } catch (e instanceof Lang.Exception) {
+            // Sensor already released by system
+        }
         try {
             Sensor.unregisterSensorDataListener();
         } catch (e instanceof Lang.Exception) {
@@ -281,6 +307,28 @@ class SleepDetector {
             handleMonitoring();
         } else if (_state == STATE_SLEEPING) {
             handleSleeping();
+        } else if (_state == STATE_CALIBRATING) {
+            // Pre-track motion immobility during calibration so the clock
+            // starts earlier. Only motion is checked (no HR baseline yet).
+            // When monitoring begins, handleMonitoring() validates both HR
+            // and motion before making any detection decision.
+            var motionLow;
+            if (_motionWindow.size() >= 2) {
+                var recentMotion = arrayMeanFloatArr(
+                    _motionWindow.slice(-2, null) as Array<Float>
+                );
+                motionLow = (recentMotion < _motionThreshold);
+            } else {
+                motionLow = (_motionMagnitude < _motionThreshold);
+            }
+            if (motionLow) {
+                if (_immobilityStart == null) {
+                    _immobilityStart = Time.now();
+                }
+            } else {
+                _immobilityStart = null;
+                _immobileDurationSec = 0;
+            }
         } else if (_state == STATE_ALARM) {
             // Alarm state is handled by AlarmManager; nothing to do here.
         }
@@ -339,8 +387,7 @@ class SleepDetector {
                 _remainingSeconds -= _tickSec;
                 if (_remainingSeconds < 0) { _remainingSeconds = 0; }
                 if (_remainingSeconds <= 0) {
-                    computeSleepStats();
-                    _state = STATE_ALARM;
+                    transitionToAlarm();
                 }
             }
             return;
@@ -354,14 +401,20 @@ class SleepDetector {
         var hrDropMet = (hrDrop >= _hrDropThreshold.toFloat());
 
         // Condition 2: Motion is below threshold (near immobility).
-        // Use the current sensor reading directly rather than a windowed average.
-        // The _immobilityRequiredSec timer already enforces sustained-duration
-        // immobility (3 min in production, 2 s in debug), so windowing here would
-        // only add an unnecessary lag: after a spontaneous wake, each stale
-        // high-motion value in the window costs one extra tick of lost sleep time
-        // even though the user is already still.  Using the live reading means
-        // re-sleep is counted from the first poll tick where motion is actually low.
-        var motionMet = (_motionMagnitude < _motionThreshold);
+        // Use the average of the last 2 motion window entries rather than the
+        // instantaneous reading. A single brief movement at poll time would
+        // otherwise reset the entire immobility counter, making detection
+        // unreliable in practice (any micro-shift during a 60s poll resets
+        // 2+ minutes of accumulated stillness).
+        var motionMet;
+        if (_motionWindow.size() >= 2) {
+            var recentMotion = arrayMeanFloatArr(
+                _motionWindow.slice(-2, null) as Array<Float>
+            );
+            motionMet = (recentMotion < _motionThreshold);
+        } else {
+            motionMet = (_motionMagnitude < _motionThreshold);
+        }
 
         // Track immobility duration
         if (hrDropMet && motionMet) {
@@ -391,8 +444,7 @@ class SleepDetector {
             _remainingSeconds -= _tickSec;
             if (_remainingSeconds < 0) { _remainingSeconds = 0; }
             if (_remainingSeconds <= 0) {
-                computeSleepStats();
-                _state = STATE_ALARM;
+                transitionToAlarm();
             }
         }
     }
@@ -412,6 +464,22 @@ class SleepDetector {
         // Re-entry after a wake: _sleepStartTime, _remainingSeconds, and
         // _sleepHrSamples are preserved — the countdown resumes from the
         // paused position and HR samples continue accumulating.
+    }
+
+    //! Transition to alarm state and start the alarm immediately from the
+    //! timer callback. This ensures the alarm fires even when the display
+    //! is off (onUpdate is not called with display off on AMOLED devices).
+    private function transitionToAlarm() as Void {
+        computeSleepStats();
+        _state = STATE_ALARM;
+        try {
+            if (_alarm != null) {
+                (_alarm as AlarmManager).startAlarm();
+            }
+        } catch (e instanceof Lang.Exception) {
+            // Alarm start failed -- state is already ALARM so the WAKE UP
+            // screen will still display on the next onUpdate().
+        }
     }
 
     // ── Sleeping phase: countdown active ───────────────────────────────
@@ -435,18 +503,15 @@ class SleepDetector {
 
         // Smart wake window: in the last 5 minutes, fire the alarm early if
         // light-sleep signals appear (gentle motion or slight HR rise).
-        // This wakes the user at a natural moment rather than abruptly mid-cycle.
-        //
-        // Guard: skip entirely for naps shorter than the window (e.g. 5 min).
-        // Otherwise the window is active from tick 1, before enough HR samples
-        // have accumulated and before sleep HR has stabilised.
-        if (_napDurationMin * 60 > SMART_WAKE_WINDOW_SEC &&
+        // Only active for naps >= 30 min. For shorter naps the window covers
+        // too large a fraction of the total sleep (e.g. 50% of a 10-min nap)
+        // and could wake the user far earlier than intended.
+        if (_napDurationMin >= 30 &&
             _remainingSeconds <= SMART_WAKE_WINDOW_SEC &&
             _remainingSeconds > 0) {
             if (detectLightSleep()) {
                 _actualSleepSec += _tickSec; // this tick counts as sleep
-                computeSleepStats();
-                _state = STATE_ALARM;
+                transitionToAlarm();
                 return;
             }
         }
@@ -456,11 +521,8 @@ class SleepDetector {
         _remainingSeconds -= _tickSec;
         if (_remainingSeconds < 0) { _remainingSeconds = 0; }
 
-        // Countdown expired → compute stats now so the ALARM screen can
-        // display correct AVG/MIN HR without waiting for finishNap().
         if (_remainingSeconds <= 0) {
-            computeSleepStats();
-            _state = STATE_ALARM;
+            transitionToAlarm();
         }
     }
 
@@ -733,5 +795,34 @@ class SleepDetector {
     (:debug)
     function testAddSleepHrSample(hr as Number) as Void {
         _sleepHrSamples.add(hr);
+    }
+
+    //! Returns true if the immobility clock is currently running (i.e.
+    //! _immobilityStart has been set by either pre-tracking or monitoring).
+    (:debug)
+    function testIsImmobilityTracking() as Boolean {
+        return _immobilityStart != null;
+    }
+
+    //! Run one poll tick manually, regardless of state. Needed to simulate
+    //! the poll timer firing during calibration (testTick only calls onCalibTick
+    //! during CALIBRATING, but in production both timers run in parallel).
+    (:debug)
+    function testPollTick() as Void {
+        onPollTick();
+    }
+
+    //! Override _napDurationMin so tests can exercise duration-dependent guards
+    //! (e.g. Smart Wake Window disabled for naps <= 5 min).
+    (:debug)
+    function testSetNapDurationMin(min as Number) as Void {
+        _napDurationMin = min;
+    }
+
+    //! Set _startMoment to a given number of seconds in the past so timeout
+    //! logic can be tested without waiting 60 real minutes.
+    (:debug)
+    function testSetStartMoment(secondsAgo as Number) as Void {
+        _startMoment = Time.now().subtract(new Time.Duration(secondsAgo)) as Time.Moment;
     }
 }

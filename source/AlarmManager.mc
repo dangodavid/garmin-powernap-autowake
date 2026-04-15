@@ -40,9 +40,13 @@ class AlarmManager {
 
     //! Reload alarm type from application properties.
     function loadSettings() as Void {
-        var val = Application.Properties.getValue("alarmType");
-        if (val != null && val instanceof Number) {
-            _alarmType = val as Number;
+        try {
+            var val = Application.Properties.getValue("alarmType");
+            if (val != null && val instanceof Number) {
+                _alarmType = val as Number;
+            }
+        } catch (e instanceof Lang.Exception) {
+            // Storage corrupt -- keep default (vibration).
         }
     }
 
@@ -57,8 +61,13 @@ class AlarmManager {
 
         fireAlarm(); // ring 0  - fires immediately
 
-        _repeatTimer = new Timer.Timer();
-        _repeatTimer.start(method(:onRepeatAlarm), getIntervalForPhase(0), true);
+        try {
+            _repeatTimer = new Timer.Timer();
+            _repeatTimer.start(method(:onRepeatAlarm), getIntervalForPhase(0), true);
+        } catch (e instanceof Lang.Exception) {
+            // Timer limit reached -- first ring already fired, but no escalation.
+            _repeatTimer = null;
+        }
     }
 
     //! Timer callback. Fires the next ring and, on a phase boundary,
@@ -77,12 +86,17 @@ class AlarmManager {
             if (_repeatTimer != null) {
                 _repeatTimer.stop();
             }
-            _repeatTimer = new Timer.Timer();
-            _repeatTimer.start(
-                method(:onRepeatAlarm),
-                getIntervalForPhase(phaseAfterFire),
-                true
-            );
+            try {
+                _repeatTimer = new Timer.Timer();
+                _repeatTimer.start(
+                    method(:onRepeatAlarm),
+                    getIntervalForPhase(phaseAfterFire),
+                    true
+                );
+            } catch (e instanceof Lang.Exception) {
+                // Timer limit -- alarm stays at current phase interval.
+                _repeatTimer = null;
+            }
         }
 
         WatchUi.requestUpdate();
@@ -100,21 +114,34 @@ class AlarmManager {
 
     // -- Private helpers -------------------------------------------------
 
-    //! Fire one ring: compute the phase, then play vibration and/or tone.
+    //! Fire one ring: wake the display, then play vibration and/or tone.
+    //! Wrapped in try/catch because Attention APIs can throw on some
+    //! devices when called from a timer callback context.
     private function fireAlarm() as Void {
         var phase = getPhase(_ringCount);
         _ringCount += 1;
 
-        if (_alarmType == ALARM_VIBRATION || _alarmType == ALARM_BOTH) {
-            if (Attention has :vibrate) {
-                Attention.vibrate(getVibePattern(phase));
+        try {
+            // Force the display on so the WAKE UP screen is visible even in
+            // DND/sleep mode where the AMOLED display is completely off.
+            if (Attention has :backlight) {
+                Attention.backlight(true);
             }
-        }
 
-        if (_alarmType == ALARM_TONE || _alarmType == ALARM_BOTH) {
-            if (Attention has :playTone) {
-                Attention.playTone(getToneForPhase(phase));
+            if (_alarmType == ALARM_VIBRATION || _alarmType == ALARM_BOTH) {
+                if (Attention has :vibrate) {
+                    Attention.vibrate(getVibePattern(phase));
+                }
             }
+
+            if (_alarmType == ALARM_TONE || _alarmType == ALARM_BOTH) {
+                if (Attention has :playTone) {
+                    Attention.playTone(getToneForPhase(phase));
+                }
+            }
+        } catch (e instanceof Lang.Exception) {
+            // Attention API failed -- swallow so the alarm loop keeps running
+            // and the WAKE UP screen still displays.
         }
     }
 
@@ -184,5 +211,23 @@ class AlarmManager {
         if (phase <= 1) { return Attention.TONE_ALERT_LO; }
         if (phase == 2) { return Attention.TONE_ALERT_HI; }
         return Attention.TONE_ALARM;
+    }
+
+    //! Expose alarm state for test assertions.
+    (:debug)
+    function isAlarming() as Boolean {
+        return _isAlarming;
+    }
+
+    //! Expose ring count for phase-escalation test assertions.
+    (:debug)
+    function testGetRingCount() as Number {
+        return _ringCount;
+    }
+
+    //! Expose computed phase for a given ring count.
+    (:debug)
+    function testGetPhaseForRing(ringCount as Number) as Number {
+        return getPhase(ringCount);
     }
 }

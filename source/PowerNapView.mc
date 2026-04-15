@@ -11,6 +11,10 @@ class PowerNapView extends WatchUi.View {
     private var _alarm as AlarmManager;
     private var _alarmTriggered as Boolean = false;
 
+    // Debug label: shows "dev HH:MM" on start screen in debug builds only.
+    // Release/store builds show nothing (buildDebugLabel returns "").
+    private var _debugLabel as String = "";
+
     // Start screen state
     private var _started as Boolean = false;
     private var _pendingDuration as Number = 30;
@@ -25,10 +29,15 @@ class PowerNapView extends WatchUi.View {
         _detector = detector;
         _alarm = alarm;
         // Load last used duration from persistent storage
-        var saved = Application.Properties.getValue("napDuration");
-        if (saved != null && saved instanceof Number) {
-            _pendingDuration = saved as Number;
+        try {
+            var saved = Application.Properties.getValue("napDuration");
+            if (saved != null && saved instanceof Number) {
+                _pendingDuration = saved as Number;
+            }
+        } catch (e instanceof Lang.Exception) {
+            // Storage corrupt -- use default 30 min.
         }
+        _debugLabel = buildDebugLabel();
     }
 
     function onShow() as Void {
@@ -36,8 +45,10 @@ class PowerNapView extends WatchUi.View {
     }
 
     function onHide() as Void {
-        _detector.stop();
-        _alarm.stop();
+        // Cleanup is handled by PowerNapApp.onStop() when the app exits.
+        // Do NOT stop sensors/timers here: onHide() can be called when a
+        // system overlay appears (incoming call, control menu, battery alert).
+        // Stopping here would kill an active nap session.
     }
 
     // -- Public interface for delegate ----------------------------------
@@ -59,7 +70,11 @@ class PowerNapView extends WatchUi.View {
 
     //! Confirm duration, persist it, and begin sleep monitoring.
     function startNap() as Void {
-        Application.Properties.setValue("napDuration", _pendingDuration);
+        try {
+            Application.Properties.setValue("napDuration", _pendingDuration);
+        } catch (e instanceof Lang.Exception) {
+            // Storage full or corrupt -- proceed with in-memory value.
+        }
         _detector.loadSettings();
         _detector.start();
         _started = true;
@@ -94,9 +109,11 @@ class PowerNapView extends WatchUi.View {
 
         var state = _detector.getState();
 
+        // Alarm is started by SleepDetector.transitionToAlarm() from the
+        // timer callback, so it fires even when the display is off (AMOLED).
+        // No need to start it here -- just track the flag for view state.
         if (state == SleepDetector.STATE_ALARM && !_alarmTriggered) {
             _alarmTriggered = true;
-            _alarm.startAlarm();
         }
 
         if (state == SleepDetector.STATE_CALIBRATING || state == SleepDetector.STATE_MONITORING) {
@@ -164,8 +181,14 @@ class PowerNapView extends WatchUi.View {
 
         // -- START hint --
         dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_XTINY, "Tap to START",
+        dc.drawText(cx, y, Graphics.FONT_XTINY, "START to begin",
             Graphics.TEXT_JUSTIFY_CENTER);
+
+        // -- Debug label (bottom edge, only in debug builds) --
+        if (_debugLabel.length() > 0) {
+            dc.drawText(cx, h - dc.getFontHeight(Graphics.FONT_XTINY) - 2,
+                Graphics.FONT_XTINY, _debugLabel, Graphics.TEXT_JUSTIFY_CENTER);
+        }
     }
 
     // -- Screen 1: Calibrating / Monitoring ----------------------------
@@ -293,7 +316,7 @@ class PowerNapView extends WatchUi.View {
 
         var remaining = _detector.getRemainingSeconds();
         var smartWakeActive = (remaining <= 300 && remaining > 0
-            && _detector.getNapDurationMin() * 60 > 300);
+            && _detector.getNapDurationMin() >= 30);
 
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, yPos, Graphics.FONT_SMALL,
@@ -563,5 +586,21 @@ class PowerNapView extends WatchUi.View {
 
     private function formatTime(hour as Number, min as Number) as String {
         return formatTwoDigits(hour) + ":" + formatTwoDigits(min);
+    }
+
+    // Debug builds: show "dev HH:MM" (app start time) on start screen.
+    // Release builds: return empty string, nothing is displayed.
+    // Increment this number each time you build for testing on the watch.
+    // It confirms you are running the latest build, not a cached version.
+    private const DEBUG_BUILD = "12:23";
+
+    (:debug)
+    private function buildDebugLabel() as String {
+        return "dev #" + DEBUG_BUILD;
+    }
+
+    (:release)
+    private function buildDebugLabel() as String {
+        return "";
     }
 }

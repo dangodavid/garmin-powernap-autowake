@@ -17,17 +17,17 @@ class PowerNapApp extends Application.AppBase {
     //! Called when the application starts. Creates the sleep detector and alarm
     //! manager instances, then pushes the main view.
     function onStart(state as Dictionary?) as Void {
-        _sleepDetector = new SleepDetector();
         _alarmManager = new AlarmManager();
+        _sleepDetector = new SleepDetector(_alarmManager);
     }
 
     //! Returns the initial view and its input delegate.
     function getInitialView() as [Views] or [Views, InputDelegates] {
-        if (_sleepDetector == null) {
-            _sleepDetector = new SleepDetector();
-        }
         if (_alarmManager == null) {
             _alarmManager = new AlarmManager();
+        }
+        if (_sleepDetector == null) {
+            _sleepDetector = new SleepDetector(_alarmManager);
         }
         var view = new PowerNapView(_sleepDetector as SleepDetector, _alarmManager as AlarmManager);
         var delegate = new PowerNapDelegate(view, _sleepDetector as SleepDetector, _alarmManager as AlarmManager);

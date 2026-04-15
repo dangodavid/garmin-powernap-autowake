@@ -10,7 +10,7 @@ Put on the watch, start the app, lie down.
 
 1. **Start the app** from your watch menu. Use UP/DOWN or tap to set the nap duration (5–120 min), then press START or tap the centre to begin.
 2. **Calibrating (2 min):** The app silently measures your resting heart rate to build a personal baseline.
-3. **Monitoring:** It watches for sleep onset: a combination of HR drop and sustained immobility for at least 3 minutes.
+3. **Monitoring:** It watches for sleep onset: a combination of HR drop and sustained immobility for at least 2 minutes.
 4. **Sleep detected:** A countdown starts. The screen shows when you fell asleep and how much time remains.
 5. **Smart Wake Window:** In the final 5 minutes, the app checks for light-sleep signals (gentle movement or a slight HR rise). If detected, the alarm fires early at a natural waking moment instead of abruptly mid-cycle.
 6. **Wake-up alarm:** An escalating haptic pattern brings you out of sleep gradually, starting with a barely-perceptible feather tap, progressing to gentle pulses, then firm buzzes, and finally a full alarm. Full intensity is reached after approximately 90 seconds.
@@ -60,7 +60,7 @@ These appear in the **Garmin Connect companion app** on your phone under the app
 |----------------------|------------------|---------------------------------------------|-----------------------------------------------|
 | Nap Duration         | 30 min           | 5–120 min                                   | Target nap length                             |
 | Alarm Type           | Vibration Only   | Vibration / Tone / Vibration + Tone         | How the alarm wakes you                       |
-| HR Drop Threshold    | 8 BPM            | 3–20 BPM                                    | HR drop required to detect sleep              |
+| HR Drop Threshold    | 5 BPM            | 3-20 BPM                                     | HR drop required to detect sleep              |
 | Motion Sensitivity   | Medium           | Low / Medium / High                         | Lower = more movement allowed before reset    |
 
 You can also adjust the nap duration directly on the watch start screen without opening the companion app.
@@ -73,9 +73,9 @@ The algorithm is intentionally conservative to minimise false positives.
 
 **Calibration (2 min):** Collects 12 heart-rate samples at 10-second intervals to compute a personal resting HR baseline.
 
-**Sleep onset requires ALL of the following, sustained for ≥ 3 minutes:**
-- Heart rate has dropped ≥ threshold BPM below your baseline (default: 8 BPM)
-- Accelerometer motion is below the sensitivity threshold (default: 50 millig)
+**Sleep onset requires ALL of the following, sustained for >= 2 minutes:**
+- Heart rate has dropped >= threshold BPM below your baseline (default: 5 BPM)
+- Accelerometer motion average is below the sensitivity threshold (default: 50 millig)
 
 **Spontaneous wake detection (returns to monitoring if either is true):**
 - Sustained motion above 200 millig across two consecutive 60-second poll intervals
@@ -125,7 +125,7 @@ $CIQ_HOME/bin/monkeydo bin/PowerNap.prg fenix847mm
 Ctrl+Shift+P -> Monkey C: Run Tests
 ```
 
-23 automated test cases cover state machine transitions, threshold boundary conditions, spontaneous wake detection, Smart Wake Window logic, and multi-cycle sleep accumulation.
+49 automated test cases cover state machine transitions, threshold boundary conditions, spontaneous wake detection, Smart Wake Window logic, and multi-cycle sleep accumulation.
 
 ---
 
