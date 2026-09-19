@@ -534,7 +534,9 @@ function testDelegate_peekFooterTeachesStartTwice(logger as Test.Logger) as Bool
     var unarmed = r.footer();
     r.key(WatchUi.KEY_ENTER);
     var f = r.footer();
-    var ok = r.view.isPeeking() && f.find("START again") != null && f.find("stop") != null
+    // "START again: stop + stats", "START again: stop" or, on the 176 px
+    // Instinct, "Again: stop".
+    var ok = r.view.isPeeking() && f.find("gain") != null && f.find("stop") != null
         && !r.view.testIsHintShowing() && r.detector.getState() == SleepDetector.STATE_SLEEPING;
     if (!ok) {
         logger.debug("peek footer '" + f + "' peeking " + r.view.isPeeking());
@@ -821,6 +823,94 @@ function testDelegate_previewBackReturnsToStart(logger as Test.Logger) as Boolea
     if (r.alarm.isPreviewing() || r.alarm.testGetVibrateCount() != 0 || r.alarm.testGetBlockedDeliveries() != 0) {
         logger.debug("the preview must never start during a nap");
         ok = false;
+    }
+    r.cleanup();
+    return ok;
+}
+
+// -- Adversarial review of v1.1.0 --------------------------------------------
+
+//! A first press made on the nap screen does not count on the alarm screen:
+//! a START (peek) or a BACK 3 s before the alarm starts, then one press on
+//! the alarm, only arms again (the alarm keeps ringing); the pair completes
+//! with a second press on the alarm. (Before the fix one press on the alarm
+//! screen silenced it or closed the app.)
+(:test)
+function testDelegate_pressBeforeAlarmDoesNotPairWithAlarmPress(logger as Test.Logger) as Boolean {
+    var ok = true;
+    var keys = [WatchUi.KEY_ENTER, WatchUi.KEY_ESC] as Array<Number>;
+    for (var i = 0; i < keys.size(); i++) {
+        var r = new DelegateRig(10);
+        r.startNap();
+        r.detector.testForceSleep();
+        r.detector.testAdvanceClock(10 * 60 - 3);
+        r.detector.testTick();
+        r.key(keys[i]);                          // arms on the nap screen (peek / exit hint)
+        var armedOnNap = r.detector.getState() != SleepDetector.STATE_ALARM;
+        r.detector.testAdvanceClock(2);
+        r.detector.testTick();                   // the alarm starts 3 s later
+        var alarmed = r.detector.getState() == SleepDetector.STATE_ALARM && r.alarm.isAlarming();
+        r.key(keys[i]);                          // one press on the alarm: must only arm
+        if (!armedOnNap || !alarmed || !r.alarm.isAlarming() || r.detector.getState() != SleepDetector.STATE_ALARM
+            || r.delegate.testExitRequested() || !r.view.testIsHintShowing()) {
+            logger.debug("key " + keys[i] + ": one press on the alarm after a nap press acted: state "
+                + r.detector.getState() + " alarming " + r.alarm.isAlarming() + " exit " + r.delegate.testExitRequested());
+            ok = false;
+        }
+        r.key(keys[i]);                          // the pair on the alarm screen
+        var stopped = !r.alarm.isAlarming()
+            && ((keys[i] == WatchUi.KEY_ESC) ? r.delegate.testExitRequested()
+                                             : r.detector.getState() == SleepDetector.STATE_SUMMARY);
+        if (!stopped) {
+            logger.debug("key " + keys[i] + ": the second press on the alarm must complete the pair");
+            ok = false;
+        }
+        r.cleanup();
+    }
+    return ok;
+}
+
+//! The armed footer and the hint belong to the screen of the first press:
+//! once the alarm has started they are gone until a press on the alarm.
+(:test)
+function testDelegate_armedHintDoesNotSurviveAlarmStart(logger as Test.Logger) as Boolean {
+    var r = new DelegateRig(10);
+    r.startNap();
+    r.detector.testForceSleep();
+    r.detector.testAdvanceClock(10 * 60 - 2);
+    r.detector.testTick();
+    r.key(WatchUi.KEY_ESC);
+    var shown = r.view.testIsHintShowing() && delegateHelperIsOneOf(r.footer(), PowerNapView.HINT_EXIT);
+    r.detector.testAdvanceClock(1);
+    r.detector.testTick();                       // the alarm starts
+    var ok = shown && r.detector.getState() == SleepDetector.STATE_ALARM && !r.view.testIsHintShowing()
+        && r.footer().find("BACK x2") != null;
+    if (!ok) {
+        logger.debug("shown " + shown + " hint after alarm " + r.view.testIsHintShowing() + " footer '" + r.footer() + "'");
+    }
+    r.cleanup();
+    return ok;
+}
+
+//! A peek card from just before a doze alarm does not come back when the
+//! alarm is dismissed: the guard screen shows.
+(:test)
+function testDelegate_peekDoesNotSurviveDozeDismissal(logger as Test.Logger) as Boolean {
+    var r = new DelegateRig(0);
+    r.key(WatchUi.KEY_ENTER);
+    r.detector.testRunMinutes(4, 70, 10.0f);
+    r.detector.testRunSeconds(58, 70, 10.0f);
+    r.key(WatchUi.KEY_UP);                       // peek (also resets the still run: no doze yet)
+    var peeked = r.view.isPeeking();
+    r.detector.testRunMinutes(5, 70, 10.0f);     // a doze alarm 5 still minutes later
+    var alarmed = r.detector.getAlarmReason() == SleepDetector.ALARM_DOZE;
+    r.view.showPeek();                           // as if UP was pressed 1 s before the alarm
+    r.key(WatchUi.KEY_ENTER);
+    r.key(WatchUi.KEY_ENTER);
+    var ok = peeked && alarmed && r.detector.getState() == SleepDetector.STATE_MONITORING && !r.view.isPeeking();
+    if (!ok) {
+        logger.debug("peeked " + peeked + " alarmed " + alarmed + " state " + r.detector.getState()
+            + " peeking after dismissal " + r.view.isPeeking());
     }
     r.cleanup();
     return ok;

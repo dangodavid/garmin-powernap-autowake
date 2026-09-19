@@ -341,6 +341,7 @@ function testLayout_startScreenTapZones(logger as Test.Logger) as Boolean {
     var expected = touch ? "TAP to begin" : "START to begin";
     if (footer == null || !(footer as String).equals(expected)) {
         logger.debug("hint '" + footer + "', expected '" + expected + "' (touch " + touch + ")");
+        logger.debug(v.testBuildLayout(dc).testDescribe());
         ok = false;
     }
     return ok;
@@ -840,6 +841,41 @@ function testLayout_footers(logger as Test.Logger) as Boolean {
     ok = layoutHelperFooter("stay awake", v, dc, "BACK x2", logger) && ok;
     d.cancel();
     ok = layoutHelperFooter("stay summary", v, dc, "START", logger) && ok;
+    return ok;
+}
+
+//! A long footer variant never steals a content line: on the Stay Awake
+//! guard screen after a doze (title, status, hint, session time, doze
+//! count, HR) every content line a short footer leaves room for is still
+//! there, and the footer only climbs when no line is lost.
+(:test)
+function testLayout_footerNeverStealsContent(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var d = new SleepDetector(null);
+    d.testStartStayAwake();
+    d.testRunMinutes(5, 70, 10.0f);
+    d.dismissAlarm();
+    d.testRunMinutes(1, 70, 200.0f);
+    var v = layoutHelperView(d, new AlarmManager());
+    var must = (dc.getHeight() >= 200)
+        ? ["Keeping you awake|Keeping awake|On guard", "1 doze", "Awake", "Buzz"]
+        : ["Keeping you awake|Keeping awake|On guard", "1 doze"];
+    var ok = layoutHelperCheck("stay after doze + long footer", v, dc, must as Array<String>, logger);
+    var layout = v.testBuildLayout(dc);
+    var footer = layout.getFooterText();
+    if (footer == null || (footer as String).find("BACK x2") == null) {
+        logger.debug("footer '" + footer + "' must still teach BACK x2");
+        ok = false;
+    }
+    // The monitoring screen before sleep keeps its promise and rule lines.
+    d = new SleepDetector(null);
+    d.testStart();
+    d.testSetBaseline(70.0f);
+    d.testRunMinutes(1, 68, 10.0f);
+    v = layoutHelperView(d, new AlarmManager());
+    ok = layoutHelperCheck("monitoring + long footer", v, dc,
+        (dc.getHeight() >= 200 ? ["Monitoring", "Stillness", "Latest|By ", "after sleep|Nap 30 min"]
+                               : ["Monitoring", "Latest|By "]) as Array<String>, logger) && ok;
     return ok;
 }
 

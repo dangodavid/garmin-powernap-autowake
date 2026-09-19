@@ -1041,3 +1041,71 @@ function testAlarm_previewAndAlarmExclude(logger as Test.Logger) as Boolean {
     alarm.stop();
     return ok;
 }
+
+//! ToneClock: two rings back to back (ringNow right after a ring) start at
+//! most one melody; the second ring counts as toned but does not start a
+//! melody over the one still playing (that crashed the simulator).
+(:test)
+function testAlarm_toneClockNeverOverlapsMelodies(logger as Test.Logger) as Boolean {
+    if (!(Attention has :ToneProfile)) {
+        return true;
+    }
+    var alarm = new AlarmManager();
+    alarm.testSetAlarmType(1);
+    alarm.startAlarm();                          // ring 0: a melody (unless one still plays)
+    var started = alarm.testGetMelodiesStarted();
+    alarm.ringNow();                             // ring 1, milliseconds later
+    alarm.ringNow();                             // ring 2
+    var ok = alarm.testGetToneCount() == 3 && alarm.testGetMelodiesStarted() == started && started <= 1
+        && ToneClock.isPlaying();
+    if (!ok) {
+        logger.debug("tones " + alarm.testGetToneCount() + " melodies " + alarm.testGetMelodiesStarted()
+            + " (after ring 0: " + started + ") playing " + ToneClock.isPlaying());
+    }
+    alarm.stop();
+    return ok;
+}
+
+//! The tick fallback: when the repeat timer cannot be started, the
+//! detector's 1 s tick (onSecond) rings once the wait after the last ring
+//! has passed, so the alarm never goes silent; a running timer disables it.
+(:test)
+function testAlarm_tickFallbackRingsWithoutTimer(logger as Test.Logger) as Boolean {
+    var alarm = new AlarmManager();
+    alarm.testSetAlarmType(0);
+    alarm.testForceTimerFail(true);
+    alarm.startAlarm();
+    var ok = alarm.isAlarming() && !alarm.testIsTimerRunning() && alarm.testGetVibrateCount() == 1;
+    alarm.onSecond();                            // the wait (10 s) has not passed
+    if (alarm.testGetVibrateCount() != 1) {
+        logger.debug("onSecond must not ring before the wait has passed");
+        ok = false;
+    }
+    alarm.testAgeLastRing(10000);
+    alarm.onSecond();                            // 10 s later: ring 1
+    if (alarm.testGetVibrateCount() != 2 || alarm.testGetRingCount() != 2) {
+        logger.debug("onSecond must ring once the wait has passed: vib " + alarm.testGetVibrateCount());
+        ok = false;
+    }
+    alarm.testForceTimerFail(false);
+    alarm.testAgeLastRing(10000);
+    alarm.onSecond();                            // ring 2, and the timer starts again
+    if (alarm.testGetVibrateCount() != 3 || !alarm.testIsTimerRunning()) {
+        logger.debug("the timer must be restarted once it can: running " + alarm.testIsTimerRunning());
+        ok = false;
+    }
+    alarm.testAgeLastRing(10000);
+    alarm.onSecond();                            // the timer runs: the fallback stays quiet
+    if (alarm.testGetVibrateCount() != 3) {
+        logger.debug("onSecond must not ring while the timer runs");
+        ok = false;
+    }
+    alarm.stop();
+    alarm.testAgeLastRing(10000);
+    alarm.onSecond();
+    if (alarm.testGetVibrateCount() != 3 || alarm.isAlarming()) {
+        logger.debug("onSecond after stop() must not ring");
+        ok = false;
+    }
+    return ok;
+}

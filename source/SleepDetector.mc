@@ -508,6 +508,10 @@ class SleepDetector {
                 _secInMinute = 0;
                 onMinute();
             }
+        } else if (_state == STATE_ALARM && _alarm != null) {
+            // Safety net: rings from this tick if the alarm's own repeat
+            // timer could not be started.
+            (_alarm as AlarmManager).onSecond();
         }
         WatchUi.requestUpdate();
     }

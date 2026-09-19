@@ -92,8 +92,16 @@ class LayoutLine {
 //! * Lines hidden for their row width on the way are brought back at the end
 //!   (highest priority first) when the final layout has room for them, if
 //!   need be by hiding lower-priority lines instead.
-//! * The footer is solved once per solve(): the longest variant that fits
-//!   within the bottom rows (it never climbs above FOOTER_MIN_PCT).
+//! * The footer is solved first: the longest variant that fits within the
+//!   bottom rows (it never climbs above FOOTER_MIN_PCT). A long variant that
+//!   climbs so high that the content no longer fits at full size (which is
+//!   when lines below IMPORTANT are dropped) gives way to the next shorter
+//!   variant that leaves room for it, so a hint never steals a line from
+//!   the screen it explains. Only informative lines count (priority >= 70:
+//!   HR, "Asleep since", the session time, dozes, the promise lines); a
+//!   title (50-60) may give way to the full wording of a hint. Not next to
+//!   the Instinct lens: there the rows the freed band would add are the
+//!   narrow ones, and hiding lines for width again costs passes.
 //! * A divider belongs to the line above it and is clipped to its row.
 //! * Each text line then picks the largest font/text variant whose ink fits
 //!   the visible width at its own rows (round chord, Instinct subscreen).
@@ -109,6 +117,10 @@ class ScreenLayout {
     //! The footer never moves above this share of the height: a hint that
     //! does not fit lower uses a shorter variant instead of eating the band.
     private const FOOTER_MIN_PCT = 72;
+    //! Lines from this priority on (and dividers) are content a longer
+    //! footer variant may not push off the screen; titles (50-60), the HR
+    //! line of the sleeping screen (40) and the debug label (10) may go.
+    private const FOOTER_PROTECTS_FROM = 70;
 
     private var _w as Number;
     private var _h as Number;
@@ -127,6 +139,7 @@ class ScreenLayout {
     private var _clipRadius as Number = 0;           // > 0: keep text inside this circle
 
     private var _footerText as String? = null;       // the variant chosen by solve()
+    private var _footerIndex as Number = 0;          // its index in _footerTexts
     private var _footerTexts as Array<String>? = null;
     private var _footerPreferBottom as Boolean = false;  // see setFooterChoices
     private var _footerColor as Graphics.ColorType = Graphics.COLOR_LT_GRAY;
@@ -270,8 +283,108 @@ class ScreenLayout {
         _passes = 0;
         _fitCalls = 0;
         _inkCache = {} as Dictionary<Number, Array<Number> >;
-        // The footer does not depend on the lines: once per solve.
-        solveFooter(dc);
+        _bandTop = (_h * _topPct) / 100;
+        solveFooter(dc, 0);
+        chooseFooterForContent(dc);
+        solveLines(dc);
+        solveBanner(dc);
+        _inkCache = null;
+    }
+
+    //! A footer variant that climbs so high that a protected content line
+    //! is dropped (lines below IMPORTANT go, lowest priority first, before
+    //! any font shrinks) gives way to a shorter variant, but only when the
+    //! shorter one really saves a line: the longest variant whose band drops
+    //! as few lines as the shortest one would. Cheap: font heights, footer
+    //! placements and a drop simulation, no line fits.
+    private function chooseFooterForContent(dc as Graphics.Dc) as Void {
+        if (_footerTexts == null || _hasSub) {
+            return;
+        }
+        var texts = _footerTexts as Array<String>;
+        if (texts.size() < 2) {
+            return;
+        }
+        var first = _footerIndex;
+        var drops0 = dropCount(dc, _bandBottom - _bandTop);
+        if (drops0 == 0) {
+            return;
+        }
+        var last = texts.size() - 1;
+        solveFooter(dc, last);
+        var dropsMin = dropCount(dc, _bandBottom - _bandTop);
+        if (dropsMin >= drops0) {
+            // No wording saves a line: keep the longest one.
+            solveFooter(dc, first);
+            return;
+        }
+        for (var i = first + 1; i < last; i++) {
+            solveFooter(dc, i);
+            if (dropCount(dc, _bandBottom - _bandTop) == dropsMin) {
+                return;
+            }
+            i = _footerIndex;
+        }
+        solveFooter(dc, last);
+    }
+
+    //! How many protected optional lines (priority FOOTER_PROTECTS_FROM ..
+    //! IMPORTANT-1) the height pass would drop, at full font size, for a
+    //! band of `avail` pixels.
+    private function dropCount(dc as Graphics.Dc, avail as Number) as Number {
+        var n = _lines.size();
+        var counted = new [n] as Array<Boolean>;
+        var total = 0;
+        var lastIdx = -1;
+        for (var i = 0; i < n; i++) {
+            var line = _lines[i];
+            counted[i] = !line.forceHidden && (line.priority >= FOOTER_PROTECTS_FROM || line.isDivider);
+            if (!counted[i]) {
+                continue;
+            }
+            if (lastIdx >= 0) {
+                total += gapAfter(_lines[lastIdx]);
+            }
+            total += protectedSlot(dc, line);
+            lastIdx = i;
+        }
+        var dropped = 0;
+        while (total > avail) {
+            var idx = -1;
+            for (var i = 0; i < n; i++) {
+                var line = _lines[i];
+                if (!counted[i] || line.isDivider || line.priority >= IMPORTANT) {
+                    continue;
+                }
+                if (idx < 0 || line.priority <= _lines[idx].priority) {
+                    idx = i;
+                }
+            }
+            if (idx < 0) {
+                break;
+            }
+            counted[idx] = false;
+            total -= protectedSlot(dc, _lines[idx]) + gapAfter(_lines[idx]);
+            // A divider goes with its title.
+            if (idx + 1 < n && _lines[idx + 1].linkedTo == idx && counted[idx + 1]) {
+                counted[idx + 1] = false;
+                total -= protectedSlot(dc, _lines[idx + 1]) + gapAfter(_lines[idx + 1]);
+            }
+            dropped += 1;
+        }
+        return dropped;
+    }
+
+    //! Slot height of a line at its full font (dividers and spacers as is).
+    private function protectedSlot(dc as Graphics.Dc, line as LayoutLine) as Number {
+        if (line.isDivider) {
+            return (line.spacerH > 0) ? line.spacerH : 1;
+        }
+        return dc.getFontHeight(line.fonts[0]);
+    }
+
+    //! The pass loop over the lines (see solve()) for the current footer.
+    private function solveLines(dc as Graphics.Dc) as Void {
         for (var pass = 0; pass < 8; pass++) {
             solveOnce(dc);
             var anyHidden = false;
@@ -308,8 +421,6 @@ class ScreenLayout {
             if (!anyHidden) { break; }
         }
         restoreHidden(dc);
-        solveBanner(dc);
-        _inkCache = null;
     }
 
     //! Place the banner: padding of a third of the font height above and
@@ -318,57 +429,71 @@ class ScreenLayout {
     //! fits, shorter variants only when even the smallest font is too wide.
     //! The box is centred on the screen; next to the Instinct lens (which
     //! reaches down to the middle rows) it moves down, 4 px at a time, to
-    //! the first position above the footer where the text fits.
+    //! the first position above the footer where the text fits. Each text
+    //! is measured once per font (one fit call); the positions cost only
+    //! arithmetic, and are probed only for a text that fits at the lowest,
+    //! widest position at all.
     private function solveBanner(dc as Graphics.Dc) as Void {
         if (_bannerTexts == null || _bannerFonts == null) {
             return;
         }
-        _fitCalls += 1;
         var texts = _bannerTexts as Array<String>;
         var fonts = _bannerFonts as Array<Graphics.FontDefinition>;
         for (var ti = 0; ti < texts.size(); ti++) {
             for (var fi = 0; fi < fonts.size(); fi++) {
                 var fh = dc.getFontHeight(fonts[fi]);
                 var h = fh + (fh * 2) / 3;
-                var y = _cy - h / 2;
+                var w = dc.getTextWidthInPixels(texts[ti], fonts[fi]) + fh;
+                _fitCalls += 1;
+                var top = _cy - h / 2;
                 var lowest = ((_footerText != null) ? _footerY - 2 : _h - _gap) - h;
-                while (y <= lowest) {
-                    if (placeBanner(dc, texts[ti], fonts[fi], y)) {
+                if (!_hasSub || lowest < top) {
+                    if (placeBanner(texts[ti], fonts[fi], w, h, top)) {
                         return;
                     }
-                    if (!_hasSub) {
-                        break;
-                    }
-                    y += 4;
+                    continue;
                 }
+                // Next to the lens: the lowest position is the widest one.
+                // Only a text that fits there is worth probing from the top.
+                if (!placeBanner(texts[ti], fonts[fi], w, h, lowest)) {
+                    continue;
+                }
+                for (var y = top; y < lowest; y += 4) {
+                    if (placeBanner(texts[ti], fonts[fi], w, h, y)) {
+                        return;
+                    }
+                }
+                placeBanner(texts[ti], fonts[fi], w, h, lowest);
+                return;
             }
         }
         // Nothing fits: smallest font, shortest text, the box clipped to the
-        // visible width (flagged, so the tests catch it).
+        // visible width and kept above the footer (flagged, so the tests
+        // catch it).
         var last = fonts[fonts.size() - 1];
         var lh = dc.getFontHeight(last);
-        placeBanner(dc, texts[texts.size() - 1], last, _cy - (lh + (lh * 2) / 3) / 2);
+        var lhBox = lh + (lh * 2) / 3;
+        var yTop = _cy - lhBox / 2;
+        var yLow = ((_footerText != null) ? _footerY - 2 : _h - _gap) - lhBox;
+        placeBanner(texts[texts.size() - 1], last, dc.getTextWidthInPixels(texts[texts.size() - 1], last) + lh,
+            lhBox, (yLow < yTop) ? yLow : yTop);
+        _fitCalls += 1;
         _bannerFits = false;
     }
 
-    //! Try one text/font for the banner with its box starting at row y;
-    //! stores the box and returns whether it fits (a box that does not fit
-    //! is stored clipped to the width).
-    private function placeBanner(dc as Graphics.Dc, text as String, font as Graphics.FontDefinition,
+    //! Try one text/font (box width w, height h) for the banner with its
+    //! box starting at row y; stores the box and returns whether it fits (a
+    //! box that does not fit is stored clipped to the width).
+    private function placeBanner(text as String, font as Graphics.FontDefinition, w as Number, h as Number,
                                  y as Number) as Boolean {
-        var fh = dc.getFontHeight(font);
-        var h = fh + (fh * 2) / 3;
         var b = boundsAtRows(y, y + h);
-        var w = dc.getTextWidthInPixels(text, font) + fh;
         var fits = (w <= b[1] - b[0]);
-        if (!fits) {
-            w = b[1] - b[0];
-        }
+        var bw = fits ? w : (b[1] - b[0]);
         _bannerText = text;
         _bannerFont = font;
-        _bannerX = (b[0] + b[1]) / 2 - w / 2;
+        _bannerX = (b[0] + b[1]) / 2 - bw / 2;
         _bannerY = y;
-        _bannerW = w;
+        _bannerW = bw;
         _bannerH = h;
         _bannerFits = fits;
         return fits;
@@ -702,11 +827,12 @@ class ScreenLayout {
         }
     }
 
-    //! Footer placement (see setFooterTexts / setFooterChoices). It never
-    //! moves above FOOTER_MIN_PCT of the height: a hint that does not fit
-    //! lower uses a shorter variant, and if none fits the shortest one sits
-    //! at the bottom row, so the band keeps its room either way.
-    private function solveFooter(dc as Graphics.Dc) as Void {
+    //! Footer placement (see setFooterTexts / setFooterChoices), starting
+    //! at variant `from`. It never moves above FOOTER_MIN_PCT of the height:
+    //! a hint that does not fit lower uses a shorter variant, and if none
+    //! fits the shortest one sits at the bottom row, so the band keeps its
+    //! room either way.
+    private function solveFooter(dc as Graphics.Dc, from as Number) as Void {
         var fh = dc.getFontHeight(_footerFont);
         if (_footerTexts == null) {
             _bandBottom = _h - lowestUsableInset(fh);
@@ -715,12 +841,12 @@ class ScreenLayout {
         var texts = _footerTexts as Array<String>;
         var bottom = _h - fh - 2;
         var limit = _h * FOOTER_MIN_PCT / 100;
-        var first = 0;
+        var first = from;
         if (_footerPreferBottom) {
             var b0 = inkBounds(bottom, fh);
-            for (var i = 0; i < texts.size(); i++) {
+            for (var i = from; i < texts.size(); i++) {
                 if (dc.getTextWidthInPixels(texts[i], _footerFont) <= b0[1] - b0[0]) {
-                    placeFooter(texts[i], bottom, b0, true);
+                    placeFooter(texts[i], i, bottom, b0, true);
                     return;
                 }
             }
@@ -735,15 +861,17 @@ class ScreenLayout {
                 b = inkBounds(y, fh);
             }
             if ((b[1] - b[0]) >= tw) {
-                placeFooter(texts[i], y, b, true);
+                placeFooter(texts[i], i, y, b, true);
                 return;
             }
         }
-        placeFooter(texts[texts.size() - 1], bottom, inkBounds(bottom, fh), false);
+        placeFooter(texts[texts.size() - 1], texts.size() - 1, bottom, inkBounds(bottom, fh), false);
     }
 
-    private function placeFooter(text as String, y as Number, b as Array<Number>, fits as Boolean) as Void {
+    private function placeFooter(text as String, index as Number, y as Number, b as Array<Number>,
+                                 fits as Boolean) as Void {
         _footerText = text;
+        _footerIndex = index;
         _footerY = y;
         _footerX = (b[0] + b[1]) / 2;
         _footerFits = fits;

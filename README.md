@@ -16,7 +16,7 @@ Put on the watch, start the app, lie down.
 6. **Smart Wake Window (naps of 15 min or more):** In the last 20 % of the nap before the alarm (at most 5 minutes) a restless minute or a slight HR rise fires the alarm early at a natural waking moment. If the "Latest alarm" cap shortened the nap below 15 minutes, there is no smart wake.
 7. **Wake-up alarm:** A slow crescendo brings you out of sleep gradually. It starts with taps so fine you barely feel them (22 % for 120 ms) and grows in nine steps to full strength about two minutes after the first tap (118 s), then keeps ringing at full strength every 5 seconds for three minutes and every 30 seconds after that until you stop it. The screen is gentle too: it stays dark until the taps are clearly felt (the 50 % step) and then shows a calm "Time to wake up"; it only flashes once the alarm is at full strength. By default a soft nature-inspired melody joins the vibration from the 40 % step on watches with a beeper or speaker (see Alarm Escalation). If your alarm type cannot be heard on the watch (for example Nature sound only on a vívoactive, which has no speaker tones, or vibration switched off in the watch settings) the other channel is used. Works with Do Not Disturb on (verified on a fēnix 8 Pro: DND does not mute the vibration).
 8. **Woke up early?** Nothing to do: lie still for two minutes and the nap continues, the alarm time stays the same. Every nap screen shows the time of day. Press UP or DOWN (or START once) to peek at the nap so far (time asleep, wakes, alarm time) for a few seconds; this never stops anything.
-9. **Buttons during the nap and the alarm:** nothing stops a nap or the alarm by accident. Press **BACK twice** within 4 seconds to leave the app (the nap or the alarm ends, no summary); press **START twice** within 4 seconds to stop the nap or the alarm and see your stats. The first press of either key shows a popup ("Press BACK again to exit" / "Press START again to stop") and the footer repeats it in red; a BACK and a START never combine into a pair. Screen taps and swipes are ignored during a nap and during the alarm, so a wrist or sleeve on the pillow cannot silence anything. For 1.5 seconds after a stop every press is ignored (never extended by further presses), so extra presses of a half-asleep hand cannot skip the summary or start a new nap, and you can never be trapped in a screen.
+9. **Buttons during the nap and the alarm:** nothing stops a nap or the alarm by accident. Press **BACK twice** within 4 seconds to leave the app (the nap or the alarm ends, no summary); press **START twice** within 4 seconds to stop the nap or the alarm and see your stats. The first BACK, and the first START on the alarm, show a popup ("Press BACK again to exit" / "Press START again to stop") that the footer repeats in red; the first START during the nap shows the peek card, whose footer says "START again: stop + stats". A BACK and a START never combine into a pair, and a first press made before the alarm started does not count on the alarm screen. Screen taps and swipes are ignored during a nap and during the alarm, so a wrist or sleeve on the pillow cannot silence anything. For 1.5 seconds after a stop every press is ignored (never extended by further presses), so extra presses of a half-asleep hand cannot skip the summary or start a new nap, and you can never be trapped in a screen.
 10. **Summary screen:** Shows time asleep, how long it took you to fall asleep ("Fell asleep in 10 min"), how much of the planned nap was completed (ring), the number of wake episodes, average and minimum HR, and the time window you slept. START sets up a new nap, BACK exits with one press.
 
 **Warning before you nap:** "Low battery N%" below 10 % (not charging).
@@ -165,6 +165,13 @@ $CIQ_HOME/bin/monkeydo bin/PowerNap.prg fenix847mm
 Ctrl+Shift+P -> Monkey C: Run Tests
 ```
 
+Command line, one or more devices (the simulator is started and restarted as needed; one line per device):
+
+```bash
+tools/runtests.sh fenix847mm instinct3solar45mm fr255s venu3s vivoactive5
+tools/runtests.sh $(cat tools/devices.txt)      # all 43 supported watches
+```
+
 The suite under `test/` (224 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
 
 - **Invariant tests** run seeded random naps (settings and a minute-by-minute story of dozing, stirring, waking and sensor dropouts) and check after every simulated second the rules that must always hold: the alarm always rings and never after the deadline, the planned end never moves, smart wake only inside its window, stats in range. A failure prints the seed to replay it.
@@ -222,8 +229,11 @@ test/
   DelegateTest.mc               Buttons and taps through the real delegate and view
   QuietOnsetTest.mc             Quiet onset rule: no output before the alarm, every second, real alarm manager
   MotionTest.mc                 Raw accelerometer batches, offset independence
-  InvariantTest.mc              Seeded random naps + negative tests
+  InvariantTest.mc              Seeded random naps + negative tests (with the real alarm manager)
   TraceTest.mc                  Replays of recorded naps
+tools/
+  runtests.sh                   Build + run the suite one device at a time (simulator restarts, retries)
+  devices.txt                   The 43 device ids of the manifest, one per line
 ```
 
 ---

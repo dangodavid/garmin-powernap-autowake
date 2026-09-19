@@ -49,6 +49,9 @@ class PowerNapView extends WatchUi.View {
     private var _hintTexts as Array<String>? = null;
     private var _hintContext as Number = ConfirmPress.CONTEXT_NONE;
     private var _lastPressContext as Number = ConfirmPress.CONTEXT_NONE;
+    // A first press belongs to the screen it was made on: if the alarm starts
+    // (or the state changes) before the second press, that one arms again.
+    private var _armedState as Number = -1;
 
     // After a confirmed stop or a screen change, input is ignored for a
     // moment: a groggy user who keeps pressing START must not skip the
@@ -178,9 +181,11 @@ class PowerNapView extends WatchUi.View {
     }
 
     //! Ignore input for a moment (after a confirmed stop or screen change).
+    //! A peek card from before the change does not carry over.
     function lockInput() as Void {
         _locked = true;
         _lockStartMs = nowMs();
+        _peeking = false;
     }
 
     //! Input is being ignored (elapsed time: safe across the timer wrap).
@@ -196,13 +201,26 @@ class PowerNapView extends WatchUi.View {
     //! BACK, CONTEXT_STOP for START). Returns true when it is the confirming
     //! second press; the hint of a confirmed pair disappears.
     function pressConfirm(context as Number) as Boolean {
+        var state = _detector.getState();
+        if (_armedState != state) {
+            // The screen changed since the first press (e.g. the alarm
+            // started right after a peek): that press no longer counts.
+            _confirm.reset();
+        }
         var confirmed = _confirm.press(nowMs(), context);
         _lastPressContext = context;
+        _armedState = state;
         if (confirmed) {
             _hintTexts = null;
         }
         WatchUi.requestUpdate();
         return confirmed;
+    }
+
+    //! A first press in `context`, made on the current screen, is waiting
+    //! for its second press.
+    private function isArmed(context as Number) as Boolean {
+        return _armedState == _detector.getState() && _confirm.isArmed(nowMs(), context);
     }
 
     //! Show a popup hint (HINT_EXIT / HINT_STOP) for as long as the press
@@ -213,9 +231,9 @@ class PowerNapView extends WatchUi.View {
         WatchUi.requestUpdate();
     }
 
-    //! The popup hint is showing (its press is still armed).
+    //! The popup hint is showing (its press is still armed on this screen).
     function isHintShowing() as Boolean {
-        return _hintTexts != null && _started && _confirm.isArmed(nowMs(), _hintContext);
+        return _hintTexts != null && _started && isArmed(_hintContext);
     }
 
     //! Show the "so far" card for a few seconds (the nap keeps running).
@@ -848,18 +866,19 @@ class PowerNapView extends WatchUi.View {
     //! press is armed it repeats the popup hint in red: what the second
     //! press of that key does.
     private function setNapFooter(L as ScreenLayout, alarm as Boolean, color as Graphics.ColorType) as Void {
-        var now = nowMs();
-        if (_confirm.isArmed(now, ConfirmPress.CONTEXT_EXIT)) {
+        if (isArmed(ConfirmPress.CONTEXT_EXIT)) {
             L.setFooterTexts(HINT_EXIT, Graphics.COLOR_RED);
-        } else if (_confirm.isArmed(now, ConfirmPress.CONTEXT_STOP)) {
+        } else if (isArmed(ConfirmPress.CONTEXT_STOP)) {
             L.setFooterTexts(alarm ? HINT_STOP
                 : (["START again: stop + stats", "START again: stop", "Again: stop"] as Array<String>),
                 Graphics.COLOR_RED);
         } else if (alarm) {
-            L.setFooterTexts(["BACK x2: exit, START x2: stop", "BACK x2 exit · START x2 stop", "BACK x2 to exit"]
+            L.setFooterTexts(["BACK x2: exit, START x2: stop", "BACK x2 exit, START x2 stop", "BACK x2 to exit"]
                 as Array<String>, color);
         } else {
-            L.setFooterTexts(["BACK x2: exit, START x2: stats", "BACK x2 exit · START x2 stats", "BACK x2 to exit"]
+            // On the smallest screens only "BACK x2 to exit" fits; there the
+            // first START press teaches its pair (the peek card's footer).
+            L.setFooterTexts(["BACK x2: exit, START x2: stats", "BACK x2 exit, START x2 stats", "BACK x2 to exit"]
                 as Array<String>, color);
         }
     }

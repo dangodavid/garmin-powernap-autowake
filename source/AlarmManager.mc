@@ -136,6 +136,9 @@ class AlarmManager {
 
     private var _alarmType   as Number       = ALARM_VIBRATION;
     private var _repeatTimer as Timer.Timer? = null;
+    private var _timerRunning as Boolean     = false; // the repeat timer is scheduled
+    private var _lastRingMs  as Number       = 0;     // System.getTimer() at the last ring
+    private var _forceTimerFail as Boolean   = false; // debug: the repeat timer cannot start
     private var _isAlarming  as Boolean      = false;
     private var _ringCount   as Number       = 0;     // index of the next ring (sets its step)
     private var _ringsFired  as Number       = 0;     // rings since startAlarm
@@ -267,8 +270,8 @@ class AlarmManager {
         _brightRings = 0;
         if (_repeatTimer != null) {
             _repeatTimer.stop();
-            _repeatTimer = null;
         }
+        _timerRunning = false;
         stopPreview();
     }
 
@@ -387,16 +390,37 @@ class AlarmManager {
     }
 
     //! (Re)start the repeat timer with the wait after the ring just fired.
+    //! The Timer object is created once and reused (no allocation on every
+    //! step boundary); if it cannot be created or started, onSecond() rings
+    //! from the detector's tick instead, so the alarm never goes silent.
     private function restartTimer() as Void {
-        if (_repeatTimer != null) {
-            _repeatTimer.stop();
-        }
         try {
-            _repeatTimer = new Timer.Timer();
-            _repeatTimer.start(method(:onRepeatAlarm), intervalAfterLastRing(), true);
+            if (_forceTimerFail) {
+                throw new Lang.Exception();
+            }
+            if (_repeatTimer == null) {
+                _repeatTimer = new Timer.Timer();
+            }
+            (_repeatTimer as Timer.Timer).stop();
+            (_repeatTimer as Timer.Timer).start(method(:onRepeatAlarm), intervalAfterLastRing(), true);
+            _timerRunning = true;
         } catch (e instanceof Lang.Exception) {
-            // Timer limit reached -- the ring already fired, no escalation.
-            _repeatTimer = null;
+            _timerRunning = false;
+        }
+    }
+
+    //! Called once a second by the detector's tick while the alarm rings:
+    //! a safety net for a repeat timer that could not be started (timer
+    //! limit, memory). Rings when the wait after the last ring has passed.
+    function onSecond() as Void {
+        if (!_isAlarming || _timerRunning) {
+            return;
+        }
+        var elapsed = System.getTimer() - _lastRingMs;
+        if (elapsed < 0 || elapsed >= intervalAfterLastRing()) {
+            fireAlarm();
+            restartTimer();
+            WatchUi.requestUpdate();
         }
     }
 
@@ -406,6 +430,7 @@ class AlarmManager {
         var step = stepOfRing(_ringCount);
         _ringCount += 1;
         _ringsFired += 1;
+        _lastRingMs = System.getTimer();
 
         deliver(step);
 
@@ -796,6 +821,19 @@ class AlarmManager {
     //! Fire one more ring synchronously (as the repeat timer would).
     (:debug)
     function testFireRing() as Void { onRepeatAlarm(); }
+
+    //! Make the repeat timer fail to start (timer limit), so the tick
+    //! fallback (onSecond) carries the alarm.
+    (:debug)
+    function testForceTimerFail(fail as Boolean) as Void { _forceTimerFail = fail; }
+
+    //! Whether the repeat timer is scheduled.
+    (:debug)
+    function testIsTimerRunning() as Boolean { return _timerRunning; }
+
+    //! Pretend the last ring was `ms` ago (moves the fallback clock).
+    (:debug)
+    function testAgeLastRing(ms as Number) as Void { _lastRingMs -= ms; }
 
     //! Advance the preview synchronously (as its timer would).
     (:debug)
