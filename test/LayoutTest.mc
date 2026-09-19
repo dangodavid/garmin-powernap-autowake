@@ -709,9 +709,10 @@ function testLayout_promiseValues(logger as Test.Logger) as Boolean {
 }
 
 //! The popup hint (a banner over the screen after the first BACK or START)
-//! fits every screen it can appear on: calibrating, monitoring, sleeping,
-//! the alarm (calm and flashing), the Stay Awake guard, the doze alarm and
-//! the peek card; its text is one of the hint variants.
+//! fits every session screen it can appear on: calibrating, monitoring,
+//! sleeping, the alarm (calm and flashing), the Stay Awake guard, the doze
+//! alarm and the peek card; its text is one of the variants of the hint for
+//! that screen (end nap / end / stop), which the armed footer repeats.
 (:test)
 function testLayout_exitHintBanner(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
@@ -722,25 +723,25 @@ function testLayout_exitHintBanner(logger as Test.Logger) as Boolean {
     d.testStart();
     d.testFeedHR(100);
     var v = layoutHelperView(d, a);
-    ok = layoutHelperBanner("calibrating", v, dc, ConfirmPress.CONTEXT_EXIT, PowerNapView.HINT_EXIT, logger) && ok;
+    ok = layoutHelperBanner("calibrating", v, dc, ConfirmPress.CONTEXT_EXIT, v.backHint(), logger) && ok;
     d.testSetBaseline(70.0f);
     d.testRunMinutes(1, 68, 10.0f);
     d.noteInactive();
     v.testForceBattery(5);
-    ok = layoutHelperBanner("monitoring crowded", v, dc, ConfirmPress.CONTEXT_EXIT, PowerNapView.HINT_EXIT, logger) && ok;
+    ok = layoutHelperBanner("monitoring crowded", v, dc, ConfirmPress.CONTEXT_EXIT, v.backHint(), logger) && ok;
     v.testForceBattery(100);
     d.testForceSleep();
-    ok = layoutHelperBanner("sleeping", v, dc, ConfirmPress.CONTEXT_EXIT, PowerNapView.HINT_EXIT, logger) && ok;
+    ok = layoutHelperBanner("sleeping", v, dc, ConfirmPress.CONTEXT_EXIT, v.backHint(), logger) && ok;
     v.showPeek();
-    ok = layoutHelperBanner("peek", v, dc, ConfirmPress.CONTEXT_EXIT, PowerNapView.HINT_EXIT, logger) && ok;
+    ok = layoutHelperBanner("peek", v, dc, ConfirmPress.CONTEXT_EXIT, v.backHint(), logger) && ok;
     d.testAdvanceClock(31 * 60);
     d.testTick();                                // the alarm: calm screen
-    ok = layoutHelperBanner("alarm calm exit", v, dc, ConfirmPress.CONTEXT_EXIT, PowerNapView.HINT_EXIT, logger) && ok;
+    ok = layoutHelperBanner("alarm calm exit", v, dc, ConfirmPress.CONTEXT_EXIT, v.backHint(), logger) && ok;
     ok = layoutHelperBanner("alarm calm stop", v, dc, ConfirmPress.CONTEXT_STOP, PowerNapView.HINT_STOP, logger) && ok;
     while (!a.isFullIntensity()) {               // the loud, flashing screen
         a.testFireRing();
     }
-    ok = layoutHelperBanner("alarm loud exit", v, dc, ConfirmPress.CONTEXT_EXIT, PowerNapView.HINT_EXIT, logger) && ok;
+    ok = layoutHelperBanner("alarm loud exit", v, dc, ConfirmPress.CONTEXT_EXIT, v.backHint(), logger) && ok;
     ok = layoutHelperBanner("alarm loud stop", v, dc, ConfirmPress.CONTEXT_STOP, PowerNapView.HINT_STOP, logger) && ok;
     a.stop();
 
@@ -750,9 +751,9 @@ function testLayout_exitHintBanner(logger as Test.Logger) as Boolean {
     d.testStartStayAwake();
     d.testRunMinutes(3, 70, 200.0f);
     v = layoutHelperView(d, a);
-    ok = layoutHelperBanner("stay awake guard", v, dc, ConfirmPress.CONTEXT_EXIT, PowerNapView.HINT_EXIT, logger) && ok;
+    ok = layoutHelperBanner("stay awake guard", v, dc, ConfirmPress.CONTEXT_EXIT, v.backHint(), logger) && ok;
     d.testRunMinutes(5, 70, 10.0f);              // doze alarm
-    ok = layoutHelperBanner("doze alarm exit", v, dc, ConfirmPress.CONTEXT_EXIT, PowerNapView.HINT_EXIT, logger) && ok;
+    ok = layoutHelperBanner("doze alarm exit", v, dc, ConfirmPress.CONTEXT_EXIT, v.backHint(), logger) && ok;
     ok = layoutHelperBanner("doze alarm stop", v, dc, ConfirmPress.CONTEXT_STOP, PowerNapView.HINT_STOP, logger) && ok;
     a.stop();
     return ok;
@@ -824,7 +825,7 @@ function testLayout_footers(logger as Test.Logger) as Boolean {
     ok = layoutHelperFooter("peek armed stop", v, dc, "stop", logger) && ok;
     v.testAdvanceMs(4100);
     v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
-    ok = layoutHelperFooter("sleeping armed exit", v, dc, "BACK again", logger) && ok;
+    ok = layoutHelperFooter("sleeping armed exit", v, dc, "end nap", logger) && ok;
     v.testAdvanceMs(4100);
     d.testAdvanceClock(31 * 60);
     d.testTick();
@@ -905,7 +906,7 @@ function testLayout_workOfHeaviestScreens(logger as Test.Logger) as Boolean {
     var v = layoutHelperView(d, new AlarmManager());
     v.testForceBattery(5);
     v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
-    v.showHint(PowerNapView.HINT_EXIT);
+    v.showHint(v.backHint());
     var w1 = v.testBuildLayout(dc).testWork();
     d = new SleepDetector(null);
     d.testStartStayAwake();
@@ -914,12 +915,20 @@ function testLayout_workOfHeaviestScreens(logger as Test.Logger) as Boolean {
     v = layoutHelperView(d, new AlarmManager());
     v.testForceBattery(5);
     v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
-    v.showHint(PowerNapView.HINT_EXIT);
+    v.showHint(v.backHint());
     var w2 = v.testBuildLayout(dc).testWork();
+    // The start screen with the exit banner and the low-battery warning.
+    var sv = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    sv.testForceBattery(5);
+    sv.pressConfirm(ConfirmPress.CONTEXT_EXIT);
+    sv.showHint(PowerNapView.HINT_EXIT);
+    var w3 = sv.testBuildLayout(dc).testWork();
+    sv.onHide();
     logger.debug("layout work: calibrating crowded " + w1[0] + "/" + w1[1] + ", Stay Awake crowded "
-        + w2[0] + "/" + w2[1] + " (passes/line fits)");
+        + w2[0] + "/" + w2[1] + ", start + exit banner " + w3[0] + "/" + w3[1] + " (passes/line fits)");
     return w1[0] <= LAYOUT_MAX_PASSES && w1[1] <= LAYOUT_MAX_FITS
-        && w2[0] <= LAYOUT_MAX_PASSES && w2[1] <= LAYOUT_MAX_FITS;
+        && w2[0] <= LAYOUT_MAX_PASSES && w2[1] <= LAYOUT_MAX_FITS
+        && w3[0] <= LAYOUT_MAX_PASSES && w3[1] <= LAYOUT_MAX_FITS;
 }
 
 //! The alarm preview screen fits at every step of the ramp (step and
@@ -951,5 +960,58 @@ function testLayout_previewScreen(logger as Test.Logger) as Boolean {
     }
     ok = layoutHelperCheck("start screen after preview", v, dc, ["30", "min"] as Array<String>, logger) && ok;
     a.stop();
+    return ok;
+}
+
+//! The start screen with "Press BACK again to exit": the banner fits over
+//! every start screen (short, long and Stay Awake durations, with the
+//! low-battery warning), its box is on screen, its text is one of the exit
+//! variants, and the start screen keeps its lines, footer and tap zones.
+(:test)
+function testLayout_startScreenExitBanner(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var ok = true;
+    var durations = [5, 30, 120, 0] as Array<Number>;
+    var batteries = [100, 5] as Array<Number>;
+    for (var b = 0; b < batteries.size(); b++) {
+        for (var i = 0; i < durations.size(); i++) {
+            var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+            v.testSetPendingDuration(durations[i]);
+            v.testForceBattery(batteries[b]);
+            var zonesBefore = v.testMeasureTapZones(dc);
+            v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
+            v.showHint(PowerNapView.HINT_EXIT);
+            var name = "start " + durations[i] + " battery " + batteries[b] + " + exit banner";
+            ok = layoutHelperCheck(name, v, dc, [durations[i].toString()] as Array<String>, logger) && ok;
+            var layout = v.testBuildLayout(dc);
+            var text = layout.getBannerText();
+            var box = layout.getBannerBox();
+            var found = false;
+            for (var k = 0; k < PowerNapView.HINT_EXIT.size() && text != null; k++) {
+                if ((text as String).equals(PowerNapView.HINT_EXIT[k])) { found = true; }
+            }
+            if (!found || box == null) {
+                logger.debug(name + ": banner '" + text + "'");
+                ok = false;
+            } else {
+                var bx = box as Array<Number>;
+                if (bx[0] < 0 || bx[1] < 0 || bx[0] + bx[2] > dc.getWidth() || bx[1] + bx[3] > dc.getHeight()) {
+                    logger.debug(name + ": banner box off screen");
+                    ok = false;
+                }
+            }
+            var footer = layout.getFooterText();
+            if (footer == null || ((footer as String).find("TAP") == null && (footer as String).find("START") == null)) {
+                logger.debug(name + ": footer '" + footer + "' must stay the start hint");
+                ok = false;
+            }
+            var zones = v.testMeasureTapZones(dc);
+            if (zones[0] != zonesBefore[0] || zones[1] != zonesBefore[1] || zones[4] != zonesBefore[4]) {
+                logger.debug(name + ": the banner moved the tap zones");
+                ok = false;
+            }
+            v.onHide();
+        }
+    }
     return ok;
 }

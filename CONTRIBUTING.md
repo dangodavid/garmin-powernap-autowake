@@ -68,7 +68,7 @@ STATE_ALARM (3)
   -> STATE_SUMMARY (4)       when user dismisses alarm
 
 STATE_SUMMARY (4)
-  Terminal state; user presses BACK to exit
+  Terminal state; BACK or START returns to the start screen, where BACK twice exits
 ```
 
 ### Timing architecture

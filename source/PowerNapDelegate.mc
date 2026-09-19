@@ -22,25 +22,35 @@ import Toybox.System;
 //! Physical positions differ between product lines (on a 5-button fenix,
 //! START is top-right and BACK bottom-right), so no code here depends on them.
 //!
-//! Key model (owner decision, v1.1.0):
+//! Key model (owner decision, 2026-09-19): BACK always goes back one level,
+//! down to the start screen; only there does BACK twice leave the app.
 //!
 //!   Screen                         BACK               START              UP/DOWN
-//!   Start                          exit               start nap          +/- 5 min
-//!     (MENU / long press: menu with "Test alarm"; the preview screen's BACK ends it)
-//!   Nap / Stay Awake guard / peek  x2: exit (no       x2: stop, summary  peek card
-//!                                  summary); 1st:     1st: peek card
-//!                                  "Press BACK again"
+//!   Start                          x2: exit; 1st:     start nap          +/- 5 min
+//!                                  "Press BACK again
+//!                                  to exit"
+//!     (MENU / long press: menu with "Test alarm"; BACK closes the menu and
+//!      ends the preview, back to the start screen)
+//!   Nap / peek                     x2: end the nap,   x2: stop, summary  peek card
+//!                                  start screen (no   1st: peek card
+//!                                  summary)
+//!   Stay Awake guard / peek        x2: end, start     x2: stop, summary  peek card
+//!                                  screen
 //!   Alarm (nap)                    x2: alarm off,     x2: alarm off,     nothing
-//!                                  exit; 1st: popup   summary; 1st: popup
-//!   Doze alarm (Stay Awake)        x2: exit           x2: alarm off,     nothing
-//!                                                     back on guard
-//!   Summary                        exit (1 press)     new nap            nothing
+//!                                  start screen       summary
+//!   Doze alarm (Stay Awake)        x2: alarm off,     x2: alarm off,     nothing
+//!                                  back on guard      back on guard
+//!   Summary                        start screen       start screen       nothing
+//!
+//! The first BACK of a pair shows a popup saying what the second one does.
+//! A right swipe is the touch BACK: outside a session it acts as BACK (so it
+//! never leaves the app in one gesture); during a nap it is ignored.
 //!
 //! Safety: once a nap is running, nothing stops it or its alarm by accident.
 //! A wrist on a pillow can press a button and a sleeve can touch the screen:
 //! * two presses of the same key within 4 seconds (ConfirmPress: BACK arms
-//!   the exit, START arms the stop; the other key re-arms instead of
-//!   confirming);
+//!   CONTEXT_EXIT, START arms CONTEXT_STOP; the other key re-arms instead of
+//!   confirming, and a press made on another screen does not count);
 //! * UP and DOWN (and a single START) during a nap only "peek": a few seconds
 //!   of the so-far card, nothing stops;
 //! * taps, swipes, holds, flicks and drags are consumed on every nap screen,
@@ -115,7 +125,21 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     //! A right swipe that does not start at the left edge arrives here; left
     //! unhandled it becomes the system back action and exits the app.
     function onSwipe(swipeEvent as WatchUi.SwipeEvent) as Boolean {
-        return napActive() || previewActive();
+        return handleSwipe(swipeEvent.getDirection());
+    }
+
+    //! A swipe (a WatchUi.SWIPE_* direction). During a nap or its alarm every
+    //! swipe is ignored. Elsewhere a right swipe is BACK, handled like the
+    //! button, so it goes back one level and the start screen asks for a
+    //! second one before leaving the app.
+    function handleSwipe(direction as Number) as Boolean {
+        if (napActive()) {
+            return true;
+        }
+        if (direction == WatchUi.SWIPE_RIGHT) {
+            return handleKey(WatchUi.KEY_ESC);
+        }
+        return previewActive();
     }
 
     //! Touch watches: a long press on the number of the start screen opens
@@ -182,19 +206,22 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
                 return true;
             }
             if (key == WatchUi.KEY_ESC) {
-                exitApp();
+                // The start screen is the top: BACK twice leaves the app,
+                // the first press says so.
+                if (_view.pressConfirm(ConfirmPress.CONTEXT_EXIT)) {
+                    exitApp();
+                } else {
+                    _view.showHint(PowerNapView.HINT_EXIT);
+                }
                 return true;
             }
             return false;
         }
 
-        // -- Summary: BACK exits, START sets up a new nap ------------------
+        // -- Summary: BACK goes back, START sets up a new nap: both lead to
+        //    the start screen ---------------------------------------------
         if (state == SleepDetector.STATE_SUMMARY) {
-            if (key == WatchUi.KEY_ESC) {
-                exitApp();
-                return true;
-            }
-            if (key == WatchUi.KEY_ENTER) {
+            if (key == WatchUi.KEY_ESC || key == WatchUi.KEY_ENTER) {
                 _view.resetToStart();
                 _view.lockInput();
                 return true;
@@ -210,12 +237,14 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
             _detector.noteUserAwake();
         }
         if (key == WatchUi.KEY_ESC) {
-            // BACK twice leaves the app from every nap and alarm screen: the
-            // nap (or the alarm) ends, no summary.
+            // BACK twice goes back one level: the doze alarm to the guard,
+            // everything else (nap, its alarm, the guard) to the start
+            // screen, without a summary. The first press says what the
+            // second one does.
             if (_view.pressConfirm(ConfirmPress.CONTEXT_EXIT)) {
-                exitApp();
+                goBack(state);
             } else {
-                _view.showHint(PowerNapView.HINT_EXIT);
+                _view.showHint(_view.backHint());
             }
             return true;
         }
@@ -256,6 +285,20 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         WatchUi.requestUpdate();
     }
 
+    //! BACK twice on a session screen: one level back. The Stay Awake doze
+    //! alarm sits on top of the guard, so it goes back to guarding; a nap,
+    //! its alarm and the guard go back to the start screen (the session
+    //! ends there, without a summary: START twice gives the stats).
+    private function goBack(state as Number) as Void {
+        if (state == SleepDetector.STATE_ALARM && _detector.isStayAwake()) {
+            dismissAlarm();
+            return;
+        }
+        _view.resetToStart();
+        _view.lockInput();
+        WatchUi.requestUpdate();
+    }
+
     //! Stop the running nap (or Stay Awake session) and show its summary.
     private function stopNap() as Void {
         _detector.cancel();
@@ -268,6 +311,7 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     //! "Test alarm" plays the wake-up ramp once. Never during a nap.
     private function openMenu() as Void {
         _menuRequests += 1;
+        _view.cancelConfirm();
         if (!_viewsEnabled) {
             return;
         }
@@ -280,7 +324,7 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         }
     }
 
-    //! Leave the app: the nap and the alarm end here, no summary.
+    //! Leave the app (BACK twice on the start screen).
     private function exitApp() as Void {
         _detector.stop();
         _alarm.stop();
