@@ -1,6 +1,7 @@
 > **Historical document - do not follow it.**
 >
-> v1.1.0 shipped on 2026-09-19. This brief records the intent of that day, not
+> v1.1.0 was finished on 2026-09-19 - code complete, never published; the
+> store still carries 1.0.2. This brief records the intent of that day, not
 > the state of the project. **`CLAUDE.md` takes precedence over everything
 > below**, and `CONTRIBUTING.md` holds the procedure. Known to be out of date
 > here:

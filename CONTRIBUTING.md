@@ -226,11 +226,16 @@ tools/matrix.sh test                           # the whole suite everywhere, ~1 
 ```
 
 Then the store package (the version is typed into the upload form; the manifest
-carries none):
+carries none, so the store page and the developer dashboard are the only place
+the published version can be read):
 
 ```bash
 monkeyc -e -o bin/PowerNap-<version>.iq -f monkey.jungle -y ~/developer_key.der -r -l 3
 ```
+
+Build the package from `main`, at the commit you are publishing. An `.iq` left
+over from an earlier attempt is not republished: it was built from whatever the
+tree held that day, which is not what `main` holds now.
 
 ### New tests are for logic
 

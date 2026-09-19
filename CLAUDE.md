@@ -22,6 +22,23 @@ napDuration), whether or not sleep is detected.
 Duration 0 on the watch is **Stay Awake** mode: the same detection buzzes the
 user when they doze off (see "Stay Awake mode" below).
 
+## Release status
+
+The manifest carries no version number - it is typed into the Connect IQ
+upload form - so the only authoritative answer to "what is live" is the app's
+own page in the Connect IQ store and its entry in the developer dashboard.
+Look there before trusting any number written down here.
+
+As of 2026-09-20: **published = 1.0.2 (internal 2)**. **1.1.0 is finished code
+on `main` that nobody has downloaded**: every "v1.1.0" and "since 1.1.0" note
+below means "since the unreleased 1.1.0", not "in the version users run". So
+Stay Awake, the ramp table, "Test alarm", the BACK key model and "Alarm by"
+are all unreleased.
+
+The `bin/PowerNap-1.1.0.iq` built on 2026-09-19 predates commit `130212e`
+(the exit flag moved behind `(:debug)`), so it does not match `main`. The next
+store package is built from `main`; that old `.iq` is not repackaged.
+
 ## Language & SDK
 
 - **Language:** Monkey C (Garmin proprietary)
@@ -129,7 +146,7 @@ CONTRIBUTING.md         # the full procedure: git flow, what to run and when, th
                         #   sweep, and what every file under test/ covers
 docs/history/           # superseded documents, kept for provenance only; each one
                         #   opens with a header saying CLAUDE.md takes precedence
-  PLAN-v1.1.0.md        #   the v1.1.0 brief (W1-W7, D1-D4), delivered 2026-09-19
+  PLAN-v1.1.0.md        #   the v1.1.0 brief (W1-W7, D1-D4), finished 2026-09-19
 ```
 
 ## Key Configuration (properties.xml defaults)

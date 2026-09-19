@@ -194,6 +194,11 @@ The layout tests measure the real device fonts, so run the suite on a few screen
 
 ## Installing on a Watch
 
+This repository is ahead of the Connect IQ store: the store carries 1.0.2, and
+the version described above (Stay Awake, the crescendo ramp, "Test alarm", the
+"Alarm by" guarantee) is finished but not published yet. To use it today, build
+it and copy it across:
+
 1. Build the `.prg` for your specific device.
 2. Connect the watch to your computer via USB.
 3. Copy `bin/PowerNap.prg` to the `GARMIN/APPS/` folder on the watch.
