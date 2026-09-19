@@ -1,3 +1,21 @@
+> **Historical document - do not follow it.**
+>
+> v1.1.0 shipped on 2026-09-19. This brief records the intent of that day, not
+> the state of the project. **`CLAUDE.md` takes precedence over everything
+> below**, and `CONTRIBUTING.md` holds the procedure. Known to be out of date
+> here:
+>
+> - the "read this first, it overrides `CLAUDE.md`" ground rule in section 0
+>   (reversed: `CLAUDE.md` is the source of truth);
+> - the key model: BACK x2 on every screen was tried and rejected on the wrist;
+>   BACK is a single-press back button and only the start screen's BACK x2
+>   exits;
+> - the wording "Latest alarm", replaced by "Alarm by HH:MM";
+> - `tools/devices.txt` as the release matrix: that file is gone, and the
+>   supported devices are read from `manifest.xml` through `tools/matrix.sh`;
+> - the instruction to work on `feature/stay-awake-gentle-wake`: that branch
+>   was merged and the project works one branch per PR (`CONTRIBUTING.md`).
+
 # Power Nap v1.1.0 — implementation brief for the next agent
 
 Written 2026-09-19 after the owner's first real-watch test of the current
