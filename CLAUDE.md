@@ -4,7 +4,7 @@
 
 - One branch per PR; merge into `main` when the checks pass, then delete the branch. `main` stays publishable.
 - Before a merge: `tools/matrix.sh build` (strict, every product) plus `tools/matrix.sh test` on the protocol set.
-- A PR that changes text, colours or layout also needs simulator screenshots of the smallest screen, the largest, and a monochrome one.
+- A PR that changes text, colours or layout also needs simulator screenshots: `instinct3solar45mm` (smallest, and the only 1-bit), `fenix847mm` (largest), `fr255s` (smallest colour screen, so the three shots do not prove the same thing twice).
 - Supported devices are read from `manifest.xml`, never from a hardcoded list.
 - New tests are for logic, not for texts and colours.
 - If something cannot be done the way it was asked for, stop and propose the alternative instead of improvising.

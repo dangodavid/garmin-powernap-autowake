@@ -1,5 +1,9 @@
 # Build artifacts
 bin/
 
+# Local VS Code settings: monkeyC.developerKeyPath is an absolute path to a
+# per-machine signing key. Copy .vscode/settings.example.json to get started.
+.vscode/settings.json
+
 # macOS
 .DS_Store

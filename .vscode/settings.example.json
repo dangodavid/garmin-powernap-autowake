@@ -1,0 +1,19 @@
+// Copy to .vscode/settings.json and set developerKeyPath to your own key.
+// .vscode/settings.json is gitignored: it has to hold an absolute path, and
+// an absolute path from one machine is wrong on every other one.
+{
+    // Absolute path to your Connect IQ developer key. The Monkey C extension
+    // hands this string to the compiler as -k without expanding anything, so
+    // "~/developer_key.der" and "${userHome}/developer_key.der" both fail:
+    // write the path out in full. Generate a key with
+    // Ctrl+Shift+P -> Monkey C: Generate a Developer Key.
+    // tools/matrix.sh looks for ~/developer_key.der first and only reads this
+    // setting as a fallback, so keeping the key there needs no path at all.
+    "monkeyC.developerKeyPath": "/absolute/path/to/developer_key.der",
+
+    // Project settings - keep these as they are. The build is warning-free
+    // under Strict on every product in the manifest, and tools/matrix.sh
+    // treats a warning as a failure.
+    "monkeyC.typeCheckLevel": "Strict",
+    "monkeyC.optimizationLevel": "Basic"
+}

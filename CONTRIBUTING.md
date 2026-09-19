@@ -4,7 +4,30 @@
 
 - [Garmin Connect IQ SDK](https://developer.garmin.com/connect-iq/sdk/) 4.0.0 or later
 - Visual Studio Code with the [Monkey C extension](https://marketplace.visualstudio.com/items?itemName=garmin.monkey-c)
-- A developer key (`.der`): generate one via the SDK Manager or [Garmin's keytool](https://developer.garmin.com/connect-iq/sdk/)
+- A developer key (`.der`): generate one via the SDK Manager, via
+  `Ctrl+Shift+P` -> *Monkey C: Generate a Developer Key*, or with
+  [Garmin's keytool](https://developer.garmin.com/connect-iq/sdk/)
+
+### Local VS Code settings
+
+`.vscode/settings.json` is not in version control, because
+`monkeyC.developerKeyPath` has to be an absolute path to your own signing key
+and the Monkey C extension passes that string to the compiler as `-k` without
+expanding anything - neither `~` nor `${userHome}` works there. Copy the
+example and edit the one line:
+
+```bash
+cp .vscode/settings.example.json .vscode/settings.json
+```
+
+The example also carries the two project settings that belong to everyone
+(`typeCheckLevel: Strict`, `optimizationLevel: Basic`); leave those as they
+are, since `tools/matrix.sh` fails a device on any warning.
+
+If you keep the key at `~/developer_key.der`, `tools/matrix.sh` finds it
+without the setting at all - it checks `$DEVELOPER_KEY`, then
+`~/developer_key.der`, and only then falls back to reading
+`.vscode/settings.json`.
 
 ## Git
 
