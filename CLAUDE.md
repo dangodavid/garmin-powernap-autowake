@@ -120,6 +120,10 @@ tools/
   runtests.sh           # build (-t -l 3 -w) + monkeydo -t per device, log per device,
                         #   simulator restart + 3 attempts; PROJ_DIR/OUT_DIR overrides
                         #   (no device list of its own: tools/matrix.sh list feeds it)
+  lib.sh                # sourced by both (bash and zsh): ciq_find_sdk(), the one
+                        #   SDK lookup in the repo - CIQ_SDK/CIQ_HOME, then
+                        #   current-sdk.cfg, ~/connectiq-sdk, newest installed;
+                        #   never a pinned SDK build id
 CONTRIBUTING.md         # the full procedure: git flow, what to run and when, the
                         #   screenshots a text/colour/layout PR needs, the release
                         #   sweep, and what every file under test/ covers

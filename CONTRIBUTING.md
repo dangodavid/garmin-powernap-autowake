@@ -174,6 +174,11 @@ the first device.
 | `TEST_TIMEOUT` | `420` seconds to wait for one device's suite |
 | `TEST_ATTEMPTS` | `3` tries per device, with a simulator restart in between |
 
+`tools/runtests.sh` reads `CIQ_SDK`/`CIQ_HOME`, `DEVELOPER_KEY`, `PROJ_DIR` and
+`OUT_DIR` too: both scripts source `tools/lib.sh` and locate the SDK through
+the same `ciq_find_sdk()`, so neither names an SDK build and an SDK update
+cannot break one of them while the other keeps working.
+
 ## What to run and when
 
 ### Every pull request

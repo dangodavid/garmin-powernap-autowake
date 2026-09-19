@@ -55,6 +55,11 @@ test_attempts=${TEST_ATTEMPTS:-3}
 usage() { sed -e '1d' -e '/^[^#]/,$d' -e 's/^# \{0,1\}//' "$0"; }
 die()   { printf '%s: %s\n' "$self" "$1" >&2; exit "$EXIT_USAGE"; }
 
+# Shared with runtests.sh so there is one SDK lookup in the repo, not two.
+here=$(cd "$(dirname "$0")" && pwd)
+[ -r "$here/lib.sh" ] || die "cannot read $here/lib.sh"
+. "$here/lib.sh"
+
 # ---------------------------------------------------------------- manifest --
 # Every <iq:product id="..."/> outside an XML comment, alphabetically, no
 # duplicates. Splitting on "<!--" and dropping everything up to the matching
@@ -94,28 +99,6 @@ manifest_products() {
 }
 
 # ------------------------------------------------------------------- setup --
-find_sdk() {
-    if [ -n "${CIQ_SDK:-}" ]; then printf '%s' "${CIQ_SDK%/}"; return; fi
-    if [ -n "${CIQ_HOME:-}" ]; then printf '%s' "${CIQ_HOME%/}"; return; fi
-    local cfg dir newest
-    for cfg in "$HOME/Library/Application Support/Garmin/ConnectIQ/current-sdk.cfg" \
-               "$HOME/.Garmin/ConnectIQ/current-sdk.cfg"; do
-        if [ -f "$cfg" ]; then
-            dir=$(tr -d '\r\n' < "$cfg"); dir=${dir%/}
-            if [ -x "$dir/bin/monkeyc" ]; then printf '%s' "$dir"; return; fi
-        fi
-    done
-    [ -x "$HOME/connectiq-sdk/bin/monkeyc" ] && { printf '%s' "$HOME/connectiq-sdk"; return; }
-    # Newest installed SDK by folder date: version numbers do not sort by name.
-    newest=""
-    for dir in "$HOME/Library/Application Support/Garmin/ConnectIQ/Sdks"/*/ \
-               "$HOME/.Garmin/ConnectIQ/Sdks"/*/; do
-        [ -x "${dir%/}/bin/monkeyc" ] || continue
-        if [ -z "$newest" ] || [ "${dir%/}" -nt "$newest" ]; then newest=${dir%/}; fi
-    done
-    [ -n "$newest" ] && printf '%s' "$newest"
-}
-
 find_devices_dir() {
     if [ -n "${CIQ_DEVICES:-}" ]; then printf '%s' "${CIQ_DEVICES%/}"; return; fi
     local dir
@@ -325,7 +308,7 @@ if [ "$mode" = list ]; then
     exit "$EXIT_OK"
 fi
 
-sdk=$(find_sdk)
+sdk=$(ciq_find_sdk)
 [ -n "$sdk" ] || die "no Connect IQ SDK found; set CIQ_SDK to the SDK folder"
 monkeyc="$sdk/bin/monkeyc"
 monkeydo="$sdk/bin/monkeydo"

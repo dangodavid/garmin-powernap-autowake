@@ -3,7 +3,13 @@
 # Usage: runtests.sh <device> [<device> ...]
 # Writes $OUT_DIR/log-<device>.txt (default /tmp/powernap-tests); prints one line per device.
 # PROJ_DIR overrides the project folder (e.g. a frozen copy of the tree).
-SDK="$HOME/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-9.1.0-2026-03-09-6a872a80b"
+# CIQ_SDK/CIQ_HOME override the SDK; otherwise it is found the same way
+# matrix.sh finds it (lib.sh), so no SDK build id is pinned here.
+here=$(cd "$(dirname "$0")" && pwd)
+[ -r "$here/lib.sh" ] || { echo "runtests.sh: cannot read $here/lib.sh" >&2; exit 2; }
+. "$here/lib.sh"
+SDK=$(ciq_find_sdk)
+[ -n "$SDK" ] || { echo "runtests.sh: no Connect IQ SDK found; set CIQ_SDK to the SDK folder" >&2; exit 2; }
 PROJ=${PROJ_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
 OUT=${OUT_DIR:-/tmp/powernap-tests}
 mkdir -p "$OUT"
