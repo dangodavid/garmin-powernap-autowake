@@ -22,7 +22,7 @@ import Toybox.WatchUi;
 //! Wake-up guarantee
 //! -----------------
 //! The deadline is start + fallAsleepAllowance + napDuration, fixed when the
-//! nap starts and shown on screen as "Latest alarm HH:MM". It is a hard upper
+//! nap starts and shown on screen as "Alarm by HH:MM". It is a hard upper
 //! bound on the alarm time:
 //! * Sleep detected  -> alarm at min(onset + napDuration, deadline).
 //!                      Falling asleep late shortens the nap instead of

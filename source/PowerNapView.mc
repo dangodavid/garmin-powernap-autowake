@@ -11,7 +11,7 @@ import Toybox.Timer;
 //! summary), the Stay Awake screens and the "peek" card. The detector
 //! requests an update every second while a nap is active, so every value on
 //! screen is live; the start screen has its own 1 s refresh for the
-//! "Latest alarm" preview.
+//! "Alarm by" preview.
 //!
 //! Every screen is described as a prioritised list of lines and laid out by
 //! ScreenLayout, which drops optional lines and shrinks fonts until the
@@ -34,7 +34,7 @@ class PowerNapView extends WatchUi.View {
     private var _tapPlusMaxY as Number = -1;    // y < this        -> +5 min
     private var _tapMinusMinY as Number = -1;   // y > this        -> -5 min ...
     private var _tapStartMinY as Number = -1;   // y >= this       -> ... start ("TAP to begin")
-    private var _uiTimer as Timer.Timer? = null;     // start screen: refresh at each minute for "Latest alarm"
+    private var _uiTimer as Timer.Timer? = null;     // start screen: refresh at each minute for "Alarm by"
 
     // Two-press confirmation (4 s, in ms): BACK x2 on the start screen
     // leaves the app, START x2 during a session stops with stats.
@@ -173,7 +173,7 @@ class PowerNapView extends WatchUi.View {
         _detector.stop();
         _alarm.stop();
         // Settings changed from the phone during the nap were ignored by the
-        // running detector; read them now so the "Latest alarm" preview is right.
+        // running detector; read them now so the "Alarm by" preview is right.
         _detector.loadSettings();
         _started = false;
         _peeking = false;
@@ -419,9 +419,9 @@ class PowerNapView extends WatchUi.View {
 
     // -- Screen 0: Start / Duration Picker -----------------------------
 
-    //! Start screen: arrows around the duration ("min of sleep": counted from
-    //! falling asleep), the latest alarm time (or what Stay Awake does), and
-    //! the low-battery warning. Adds the
+    //! Start screen: the time of day, arrows around the duration ("min of
+    //! sleep": counted from falling asleep), the guaranteed alarm time
+    //! ("Alarm by", or what Stay Awake does) and the low-battery warning. Adds the
     //! arrow spacers, the number and its label to `lines` for the caller.
     //! Everything above the number adds 5 min, everything below the label
     //! removes 5 min, the number and the label start.
@@ -431,8 +431,12 @@ class PowerNapView extends WatchUi.View {
         var stayAwake = (_pendingDuration == STAY_AWAKE);
         var arrowH = w * 6 / 100;
 
+        // The time of day is not a line of this block: drawStartScreen
+        // draws it in the margin above (startClockBox), or in the Instinct
+        // lens, so it never competes with the number for height.
         if (!hasSubscreen()) {
-            // With a subscreen (Instinct) the title goes into the lens instead.
+            // With a subscreen (Instinct) the lens holds the clock; the
+            // title is left out there.
             L.addText(["POWER NAP"], fontsBody(), Graphics.COLOR_BLUE, 50);
         }
         lines.add(L.addSpacer(arrowH + 1, ScreenLayout.KEEP));
@@ -454,7 +458,7 @@ class PowerNapView extends WatchUi.View {
             // rounded up to the minute.
             var by = formatMoment(new Time.Moment(Time.now().value()
                 + (_detector.getFallAsleepAllowanceMin() + _pendingDuration) * 60 + 59));
-            L.addText(["Latest alarm " + by, "Latest " + by, "By " + by],
+            L.addText(["Alarm by " + by, "By " + by],
                 [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 90);
         }
         lines.add(L.addSpacer(arrowH + 1, ScreenLayout.KEEP));
@@ -487,13 +491,17 @@ class PowerNapView extends WatchUi.View {
         var lines = [] as Array<LayoutLine>;
         var L = solveStartScreen(dc, lines);
 
-        var sub = subscreenBox();
-        if (sub != null) {
-            var box = sub as Array<Number>;
-            var fh = dc.getFontHeight(Graphics.FONT_XTINY);
-            dc.setColor(Palette.fg(Graphics.COLOR_BLUE, false), Graphics.COLOR_TRANSPARENT);
-            dc.drawText(box[0] + box[2] / 2, box[1] + (box[3] - fh) / 2, Graphics.FONT_XTINY, "NAP",
-                Graphics.TEXT_JUSTIFY_CENTER);
+        // The time of day, as on the live screens: in the Instinct lens,
+        // elsewhere in the margin above the block (see startClockBox).
+        if (subscreenBox() != null) {
+            drawInLens(dc, clockString(), Graphics.COLOR_LT_GRAY, false);
+        } else {
+            var box = startClockBox(dc, L, lines[0].y);
+            if (box != null) {
+                var b = box as Array<Number>;
+                dc.setColor(Palette.fg(Graphics.COLOR_LT_GRAY, false), Graphics.COLOR_TRANSPARENT);
+                dc.drawText(b[0] + b[2] / 2, b[1], Graphics.FONT_XTINY, clockString(), Graphics.TEXT_JUSTIFY_CENTER);
+            }
         }
 
         // Arrows: filled triangles centred in their spacer slots, drawn
@@ -569,7 +577,7 @@ class PowerNapView extends WatchUi.View {
         // line: on the smallest screens the alarm promise must survive.
         L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_LT_GRAY, 96);
         if (!awake) {
-            // Below the promise: on the smallest screens "Latest alarm" wins;
+            // Below the promise: on the smallest screens "Alarm by" wins;
             // the start screen already showed the warnings with room to spare.
             addWarnings(L, 94);
         }
@@ -941,7 +949,7 @@ class PowerNapView extends WatchUi.View {
             return ["Alarm at " + at, "At " + at] as Array<String>;
         }
         var by = formatMoment(new Time.Moment(_detector.getDeadlineTime().value() + 59));
-        return ["Latest alarm " + by, "Latest " + by, "By " + by] as Array<String>;
+        return ["Alarm by " + by, "By " + by] as Array<String>;
     }
 
     //! The minute the planned alarm rings in ("--:--" before onset).
@@ -957,6 +965,34 @@ class PowerNapView extends WatchUi.View {
             L.addText([clockString()], [Graphics.FONT_TINY, Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
                 Graphics.COLOR_LT_GRAY, 92);
         }
+    }
+
+    //! Where the start screen's clock goes (owner request: "Alarm by HH:MM"
+    //! reads against it): [x, y, w, h] of the text at FONT_XTINY, centred
+    //! in the room above the first line of the block (`firstY`), or null
+    //! when that room is too small or the text does not fit the visible
+    //! width at those rows (the narrow top of a round screen). Not a line
+    //! of the block on purpose: on the 454 px fenix 8 the band's slack is
+    //! 26 px and a clock line would need 47, so the engine dropped it (or
+    //! would have shrunk the number). The round-screen analogue of the
+    //! Instinct lens, which shows the clock on every screen.
+    private function startClockBox(dc as Graphics.Dc, L as ScreenLayout, firstY as Number) as Array<Number>? {
+        if (hasSubscreen()) {
+            return null;
+        }
+        var font = Graphics.FONT_XTINY;
+        var fh = dc.getFontHeight(font);
+        var room = firstY - 2;                       // 2 px clear of the first line
+        if (room < fh) {
+            return null;
+        }
+        var y = (room - fh) / 2;
+        var tw = dc.getTextWidthInPixels(clockString(), font);
+        var b = L.visibleInkBounds(y, fh);
+        if (tw > b[1] - b[0]) {
+            return null;
+        }
+        return [(b[0] + b[1]) / 2 - tw / 2, y, tw, fh] as Array<Number>;
     }
 
     private function clockString() as String {
@@ -1074,7 +1110,7 @@ class PowerNapView extends WatchUi.View {
         return d;
     }
 
-    //! One-shot timer to just after the next change of the "Latest alarm"
+    //! One-shot timer to just after the next change of the "Alarm by"
     //! preview. It is rounded up to the minute (see alarmLineTexts), so it
     //! moves when the clock reaches second 1 of a minute.
     private function startUiTimer() as Void {
@@ -1158,7 +1194,7 @@ class PowerNapView extends WatchUi.View {
     // the watch. Release builds show nothing.
     (:debug)
     private function buildDebugLabel() as String {
-        return "dev #0919g";
+        return "dev #0919h";
     }
 
     (:release)
@@ -1242,5 +1278,19 @@ class PowerNapView extends WatchUi.View {
         var lines = [] as Array<LayoutLine>;
         solveStartScreen(dc, lines);
         return [_tapPlusMaxY, _tapMinusMinY, lines[1].slotH, lines[2].slotH, _tapStartMinY] as Array<Number>;
+    }
+
+    //! The start screen's clock box [x, y, w, h, firstLineY] (drawn in the
+    //! top margin on devices without a lens), or null when it is not drawn.
+    (:debug)
+    function testStartClockBox(dc as Graphics.Dc) as Array<Number>? {
+        var lines = [] as Array<LayoutLine>;
+        var L = solveStartScreen(dc, lines);
+        var box = startClockBox(dc, L, lines[0].y);
+        if (box == null) {
+            return null;
+        }
+        var b = box as Array<Number>;
+        return [b[0], b[1], b[2], b[3], lines[0].y] as Array<Number>;
     }
 }

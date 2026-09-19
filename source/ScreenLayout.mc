@@ -1182,4 +1182,12 @@ class ScreenLayout {
         return out;
     }
     function getFooterY() as Number { return _footerY; }
+
+    //! Visible [left, right] at the ink rows of a text box of font height
+    //! fh starting at row y (display outline, clip circle, Instinct lens),
+    //! for text drawn outside the band: the start screen's clock in the
+    //! top margin. Safe to call after solve().
+    function visibleInkBounds(y as Number, fh as Number) as Array<Number> {
+        return inkBounds(y, fh);
+    }
 }

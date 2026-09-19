@@ -831,7 +831,7 @@ function testTiming_alarmManagerStartsOnDeadline(logger as Test.Logger) as Boole
 
 //! 15 min nap started at 9:00 with the default 15 min "max time to fall
 //! asleep". At the start nothing is fixed at 9:15: the screen promises
-//! "Latest alarm 9:30" (start + 15 + 15). Moving until 9:05, then still: the
+//! "Alarm by 9:30" (start + 15 + 15). Moving until 9:05, then still: the
 //! watch decides "asleep" at 9:10 and the alarm moves to 9:10 + 15 = 9:25.
 //! Asleep only at 9:20 would be capped at 9:30 (a 10 min nap); never asleep
 //! rings at 9:30.

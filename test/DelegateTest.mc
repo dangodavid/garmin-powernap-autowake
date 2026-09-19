@@ -743,7 +743,7 @@ function testDelegate_phoneSettingsKeepWatchPick(logger as Test.Logger) as Boole
 }
 
 //! A fall-asleep allowance changed on the phone during a nap is ignored by
-//! that nap but read when the start screen comes back, so the "Latest alarm"
+//! that nap but read when the start screen comes back, so the "Alarm by"
 //! preview matches the next nap.
 (:test)
 function testDelegate_resetToStartReloadsSettings(logger as Test.Logger) as Boolean {

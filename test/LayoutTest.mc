@@ -1,6 +1,7 @@
 import Toybox.Test;
 import Toybox.Lang;
 import Toybox.Graphics;
+import Toybox.Math;
 import Toybox.System;
 import Toybox.Application;
 import Toybox.Time;
@@ -125,7 +126,7 @@ function layoutHelperAsleep() as SleepDetector {
 }
 
 //! Calibrating and monitoring screens: status and the guaranteed alarm time
-//! ("Latest alarm") are always visible, also with the inactive warning and the
+//! ("Alarm by") are always visible, also with the inactive warning and the
 //! armed (longest) footer.
 (:test)
 function testLayout_monitoringScreens(logger as Test.Logger) as Boolean {
@@ -134,16 +135,16 @@ function testLayout_monitoringScreens(logger as Test.Logger) as Boolean {
     var d = new SleepDetector(null);
     d.testStart();
     var v = layoutHelperView(d, a);
-    var ok = layoutHelperCheck("calibrating", v, dc, ["Calibrating", "Latest|By "] as Array<String>, logger);
+    var ok = layoutHelperCheck("calibrating", v, dc, ["Calibrating", "Alarm by|By "] as Array<String>, logger);
 
     d.testSetBaseline(70.0f);
     d.testRunMinutes(1, 68, 10.0f);
-    ok = layoutHelperCheck("monitoring", v, dc, ["Monitoring", "Stillness", "Latest|By "] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("monitoring", v, dc, ["Monitoring", "Stillness", "Alarm by|By "] as Array<String>, logger) && ok;
 
     d.noteInactive();
     v.pressConfirm(ConfirmPress.CONTEXT_STOP);
     ok = layoutHelperCheck("monitoring+warning+armed", v, dc,
-        ["Monitoring", "Latest|By ", "Keep app open"] as Array<String>, logger) && ok;
+        ["Monitoring", "Alarm by|By ", "Keep app open"] as Array<String>, logger) && ok;
     return ok;
 }
 
@@ -380,7 +381,7 @@ function testLayout_startScreenFollowsPhoneSetting(logger as Test.Logger) as Boo
 }
 
 //! Start screen for short, long and Stay Awake durations: everything fits,
-//! the duration, its label and the promise (Latest alarm / what Stay Awake
+//! the duration, its label and the promise (Alarm by / what Stay Awake
 //! does) are shown.
 (:test)
 function testLayout_startScreens(logger as Test.Logger) as Boolean {
@@ -391,7 +392,7 @@ function testLayout_startScreens(logger as Test.Logger) as Boolean {
     for (var i = 0; i < durations.size(); i++) {
         v.testSetPendingDuration(durations[i]);
         ok = layoutHelperCheck("start " + durations[i], v, dc,
-            [durations[i].toString(), "min", "Latest|By "] as Array<String>, logger) && ok;
+            [durations[i].toString(), "min", "Alarm by|By "] as Array<String>, logger) && ok;
     }
     v.testSetPendingDuration(0);
     ok = layoutHelperCheck("start stay awake", v, dc, ["0", "stay awake", "doze"] as Array<String>, logger) && ok;
@@ -409,7 +410,7 @@ function testLayout_peekScreens(logger as Test.Logger) as Boolean {
     d.testStart();
     var v = layoutHelperView(d, new AlarmManager());
     v.showPeek();
-    ok = layoutHelperCheck("peek before onset", v, dc, ["No sleep yet", "Latest|By "] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("peek before onset", v, dc, ["No sleep yet", "Alarm by|By "] as Array<String>, logger) && ok;
 
     d = layoutHelperAsleep();
     d.testRunMinutes(3, 55, 10.0f);
@@ -512,6 +513,86 @@ function testLayout_clockOnLiveScreens(logger as Test.Logger) as Boolean {
     return ok;
 }
 
+//! The start screen shows the time of day at the top as well (owner
+//! request: "Alarm by HH:MM" reads against it), drawn in the margin above
+//! the block: for every duration, Stay Awake included, and with the
+//! low-battery warning on screens of 240 px and up; the box is on screen,
+//! clear of the first line and inside the round chord at its rows, and
+//! the block itself is untouched (promise shown, number at full size). On
+//! the Instinct the clock is in the lens, not a box.
+(:test)
+function testLayout_clockOnStartScreen(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    if (v.testHasSubscreen()) {
+        return true;
+    }
+    var ok = true;
+    var durations = [5, 30, 120, 0] as Array<Number>;
+    var batteries = [100, 5] as Array<Number>;
+    for (var b = 0; b < batteries.size(); b++) {
+        for (var i = 0; i < durations.size(); i++) {
+            v.testSetPendingDuration(durations[i]);
+            v.testForceBattery(batteries[b]);
+            var name = "start " + durations[i] + " battery " + batteries[b];
+            var box = v.testStartClockBox(dc);
+            if (box == null) {
+                if (batteries[b] == 100 || dc.getHeight() >= 240) {
+                    logger.debug(name + ": no clock");
+                    logger.debug(v.testBuildLayout(dc).testDescribe());
+                    ok = false;
+                }
+                continue;
+            }
+            ok = layoutHelperClockBox(name, box as Array<Number>, dc, logger) && ok;
+        }
+    }
+    v.testForceBattery(100);
+    v.testSetPendingDuration(30);
+    var layout = v.testBuildLayout(dc);
+    var zones = v.testMeasureTapZones(dc);
+    if (!layout.showsFragment("Alarm by") && !layout.showsFragment("By ")) {
+        logger.debug("the clock must not push out the promise");
+        ok = false;
+    }
+    if (zones[2] != dc.getFontHeight(Graphics.FONT_NUMBER_MEDIUM)) {
+        logger.debug("the clock must not shrink the number");
+        ok = false;
+    }
+    return ok;
+}
+
+//! The clock box [x, y, w, h, firstLineY] is on screen, above the first
+//! line of the block, and inside the round chord at its ink rows.
+(:debug)
+function layoutHelperClockBox(name as String, box as Array<Number>, dc as Graphics.Dc,
+                              logger as Test.Logger) as Boolean {
+    var x = box[0];
+    var y = box[1];
+    var w = box[2];
+    var h = box[3];
+    var firstY = box[4];
+    if (x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > dc.getWidth() || y + h > firstY) {
+        logger.debug(name + ": clock box " + x + "," + y + " " + w + "x" + h
+            + " off screen or over the first line at " + firstY);
+        return false;
+    }
+    if (System.getDeviceSettings().screenShape == System.SCREEN_SHAPE_ROUND) {
+        // The ink rows (15 %..85 % of the box) must lie inside the circle.
+        var r = dc.getWidth() / 2;
+        var rows = [y + h * 15 / 100, y + h * 85 / 100] as Array<Number>;
+        for (var i = 0; i < rows.size(); i++) {
+            var dy = rows[i] - r;
+            var half = Math.sqrt((r * r - dy * dy).toFloat()).toNumber();
+            if (x < r - half || x + w > r + half) {
+                logger.debug(name + ": clock box " + x + ".." + (x + w) + " outside the chord at row " + rows[i]);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 //! Clock shown on this screen (either side of a minute change counts).
 (:debug)
 function layoutHelperClock(name as String, v as PowerNapView, dc as Graphics.Dc, logger as Test.Logger) as Boolean {
@@ -526,22 +607,22 @@ function layoutHelperClock(name as String, v as PowerNapView, dc as Graphics.Dc,
 }
 
 //! Low battery (5 %, not charging) is shown on the start screen and the Stay
-//! Awake screen, and on the monitoring screen it never pushes out "Latest".
+//! Awake screen, and on the monitoring screen it never pushes out "Alarm by".
 (:test)
 function testLayout_lowBatteryWarning(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
     var ok = true;
     // The 176 px Instinct has room for one line under the duration: there the
-    // warning (act on it before the nap) wins, and "Latest alarm" shows on
+    // warning (act on it before the nap) wins, and "Alarm by" shows on
     // the monitoring screen right after START. Larger screens show both.
     var roomy = dc.getHeight() >= 200;
     var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
     v.testForceBattery(5);
     ok = layoutHelperCheck("start low battery", v, dc,
-        (roomy ? ["battery 5%|Battery 5%|Batt 5%", "Latest|By "] : ["battery 5%|Battery 5%|Batt 5%"])
+        (roomy ? ["battery 5%|Battery 5%|Batt 5%", "Alarm by|By "] : ["battery 5%|Battery 5%|Batt 5%"])
             as Array<String>, logger) && ok;
     v.testForceBattery(15);
-    ok = layoutHelperCheck("start 15% is not low", v, dc, ["Latest|By "] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("start 15% is not low", v, dc, ["Alarm by|By "] as Array<String>, logger) && ok;
     if (v.testBuildLayout(dc).showsFragment("attery")) {
         logger.debug("15% battery must not warn");
         ok = false;
@@ -552,10 +633,10 @@ function testLayout_lowBatteryWarning(logger as Test.Logger) as Boolean {
     d.testSetBaseline(70.0f);
     v = layoutHelperView(d, new AlarmManager());
     v.testForceBattery(5);
-    ok = layoutHelperCheck("monitoring low battery", v, dc, ["Monitoring", "Latest|By "] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("monitoring low battery", v, dc, ["Monitoring", "Alarm by|By "] as Array<String>, logger) && ok;
     d.noteInactive();
     v.pressConfirm(ConfirmPress.CONTEXT_STOP);
-    ok = layoutHelperCheck("monitoring low battery crowded", v, dc, ["Monitoring", "Latest|By "] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("monitoring low battery crowded", v, dc, ["Monitoring", "Alarm by|By "] as Array<String>, logger) && ok;
 
     d = new SleepDetector(null);
     d.testStartStayAwake();
@@ -568,7 +649,7 @@ function testLayout_lowBatteryWarning(logger as Test.Logger) as Boolean {
 
 //! The start-screen number only shrinks when that keeps the promise line on
 //! screen: with a warning it either keeps its full size, or it is smaller
-//! and "Latest alarm" is shown (on the Instinct the warning replaces the
+//! and "Alarm by" is shown (on the Instinct the warning replaces the
 //! promise and the number stays full size).
 (:test)
 function testLayout_startNumberShrinksOnlyForThePromise(logger as Test.Logger) as Boolean {
@@ -582,7 +663,7 @@ function testLayout_startNumberShrinksOnlyForThePromise(logger as Test.Logger) a
         v.testForceBattery(pcts[i]);
         var zones = v.testMeasureTapZones(dc);
         var layout = v.testBuildLayout(dc);
-        if (zones[2] < full && !layout.showsFragment("Latest") && !layout.showsFragment("By ")) {
+        if (zones[2] < full && !layout.showsFragment("Alarm by") && !layout.showsFragment("By ")) {
             logger.debug("battery " + pcts[i] + "%: number shrank to " + zones[2] + " px but the promise is gone");
             ok = false;
         }
@@ -607,10 +688,10 @@ function testLayout_lensAndLongValues(logger as Test.Logger) as Boolean {
     d.testFeedHR(100);
     var v = layoutHelperView(d, new AlarmManager());
     v.pressConfirm(ConfirmPress.CONTEXT_STOP);
-    ok = layoutHelperCheck("calibrating HR 100 armed", v, dc, ["Calibrating", "Latest|By "] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("calibrating HR 100 armed", v, dc, ["Calibrating", "Alarm by|By "] as Array<String>, logger) && ok;
     d.noteInactive();
     ok = layoutHelperCheck("calibrating HR 100 armed + inactive", v, dc,
-        ["Calibrating", "Latest|By ", "Keep app open"] as Array<String>, logger) && ok;
+        ["Calibrating", "Alarm by|By ", "Keep app open"] as Array<String>, logger) && ok;
 
     d = new SleepDetector(null);
     d.testStartStayAwake();
@@ -671,7 +752,7 @@ function testLayout_completionShownWithoutRing(logger as Test.Logger) as Boolean
     return ok;
 }
 
-//! The promised time itself: "Latest alarm" is the deadline rounded UP to the
+//! The promised time itself: "Alarm by" is the deadline rounded UP to the
 //! minute (never earlier than the real alarm), and after onset "Wake at" /
 //! "Alarm at" is the minute of the planned end.
 (:test)
@@ -882,8 +963,8 @@ function testLayout_footerNeverStealsContent(logger as Test.Logger) as Boolean {
     d.testRunMinutes(1, 68, 10.0f);
     v = layoutHelperView(d, new AlarmManager());
     ok = layoutHelperCheck("monitoring + long footer", v, dc,
-        (dc.getHeight() >= 200 ? ["Monitoring", "Stillness", "Latest|By ", "after sleep|Nap 30 min"]
-                               : ["Monitoring", "Latest|By "]) as Array<String>, logger) && ok;
+        (dc.getHeight() >= 200 ? ["Monitoring", "Stillness", "Alarm by|By ", "after sleep|Nap 30 min"]
+                               : ["Monitoring", "Alarm by|By "]) as Array<String>, logger) && ok;
     return ok;
 }
 
