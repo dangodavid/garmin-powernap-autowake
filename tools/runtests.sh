@@ -3,14 +3,17 @@
 # Usage: runtests.sh <device> [<device> ...]
 # Writes $OUT_DIR/log-<device>.txt (default /tmp/powernap-tests); prints one line per device.
 # PROJ_DIR overrides the project folder (e.g. a frozen copy of the tree).
-# CIQ_SDK/CIQ_HOME override the SDK; otherwise it is found the same way
-# matrix.sh finds it (lib.sh), so no SDK build id is pinned here.
+# CIQ_SDK/CIQ_HOME override the SDK and DEVELOPER_KEY the signing key;
+# otherwise both are found the same way matrix.sh finds them (lib.sh), so no
+# SDK build id and no key path are pinned here.
 here=$(cd "$(dirname "$0")" && pwd)
 [ -r "$here/lib.sh" ] || { echo "runtests.sh: cannot read $here/lib.sh" >&2; exit 2; }
 . "$here/lib.sh"
 SDK=$(ciq_find_sdk)
 [ -n "$SDK" ] || { echo "runtests.sh: no Connect IQ SDK found; set CIQ_SDK to the SDK folder" >&2; exit 2; }
 PROJ=${PROJ_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
+KEY=$(ciq_find_key "$PROJ")
+[ -n "$KEY" ] && [ -f "$KEY" ] || { echo "runtests.sh: no developer key; set DEVELOPER_KEY to the .der file" >&2; exit 2; }
 OUT=${OUT_DIR:-/tmp/powernap-tests}
 mkdir -p "$OUT"
 
@@ -33,7 +36,7 @@ restart_sim() {
 for dev in "$@"; do
   prg="$OUT/T-$dev.prg"
   log="$OUT/log-$dev.txt"
-  (cd "$PROJ" && "$SDK/bin/monkeyc" -o "$prg" -f monkey.jungle -d "$dev" -y ~/developer_key.der -t -l 3 -w 2>&1 | grep -v "launcher icon" | grep -v "^BUILD SUCCESSFUL") > "$OUT/build-$dev.txt"
+  (cd "$PROJ" && "$SDK/bin/monkeyc" -o "$prg" -f monkey.jungle -d "$dev" -y "$KEY" -t -l 3 -w 2>&1 | grep -v "launcher icon" | grep -v "^BUILD SUCCESSFUL") > "$OUT/build-$dev.txt"
   if [ ! -f "$prg" ] || grep -q "ERROR" "$OUT/build-$dev.txt"; then
     echo "$dev: BUILD FAILED"; cat "$OUT/build-$dev.txt"; continue
   fi

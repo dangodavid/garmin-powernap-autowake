@@ -109,17 +109,6 @@ find_devices_dir() {
     done
 }
 
-find_key() {
-    if [ -n "${DEVELOPER_KEY:-}" ]; then printf '%s' "$DEVELOPER_KEY"; return; fi
-    [ -f "$HOME/developer_key.der" ] && { printf '%s' "$HOME/developer_key.der"; return; }
-    local from_vscode
-    if [ -f "$proj/.vscode/settings.json" ]; then
-        from_vscode=$(sed -n 's/.*"monkeyC.developerKeyPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-                      "$proj/.vscode/settings.json" | head -1)
-        [ -n "$from_vscode" ] && [ -f "$from_vscode" ] && { printf '%s' "$from_vscode"; return; }
-    fi
-}
-
 # A device the SDK manager never downloaded, or one whose definition has no
 # watch-app slot, cannot build or run anything: in test mode it is skipped
 # with the reason printed, in build mode it fails like any other device.
@@ -313,7 +302,7 @@ sdk=$(ciq_find_sdk)
 monkeyc="$sdk/bin/monkeyc"
 monkeydo="$sdk/bin/monkeydo"
 [ -x "$monkeyc" ] || die "no monkeyc in $sdk/bin"
-key=$(find_key)
+key=$(ciq_find_key "$proj")
 [ -n "$key" ] || die "no developer key; set DEVELOPER_KEY to the .der file"
 [ -f "$key" ] || die "no developer key at $key"
 devices_dir=$(find_devices_dir)

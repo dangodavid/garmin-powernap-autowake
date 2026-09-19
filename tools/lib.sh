@@ -40,3 +40,31 @@ ciq_find_sdk() {
     done
     [ -n "$newest" ] && printf '%s' "$newest"
 }
+
+# The developer key (.der) to sign with, printed as a path; nothing when none
+# is found, which the caller is expected to treat as fatal.
+#
+#   $DEVELOPER_KEY         an explicit override, used as given
+#   ~/developer_key.der    where both tools expect it
+#   .vscode/settings.json  monkeyC.developerKeyPath, the path VS Code builds
+#                          with, read only if the file names one that exists
+#
+# $1 is the project folder for that last fallback; without it the .vscode step
+# is skipped. The file is not in version control (it holds an absolute path to
+# one machine's key), so it is a convenience, never something to rely on.
+ciq_find_key() {
+    # No glob in this body today, but the same guard as ciq_find_sdk so that
+    # adding one later cannot reintroduce the zsh "no matches found" abort.
+    if [ -n "${ZSH_VERSION:-}" ]; then
+        setopt local_options null_glob
+    fi
+    local proj_dir from_vscode
+    proj_dir=${1:-}
+    if [ -n "${DEVELOPER_KEY:-}" ]; then printf '%s' "$DEVELOPER_KEY"; return; fi
+    [ -f "$HOME/developer_key.der" ] && { printf '%s' "$HOME/developer_key.der"; return; }
+    if [ -n "$proj_dir" ] && [ -f "$proj_dir/.vscode/settings.json" ]; then
+        from_vscode=$(sed -n 's/.*"monkeyC.developerKeyPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                      "$proj_dir/.vscode/settings.json" | head -1)
+        [ -n "$from_vscode" ] && [ -f "$from_vscode" ] && { printf '%s' "$from_vscode"; return; }
+    fi
+}
