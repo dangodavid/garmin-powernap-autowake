@@ -45,6 +45,14 @@ import Toybox.WatchUi;
 //! is therefore requested only on the first two rings from phase 2 and then
 //! every 6th, always AFTER the vibration/tone, and in its own try block so a
 //! failure can never suppress the alarm itself.
+//!
+//! Quiet onset gate (owner rule, non-negotiable): nothing may vibrate, sound
+//! or light up at sleep detection or at any other moment than the alarm and
+//! the Stay Awake nudge. deliver() and requestBacklight() refuse every call
+//! made while the alarm is not ringing, except from inside nudge(); nudge()
+//! refuses every call unless the detector told the manager that the running
+//! session is Stay Awake (setStayAwake). A refused call is a no-op that
+//! increments _blockedDeliveries, which the tests assert stays 0.
 class AlarmManager {
 
     // Alarm type constants matching settings values
@@ -79,6 +87,9 @@ class AlarmManager {
     private var _ringCount   as Number       = 0;     // index of the next ring (sets its phase)
     private var _ringsFired  as Number       = 0;     // rings since startAlarm
     private var _brightRings as Number       = 0;     // rings fired from BACKLIGHT_FROM_PHASE on
+    private var _stayAwake   as Boolean      = false; // the running session may nudge (Stay Awake)
+    private var _nudging     as Boolean      = false; // inside nudge(): output allowed once
+    private var _blockedDeliveries as Number = 0;     // calls refused by the quiet onset gate
 
     // Diagnostics (read by tests; cheap enough to keep in release)
     private var _vibrateCount   as Number  = 0;
@@ -162,14 +173,29 @@ class AlarmManager {
     }
 
     //! Stay Awake: one gentle reminder when the wrist has been still for a
-    //! while. Uses the same channels as the alarm; never while it rings.
+    //! while. Uses the same channels as the alarm; never while it rings, and
+    //! never in a nap session (the quiet onset gate).
     function nudge() as Void {
-        if (_isAlarming) {
+        if (_isAlarming || !_stayAwake) {
+            _blockedDeliveries += 1;
             return;
         }
         _nudgeCount += 1;
-        deliver(NUDGE_PHASE);
-        requestBacklight();
+        _nudging = true;
+        try {
+            deliver(NUDGE_PHASE);
+            requestBacklight();
+        } catch (e instanceof Lang.Exception) {
+            // The channels catch their own errors; nothing else to do.
+        }
+        _nudging = false;
+    }
+
+    //! The detector tells the manager whether the running session is Stay
+    //! Awake (may nudge) or a nap (must stay silent until the alarm). Set by
+    //! SleepDetector at every session start, cleared when the session stops.
+    function setStayAwake(stayAwake as Boolean) as Void {
+        _stayAwake = stayAwake;
     }
 
     //! Stop the alarm and reset state for the next session.
@@ -243,9 +269,22 @@ class AlarmManager {
         }
     }
 
+    //! The quiet onset gate: output is allowed only while the alarm rings or
+    //! from inside nudge(). Any other call is refused and counted.
+    private function outputAllowed() as Boolean {
+        if (_isAlarming || _nudging) {
+            return true;
+        }
+        _blockedDeliveries += 1;
+        return false;
+    }
+
     //! Vibration and/or tone for one ring of `phase`. The configured type is
     //! a preference, widened when the preferred channel cannot be used.
     private function deliver(phase as Number) as Void {
+        if (!outputAllowed()) {
+            return;
+        }
         var vibeUsable = isVibeUsable();
         var toneUsable = isToneUsable();
         // Preferred channels, widened when the preferred one cannot be heard.
@@ -268,6 +307,9 @@ class AlarmManager {
 
     //! Turn the display on, in its own try block (see class doc).
     private function requestBacklight() as Void {
+        if (!outputAllowed()) {
+            return;
+        }
         try {
             if (_forceBacklightThrow) {
                 throw new Lang.Exception();
@@ -509,6 +551,10 @@ class AlarmManager {
 
     (:debug)
     function testGetNudgeCount() as Number { return _nudgeCount; }
+
+    //! Calls that the quiet onset gate refused (must stay 0 in every test).
+    (:debug)
+    function testGetBlockedDeliveries() as Number { return _blockedDeliveries; }
 
     //! Make the backlight request throw, as burn-in protected AMOLED
     //! displays do after ~1 minute, to prove the alarm keeps vibrating.

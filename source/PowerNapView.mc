@@ -52,7 +52,6 @@ class PowerNapView extends WatchUi.View {
     private var _peekStartMs as Number = 0;
     private const PEEK_MS = 5000;
 
-    private var _forceDnd as Number = -1;            // tests: 1 DND on, 0 off, -1 real setting
     private var _forceBatteryPct as Number = -1;     // tests: >= 0 replaces the battery level
     private var _msOffset as Number = 0;             // tests: moves the millisecond clock
 
@@ -306,7 +305,7 @@ class PowerNapView extends WatchUi.View {
 
     //! Start screen: arrows around the duration ("min of sleep": counted from
     //! falling asleep), the latest alarm time (or what Stay Awake does), and
-    //! the battery and DND warnings. Adds the
+    //! the low-battery warning. Adds the
     //! arrow spacers, the number and its label to `lines` for the caller.
     //! Everything above the number adds 5 min, everything below the label
     //! removes 5 min, the number and the label start.
@@ -747,43 +746,15 @@ class PowerNapView extends WatchUi.View {
         }
     }
 
-    //! Warnings the user can still act on (start and before sleep): a nearly
-    //! empty battery may not last until the alarm, and Do Not Disturb may
-    //! keep the watch from vibrating or beeping. Both at once share one line,
-    //! so they never push the alarm promise off a small screen together.
+    //! Warning the user can still act on (start and before sleep): a nearly
+    //! empty battery may not last until the alarm. (Do Not Disturb needs no
+    //! warning: verified on a fenix 8 Pro, the alarm vibrates with DND on.)
     private function addWarnings(L as ScreenLayout, priority as Number) as Void {
         var pct = lowBatteryPct();
-        var dnd = dndOn();
-        var texts = null;
-        var color = Graphics.COLOR_ORANGE;
-        if (pct >= 0 && dnd) {
-            texts = ["Low battery " + pct + "%, DND on", "Battery " + pct + "%, DND on", "Batt " + pct + "%, DND"];
-            color = Graphics.COLOR_RED;
-        } else if (pct >= 0) {
-            texts = ["Low battery " + pct + "%", "Battery " + pct + "%"];
-            color = Graphics.COLOR_RED;
-        } else if (dnd) {
-            texts = ["DND on: alarm may be silent", "DND may mute alarm", "DND on"];
+        if (pct >= 0) {
+            L.addText(["Low battery " + pct + "%", "Battery " + pct + "%"] as Array<String>,
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_RED, priority);
         }
-        if (texts != null) {
-            L.addText(texts as Array<String>, [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
-                color, priority);
-        }
-    }
-
-    private function dndOn() as Boolean {
-        if (_forceDnd >= 0) {
-            return _forceDnd == 1;
-        }
-        try {
-            var ds = System.getDeviceSettings();
-            if (ds has :doNotDisturb) {
-                return ds.doNotDisturb;
-            }
-        } catch (e instanceof Lang.Exception) {
-            // Unknown: no warning.
-        }
-        return false;
     }
 
     //! Footer of the nap screens (longest first, shorter variants for narrow
@@ -1073,11 +1044,6 @@ class PowerNapView extends WatchUi.View {
         _pendingDuration = minutes;
     }
 
-    //! Force the DND state (true/false) instead of reading the watch setting.
-    (:debug)
-    function testForceDnd(on as Boolean) as Void {
-        _forceDnd = on ? 1 : 0;
-    }
 
     //! Pretend the battery is at pct % (-1: use the real level).
     (:debug)

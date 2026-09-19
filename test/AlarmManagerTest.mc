@@ -600,14 +600,23 @@ function testAlarm_startFromPhaseTwo(logger as Test.Logger) as Boolean {
 }
 
 //! A nudge is one gentle burst on the configured channel with the display
-//! turned on; it is not an alarm, and it is ignored while the alarm rings.
+//! turned on; it is not an alarm, it is ignored while the alarm rings, and
+//! it is refused (quiet onset gate) unless the session is Stay Awake.
 (:test)
 function testAlarm_nudgeIsOneGentleBurst(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     alarm.testSetAlarmType(0);
     alarm.testForceBacklightThrow(false);
-    alarm.nudge();
     var ok = true;
+    alarm.nudge();                           // a nap session: refused
+    if (alarm.testGetNudgeCount() != 0 || alarm.testGetVibrateCount() != 0
+        || alarm.testGetBacklightCount() != 0 || alarm.testGetBlockedDeliveries() != 1) {
+        logger.debug("nudge outside Stay Awake must be refused: nudges " + alarm.testGetNudgeCount()
+            + " vib " + alarm.testGetVibrateCount() + " blocked " + alarm.testGetBlockedDeliveries());
+        ok = false;
+    }
+    alarm.setStayAwake(true);
+    alarm.nudge();
     if (alarm.isAlarming() || alarm.testGetNudgeCount() != 1 || alarm.testGetVibrateCount() != 1
         || alarm.testGetRingCount() != 0 || alarm.testGetBacklightCount() != 1) {
         logger.debug("nudge: alarming " + alarm.isAlarming() + " nudges " + alarm.testGetNudgeCount()
@@ -621,6 +630,12 @@ function testAlarm_nudgeIsOneGentleBurst(logger as Test.Logger) as Boolean {
         ok = false;
     }
     alarm.stop();
+    alarm.setStayAwake(false);
+    alarm.nudge();
+    if (alarm.testGetNudgeCount() != 1 || alarm.testGetVibrateCount() != 1) {
+        logger.debug("nudge after the session ended must be refused");
+        ok = false;
+    }
     return ok;
 }
 

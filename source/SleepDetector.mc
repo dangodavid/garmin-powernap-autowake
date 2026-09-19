@@ -292,6 +292,11 @@ class SleepDetector {
         _sleepHrCount = 0;
         _sleepHrMin = 0;
         _secInMinute = 0;
+        // Quiet onset rule: the alarm manager may nudge only in Stay Awake
+        // sessions; a nap session gets no output before the alarm.
+        if (_alarm != null) {
+            (_alarm as AlarmManager).setStayAwake(_stayAwake);
+        }
         trace("start," + _napDurationMin + "," + _fallAsleepAllowanceMin + ","
             + _hrDropThreshold + "," + _motionThreshold.toNumber());
     }
@@ -346,6 +351,9 @@ class SleepDetector {
         if (_tickTimer != null) {
             _tickTimer.stop();
             _tickTimer = null;
+        }
+        if (_alarm != null) {
+            (_alarm as AlarmManager).setStayAwake(false);
         }
         if (_fakeRuntime) {
             return;

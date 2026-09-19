@@ -20,7 +20,10 @@ import Toybox.Application;
 //   * time asleep never exceeds the time since onset, percentages 0-100,
 //     never more wake episodes than minutes;
 //   * Stay Awake: never sleeps, only ALARM_DOZE, on a minute boundary after
-//     >= 2 still minutes, one doze per alarm.
+//     >= 2 still minutes, one doze per alarm;
+//   * quiet onset: the real AlarmManager never vibrates, sounds or lights
+//     up while the detector is not in STATE_ALARM (the Stay Awake nudge at
+//     3 still minutes excepted), and its gate never had to refuse a call.
 // A failure prints the seed and settings, so the case can be replayed.
 // The seeds are fixed: the same numbers run on every device and every run.
 // -----------------------------------------------------------------------------
@@ -55,16 +58,67 @@ class InvChecker {
     private var _prevState as Number;
     private var _napEnd as Number = 0;
     private var _context as String;
+    private var _alarm as AlarmManager?;
+    private var _outputs as Number = 0;       // vibrations + tones + backlight requests seen so far
+    private var _nudges as Number = 0;
 
-    function initialize(d as SleepDetector, context as String) {
+    function initialize(d as SleepDetector, a as AlarmManager?, context as String) {
         _stay = d.isStayAwake();
         _prevState = d.getState();
         _context = context;
+        _alarm = a;
+        syncOutputs();
     }
 
     //! After a dismissed Stay Awake alarm (ALARM -> MONITORING is valid there).
     function resync(d as SleepDetector) as Void {
         _prevState = d.getState();
+        syncOutputs();
+    }
+
+    private function outputCount() as Number {
+        var a = _alarm as AlarmManager;
+        return a.testGetVibrateCount() + a.testGetToneCount() + a.testGetBacklightCount();
+    }
+
+    private function syncOutputs() as Void {
+        if (_alarm != null) {
+            _outputs = outputCount();
+            _nudges = (_alarm as AlarmManager).testGetNudgeCount();
+        }
+    }
+
+    //! Quiet onset: outside STATE_ALARM no vibration, tone or backlight, the
+    //! manager is not alarming, and the gate never had to refuse a call. In
+    //! Stay Awake one nudge is allowed per still run, while the drowsiness
+    //! warning shows.
+    private function checkQuiet(d as SleepDetector, st as Number, t as Number) as Boolean {
+        if (_alarm == null) {
+            return true;
+        }
+        var a = _alarm as AlarmManager;
+        if (a.testGetBlockedDeliveries() != 0) {
+            return fail("the alarm manager had to refuse an output call at " + t + " s");
+        }
+        if (st == SleepDetector.STATE_ALARM) {
+            syncOutputs();
+            return true;
+        }
+        if (a.isAlarming()) {
+            return fail("manager alarming while state " + st + " at " + t + " s");
+        }
+        var out = outputCount();
+        var nudges = a.testGetNudgeCount();
+        if (nudges != _nudges) {
+            if (!_stay || nudges != _nudges + 1 || !d.isDozeWarning() || d.getStillMinutes() != 3
+                || out > _outputs + 2) {
+                return fail("unexpected nudge at " + t + " s (state " + st + ")");
+            }
+            syncOutputs();
+        } else if (out != _outputs) {
+            return fail("alarm output while not alarming at " + t + " s (state " + st + ")");
+        }
+        return true;
     }
 
     function fail(msg as String) as Boolean {
@@ -80,6 +134,9 @@ class InvChecker {
         var t = now - d.testGetStartSec();
         if (!validTransition(_prevState, st)) {
             return fail("transition " + _prevState + " -> " + st + " at " + t + " s");
+        }
+        if (!checkQuiet(d, st, t)) {
+            return false;
         }
         if (st == SleepDetector.STATE_CALIBRATING && t >= 120) {
             return fail("still calibrating at " + t + " s");
@@ -278,6 +335,14 @@ function invFeedMinute(d as SleepDetector, rng as InvRng, behaviour as Number, h
     return true;
 }
 
+//! Real alarm manager (vibration) for the quiet onset invariant.
+(:debug)
+function invAlarm() as AlarmManager {
+    var a = new AlarmManager();
+    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
+    return a;
+}
+
 //! One random nap from start to its alarm and summary.
 (:debug)
 function invRunNap(seed as Number, logger as Test.Logger) as Boolean {
@@ -291,14 +356,15 @@ function invRunNap(seed as Number, logger as Test.Logger) as Boolean {
     var thr = thresholds[rng.next(thresholds.size())];
     var drop = drops[rng.next(drops.size())];
 
-    var d = new SleepDetector(null);
+    var a = invAlarm();
+    var d = new SleepDetector(a);
     d.testStart();
     d.testSetNapDurationMin(nap);
     d.testSetFallAsleepAllowanceMin(allow);
     d.testSetMotionThreshold(thr.toFloat());
     d.testSetHrDropThreshold(drop);
     var ctx = "seed " + seed + " nap " + nap + " allowance " + allow + " mg " + thr + " bpm " + drop;
-    var checker = new InvChecker(d, ctx);
+    var checker = new InvChecker(d, a, ctx);
 
     var base = rng.range(55, 80);
     var mode = 0;
@@ -308,16 +374,25 @@ function invRunNap(seed as Number, logger as Test.Logger) as Boolean {
         mode = invNextMode(rng, mode);
         if (!invFeedMinute(d, rng, invBehaviour(rng, mode), invHr(rng, mode, base), checker)) {
             logger.debug("" + checker.failure);
+            a.stop();
             return false;
         }
         minutes += 1;
     }
     if (d.getState() != SleepDetector.STATE_ALARM || checker.alarms != 1) {
         logger.debug(ctx + ": no alarm by the deadline, state " + d.getState());
+        a.stop();
+        return false;
+    }
+    if (!a.isAlarming() || a.testGetRingsFired() != 1 || a.testGetVibrateCount() != 1) {
+        logger.debug(ctx + ": the alarm must have rung exactly once at its start, rings "
+            + a.testGetRingsFired() + " vib " + a.testGetVibrateCount());
+        a.stop();
         return false;
     }
     var alarmAt = d.testNowSec();
     d.testAdvanceClock(rng.range(0, 90));        // the user needs a moment
+    a.stop();
     d.finishNap();
     var end = d.getNapEndTime();
     if (d.getState() != SleepDetector.STATE_SUMMARY || end == null || (end as Time.Moment).value() != alarmAt
@@ -341,12 +416,13 @@ function invRunStayAwake(seed as Number, minutes as Number, logger as Test.Logge
     var drops = [3, 5, 10] as Array<Number>;
     var thr = thresholds[rng.next(thresholds.size())];
     var drop = drops[rng.next(drops.size())];
-    var d = new SleepDetector(null);
+    var a = invAlarm();
+    var d = new SleepDetector(a);
     d.testStartStayAwake();
     d.testSetMotionThreshold(thr.toFloat());
     d.testSetHrDropThreshold(drop);
     var ctx = "stay seed " + seed + " mg " + thr + " bpm " + drop;
-    var checker = new InvChecker(d, ctx);
+    var checker = new InvChecker(d, a, ctx);
     var base = rng.range(58, 85);
     var mode = 0;
     for (var m = 0; m < minutes; m++) {
@@ -355,6 +431,7 @@ function invRunStayAwake(seed as Number, minutes as Number, logger as Test.Logge
             for (var s = 0; s < wait; s++) {
                 d.testTick();
             }
+            a.stop();                                // as the delegate does on dismissal
             d.dismissAlarm();
             checker.resync(d);
             mode = 0;                                // the alarm woke the user
@@ -362,9 +439,11 @@ function invRunStayAwake(seed as Number, minutes as Number, logger as Test.Logge
         mode = invNextMode(rng, mode);
         if (!invFeedMinute(d, rng, invBehaviour(rng, mode), invHr(rng, mode, base), checker)) {
             logger.debug("" + checker.failure);
+            a.stop();
             return false;
         }
     }
+    a.stop();
     d.cancel();
     if (d.getState() != SleepDetector.STATE_SUMMARY || d.getDozeCount() != checker.alarms
         || d.hasSleptAtLeastOnce()) {
@@ -430,10 +509,11 @@ function testInv_randomStayAwakeB(logger as Test.Logger) as Boolean {
 //! guarantee: a 10 min nap still rings by its deadline.
 (:test)
 function testInv_absurdSensorValuesStillRing(logger as Test.Logger) as Boolean {
-    var d = new SleepDetector(null);
+    var a = invAlarm();
+    var d = new SleepDetector(a);
     d.testStart();
     d.testSetNapDurationMin(10);
-    var checker = new InvChecker(d, "absurd values");
+    var checker = new InvChecker(d, a, "absurd values");
     var hrs = [255, 1, 0, 250, 30, 0] as Array<Number>;
     var motions = [0.0f, 5000.0f, 0.0f, 0.0f, 1.0e6f, 3.0f] as Array<Float>;
     var i = 0;
@@ -441,10 +521,12 @@ function testInv_absurdSensorValuesStillRing(logger as Test.Logger) as Boolean {
         d.testFeedSecond(hrs[i % hrs.size()], motions[i % motions.size()]);
         if (!checker.check(d)) {
             logger.debug("" + checker.failure);
+            a.stop();
             return false;
         }
         i += 1;
     }
+    a.stop();
     if (d.getState() != SleepDetector.STATE_ALARM) {
         logger.debug("no alarm, state " + d.getState());
         return false;
