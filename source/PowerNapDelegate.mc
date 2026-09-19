@@ -22,8 +22,9 @@ import Toybox.System;
 //! Physical positions differ between product lines (on a 5-button fenix,
 //! START is top-right and BACK bottom-right), so no code here depends on them.
 //!
-//! Key model (owner decision, 2026-09-19): BACK always goes back one level,
-//! down to the start screen; only there does BACK twice leave the app.
+//! Key model (owner decision, 2026-09-19, revised the same night): BACK is a
+//! normal back button. One press goes back one level, down to the start
+//! screen, and only there does BACK twice leave the app.
 //!
 //!   Screen                         BACK               START              UP/DOWN
 //!   Start                          x2: exit; 1st:     start nap          +/- 5 min
@@ -31,35 +32,37 @@ import Toybox.System;
 //!                                  to exit"
 //!     (MENU / long press: menu with "Test alarm"; BACK closes the menu and
 //!      ends the preview, back to the start screen)
-//!   Nap / peek                     x2: end the nap,   x2: stop, summary  peek card
-//!                                  start screen (no   1st: peek card
-//!                                  summary)
-//!   Stay Awake guard / peek        x2: end, start     x2: stop, summary  peek card
-//!                                  screen
-//!   Alarm (nap)                    x2: alarm off,     x2: alarm off,     nothing
-//!                                  start screen       summary
-//!   Doze alarm (Stay Awake)        x2: alarm off,     x2: alarm off,     nothing
-//!                                  back on guard      back on guard
+//!   Nap / peek                     end the nap,       x2: stop, summary  peek card
+//!                                  start screen       1st: peek card
+//!                                  (no summary)
+//!   Stay Awake guard / peek        end, start screen  x2: stop, summary  peek card
+//!   Alarm (nap)                    alarm off, start   x2: alarm off,     nothing
+//!                                  screen (no summary) summary
+//!   Doze alarm (Stay Awake)        alarm off, back    x2: alarm off,     nothing
+//!                                  on guard           back on guard
 //!   Summary                        start screen       start screen       nothing
 //!
-//! The first BACK of a pair shows a popup saying what the second one does.
-//! A right swipe is the touch BACK: outside a session it acts as BACK (so it
-//! never leaves the app in one gesture); during a nap it is ignored.
+//! Only the first BACK on the start screen shows a popup (what the second
+//! one does); everywhere else BACK acts at once. A right swipe is the touch
+//! BACK: outside a session it acts as BACK (so it never leaves the app in
+//! one gesture); during a nap it is ignored.
 //!
-//! Safety: once a nap is running, nothing stops it or its alarm by accident.
-//! A wrist on a pillow can press a button and a sleeve can touch the screen:
-//! * two presses of the same key within 4 seconds (ConfirmPress: BACK arms
-//!   CONTEXT_EXIT, START arms CONTEXT_STOP; the other key re-arms instead of
-//!   confirming, and a press made on another screen does not count);
+//! Safety during a nap: a wrist on a pillow can press a button and a sleeve
+//! can touch the screen, so
+//! * stopping with the stats takes two START presses within 4 seconds
+//!   (ConfirmPress CONTEXT_STOP; a BACK in between never completes it);
 //! * UP and DOWN (and a single START) during a nap only "peek": a few seconds
 //!   of the so-far card, nothing stops;
 //! * taps, swipes, holds, flicks and drags are consumed on every nap screen,
 //!   including the alarm, so no gesture reaches system navigation;
 //! * every other key is consumed too;
-//! * for 1.5 s after a confirmed stop or a screen change every press is
-//!   swallowed, and never extends the lock, so a burst of presses cannot run
-//!   on into the next screen but can never trap the user either;
+//! * for 1.5 s after a stop or a screen change every press is swallowed,
+//!   and never extends the lock, so a burst of presses cannot run on into
+//!   the next screen (a BACK burst during the nap ends at the start screen,
+//!   it never reaches the exit pair) but can never trap the user either;
 //! * in Stay Awake mode a button press counts as proof of being awake.
+//! BACK itself is deliberately not guarded during a session (owner
+//! decision): one press ends the nap or stops the alarm.
 //!
 //! The logic lives in handleKey()/handleTap() so tests can drive it without
 //! constructing system input events.
@@ -237,15 +240,10 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
             _detector.noteUserAwake();
         }
         if (key == WatchUi.KEY_ESC) {
-            // BACK twice goes back one level: the doze alarm to the guard,
+            // One BACK goes back one level: the doze alarm to the guard,
             // everything else (nap, its alarm, the guard) to the start
-            // screen, without a summary. The first press says what the
-            // second one does.
-            if (_view.pressConfirm(ConfirmPress.CONTEXT_EXIT)) {
-                goBack(state);
-            } else {
-                _view.showHint(_view.backHint());
-            }
+            // screen, without a summary (START twice gives the stats).
+            goBack(state);
             return true;
         }
         if (key == WatchUi.KEY_ENTER) {
@@ -285,10 +283,10 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         WatchUi.requestUpdate();
     }
 
-    //! BACK twice on a session screen: one level back. The Stay Awake doze
-    //! alarm sits on top of the guard, so it goes back to guarding; a nap,
-    //! its alarm and the guard go back to the start screen (the session
-    //! ends there, without a summary: START twice gives the stats).
+    //! BACK on a session screen: one level back. The Stay Awake doze alarm
+    //! sits on top of the guard, so it goes back to guarding; a nap, its
+    //! alarm and the guard go back to the start screen (the session ends
+    //! there, without a summary: START twice gives the stats).
     private function goBack(state as Number) as Void {
         if (state == SleepDetector.STATE_ALARM && _detector.isStayAwake()) {
             dismissAlarm();
