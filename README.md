@@ -246,7 +246,6 @@ test/
 tools/
   matrix.sh                     Build (or test) every product in manifest.xml, stop at the first failure
   runtests.sh                   Build + run the suite one device at a time (simulator restarts, retries)
-  devices.txt                   The 43 device ids of the manifest, one per line
 ```
 
 ---

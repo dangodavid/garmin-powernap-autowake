@@ -6,6 +6,17 @@
 - Visual Studio Code with the [Monkey C extension](https://marketplace.visualstudio.com/items?itemName=garmin.monkey-c)
 - A developer key (`.der`): generate one via the SDK Manager or [Garmin's keytool](https://developer.garmin.com/connect-iq/sdk/)
 
+## Git
+
+One branch per pull request, cut from `main`. When the checks in
+[What to run and when](#what-to-run-and-when) pass, the branch is merged into
+`main` and deleted right away: no long-lived branches, nothing parked on a
+branch waiting for something else.
+
+`main` stays publishable. Every commit on it compiles for every product in
+`manifest.xml` and passes the suite on the protocol set, so a release can be cut
+from `main` at any moment without first repairing it.
+
 ## Building
 
 **VS Code:** `Ctrl+Shift+P` -> *Monkey C: Build for Device* -> select target device.
@@ -140,37 +151,130 @@ the first device.
 | `TEST_TIMEOUT` | `420` seconds to wait for one device's suite |
 | `TEST_ATTEMPTS` | `3` tries per device, with a simulator restart in between |
 
-### When to run what
+## What to run and when
 
-**Every pull request:** the suite on the protocol set - five screens that between
-them catch what the rest would (454 px AMOLED, 176 px 1-bit octagon with a lens,
-260 px MIP, small AMOLED, and a watch with no tone support):
+### Every pull request
+
+Two commands, together under seven minutes on a warm SDK:
 
 ```bash
+tools/matrix.sh build                          # strict, every product in the manifest, ~2 min
 tools/matrix.sh test fenix847mm instinct3solar45mm fr255s venu3s vivoactive5
 ```
 
-**Once before publishing:** the full sweep, every product in the manifest, all
-three strict:
+The build is strict and covers **every** product, because a resource or a text
+that only one device rejects is exactly what a narrower run misses. The suite
+then runs on the protocol set: five devices that between them cover what the
+rest would: the largest AMOLED at 454 px (`fenix847mm`), the 176 px 1-bit
+octagon with a subscreen lens (`instinct3solar45mm`), the smallest colour
+screen at 218 px MIP (`fr255s`), a small AMOLED (`venu3s`), and a watch with no
+`Attention.playTone` at all (`vivoactive5`).
+
+### Pull requests that touch text, colours or layout
+
+The same two commands, **plus** simulator screenshots of the screens you
+changed. A build proves the app compiles; it says nothing about how it looks,
+and `LayoutTest` only proves that text fits - not that the result reads well.
+Three screens are enough to catch the rest:
+
+| Screenshot | Device | Why |
+|------------|--------|-----|
+| Smallest, and the only monochrome | `instinct3solar45mm` (176 px, 1-bit) | where lines get dropped, texts fall back to their short variants and every colour collapses to white |
+| Largest | `fenix847mm` (454 px) | where a block can float apart and slack appears around it |
+| Smallest colour screen | `fr255s` (218 px) | the palette on a small MIP display, without the 1-bit fallback hiding a colour mistake |
+
+The smallest screen in the matrix is also the only 1-bit one, so those two
+requirements land on the same device; `fr255s` is the third shot because two
+pictures of `instinct3solar45mm` would prove the same thing twice.
+
+### Before publishing
+
+The full sweep, all three strict, every product in the manifest:
 
 ```bash
-tools/matrix.sh build                          # all 43 products compile, ~2 min
+tools/matrix.sh build                          # every product compiles, ~2 min
 tools/matrix.sh build --release                # the store build, same devices, ~2 min
-tools/matrix.sh test                           # the suite everywhere, ~1 min per device
+tools/matrix.sh test                           # the whole suite everywhere, ~1 min per device
 ```
 
-**While working:** `tools/runtests.sh <device> ...` for ad-hoc runs on one or two
-devices; it takes its list from the command line, restarts the simulator and
-retries, and prints one line per device.
+Then the store package (the version is typed into the upload form; the manifest
+carries none):
 
-`manifest.xml`, read through `matrix.sh`, is the source of truth for which devices
-the app supports: nothing else has to be kept in step with it. `tools/devices.txt`
-is only a hand-kept copy for `runtests.sh` and can drift, so
-`tools/runtests.sh $(tools/matrix.sh list)` is the form that cannot.
+```bash
+monkeyc -e -o bin/PowerNap-<version>.iq -f monkey.jungle -y ~/developer_key.der -r -l 3
+```
+
+### New tests are for logic
+
+A new test earns its place when it pins behaviour that can be wrong in a way no
+compiler catches: a timing rule, an onset or wake decision, a ramp step, a state
+transition, an input sequence. Texts and colours are not tested for their
+wording or their hue - `LayoutTest` already checks that whatever a screen says
+fits the screen it says it on, and a screenshot is how the rest is judged. A
+test that asserts a string literal only has to be edited again the next time the
+wording improves.
+
+### `--permissive` is a diagnostic
+
+Strict is the working mode: a `WARNING` fails the device and stops the run.
+`--permissive` exists for the one case where you have just introduced warnings
+and would rather see all of them in a single pass than fix them one device at a
+time. Then make strict green again. A release sweep that needs `--permissive` is
+a release that is not ready.
+
+### While working
+
+`tools/runtests.sh <device> ...` for ad-hoc runs on one or two devices: it takes
+its list from the command line, restarts the simulator and retries, and prints
+one line per device. To run it over the whole matrix without keeping a second
+device list anywhere, let the manifest supply the arguments:
+
+```bash
+tools/runtests.sh $(tools/matrix.sh list)
+```
+
+`manifest.xml`, read through `matrix.sh`, is the source of truth for which
+devices the app supports. Nothing else is kept in step with it, and no script or
+document may carry a hardcoded copy of that list.
 
 If a test that reads a stored setting fails on every device, the usual culprit is
 the simulator's settings file, one per app id and shared by every build: close the
 simulator and delete `$TMPDIR/com.garmin.connectiq/GARMIN/APPS/SETTINGS/*.SET`.
+
+## What the tests cover
+
+One file per area under `test/`, each with its own name prefix because test
+function names are global. The runner reports the number of **test functions**,
+not the number of assertions, and four files multiply what one function checks:
+
+- `LayoutTest.mc` solves every screen against the **running device**, so a full
+  sweep runs the same functions once per product in the manifest;
+- `InvariantTest.mc` runs a handful of fixed seeds per function and asserts
+  after **every simulated second** of every random nap;
+- `QuietOnsetTest.mc` loops each scenario over alarm types 0, 1 and 2, and once
+  more with the tone channel forced unavailable;
+- `AlarmManagerTest.mc` walks the whole `RAMP` table inside single functions, so
+  one test covers all ten steps.
+
+So the function count is a floor, not a measure of coverage: a single-digit file
+can be carrying more assertions than a file with thirty functions.
+
+| File | What it checks, and why it exists |
+|------|-----------------------------------|
+| `OnsetTest.mc` | Calibration and sleep onset: the HR baseline as the mean of the first two minutes, what makes a minute "still" (mean motion below the threshold and at most 5 active seconds), and the two ways in - 2 still minutes with the HR drop, or 5 still minutes without it. Onset is the decision the whole nap hangs off; detect it early and the alarm rings early. |
+| `WakeTest.mc` | Wake episodes and re-entry: what ends a sleep segment (10 active seconds, a 100 mg minute mean, or a 10 BPM rise held for 2 minutes), that the countdown keeps running through a wake, and that re-entry takes 2 still minutes. The segment arithmetic here is where the summary's "actual sleep" comes from. |
+| `TimingTest.mc` | Wall-clock alarm timing: the planned end, the hard deadline cap from `AlarmCap`, and the smart-wake window. The clock is frozen on a whole minute, so every expectation is exact. This is the file that holds the promise the start screen makes - the alarm never rings after "Alarm by HH:MM". |
+| `AlarmManagerTest.mc` | The escalation ramp: the owner's constraints (at least 8 steps below full, a gentle first step, intensity and pulse never decreasing, the wait never growing, full strength reached in 100-130 s), the exact ring schedule, the persistent phase, the tone melodies, the nudge, the backlight rule and the "Test alarm" preview. Tuning the table is safe only because these tests fail when a change leaves the approved envelope. |
+| `SummaryTest.mc` | Finish and cancel from every state, the statistics (planned completion, sleep efficiency, actual sleep, wake episodes, average and minimum sleep HR), that they freeze once the nap has ended, and `RingMath`'s angle maths for the progress ring. |
+| `RegressionTest.mc` | One test per confirmed review finding: HR-plateau wake ping-pong, the sleep-HR fold exclusion, frozen settings and clamping, the app lifecycle (`onInactive`/`onActive`), the alarm channel fallback, the per-phase vibration patterns, `ringNow()`, and the two-press guard. These exist so that a fixed bug cannot come back quietly. |
+| `LayoutTest.mc` | Every screen state - start, calibrating, monitoring, sleeping, alarm, summary, Stay Awake, peek card, alarm preview - laid out against a `Dc` of the running device. It asserts that no text is truncated, that nothing leaves the screen or the round chord, and that the layout stays inside its work budget, because every screen redraws at 1 Hz and the Instinct watchdog is 240k bytecodes per event. |
+| `StayAwakeTest.mc` | Stay Awake mode: no deadline and no timed alarm at all, the doze rules measured against the rolling HR reference rather than the calibration baseline, the single nudge at 3 still minutes, `noteUserAwake()` ending the still run, and the return to the guard after a doze alarm. |
+| `DelegateTest.mc` | The real delegate, view and detector wired together and driven through `handleKey()`/`handleTap()` - the code paths `onKey` and `onTap` run. It owns the key model: BACK walks back one level at a time and only the start screen's BACK x2 exits, START x2 stops, the 1.5 s input lock never traps a burst of presses, and a first START made on one screen never pairs with a second made on another. |
+| `QuietOnsetTest.mc` | The QUIET ONSET RULE, with the real `AlarmManager`: nothing vibrates, sounds or lights up at onset, at a wake, at re-entry, at the end of calibration, on a sensor dropout or on resume. Every second of every scenario asserts that the manager's blocked-delivery counter is still zero. The rule is non-negotiable, so it is guarded structurally rather than by review. |
+| `MotionTest.mc` | `MotionMath.batchMotion` on raw 25-sample accelerometer batches and the path that turns one batch into one motion second: null axes skipped, ragged arrays, too few usable samples, and above all that a constant sensor offset changes nothing. The old measure read a watch with a +40 mg offset as permanently moving, so a still sleeper was never still on the High setting. |
+| `InvariantTest.mc` | Seeded random naps from a small Markov model (awake -> drowsy -> asleep, with wakes, stirs, HR dropouts and minutes with no accelerometer data), checked after every simulated second against the rules that must hold whatever the sensors say - above all that the alarm always fires and never after the deadline. Plus negative tests. A failure prints its seed, so the case replays exactly. |
+| `TraceTest.mc` | Replays of naps recorded on a real watch, minute by minute through `testReplayMinute`. The file header documents how to record one. It exists so that a nap that behaved wrong on the wrist becomes a permanent test instead of an anecdote. |
+| `StartScreenTest.mc` | The start screen's promise: that `AlarmCap` is the single formula behind both the preview and the running nap, so a nap started in the minute the preview was drawn in keeps exactly that time; the minute-aligned refresh; the duration remembered in `Application.Storage`; and that the whole flow can be driven from the buttons alone. |
 
 ## Architecture
 
