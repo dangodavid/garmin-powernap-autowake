@@ -16,6 +16,9 @@ export CIQ_HOME=~/connectiq-sdk
 $CIQ_HOME/bin/monkeyc -o bin/PowerNap.prg -f monkey.jungle -d fenix847mm -y dev_key.der
 ```
 
+Every product in `manifest.xml`, one device at a time, stopping at the first
+failure: `tools/matrix.sh` (see [The device matrix](#the-device-matrix-toolsmatrixsh)).
+
 **Simulator:**
 ```bash
 $CIQ_HOME/bin/connectiq &
@@ -31,6 +34,143 @@ Ctrl+Shift+P -> Monkey C: Run Tests
 Tests live under `test/` (one file per area, each with its own name prefix because test functions are global) and use the `Toybox.Test` framework (`:test` annotation). All test helpers in the source files carry the `(:debug)` annotation and are excluded from production builds. Tests drive a fake clock second by second (`testFeedSecond`, `testRunMinutes`, `testAdvanceClock`) so every timing rule is exercised without waiting.
 
 Command line: build with `-t` and run `monkeydo <prg> fenix847mm -t` with the simulator open.
+
+Every device at once (and the same suite on each of them): see
+[The device matrix](#the-device-matrix-toolsmatrixsh) below.
+
+## The device matrix (`tools/matrix.sh`)
+
+Texts, colours and layouts are resolution- and palette-sensitive: a line that
+fits the 454 px fēnix 8 overflows the 176 px Instinct 3 Solar, whose screen is
+1-bit. `tools/matrix.sh` is the safety net for changes like those. It builds -
+or runs the unit tests for - **every product in `manifest.xml`**, one device at
+a time, in alphabetical order, and stops at the first device that fails.
+
+The device list is read out of `manifest.xml` on every run (a product inside an
+XML comment is ignored), so a product added there is picked up without touching
+the script.
+
+### Modes
+
+| Command | What it does |
+|---------|--------------|
+| `tools/matrix.sh` (or `tools/matrix.sh build`) | compiles the debug build for every product |
+| `tools/matrix.sh build --release` | compiles the release build (`-r`), the one the store package is made of |
+| `tools/matrix.sh test` | builds with `-t` and runs the whole suite on each device in the simulator |
+| `tools/matrix.sh list` | prints the device ids read from the manifest, one per line |
+
+Device ids after the mode limit the run to those products
+(`tools/matrix.sh test fenix847mm instinct3solar45mm`); every id must appear in
+the manifest, and the order stays alphabetical.
+
+### Strict and permissive
+
+Strict is the default, and the way to run it: a device whose compiler output
+holds a `WARNING` fails, its full output is printed, and the run stops there.
+Both builds are warning-free on every product in the manifest, so
+`tools/matrix.sh build` and `tools/matrix.sh build --release` each end with
+0 failures on a clean tree.
+
+`--permissive` is a diagnostic, not a working mode: it keeps the warnings
+visible (counted on the device's line, each distinct text printed once, all of
+them kept in the logs) but lets the run continue, which is what you want when
+you have just introduced warnings and would rather see all of them in one pass
+than fix them one device at a time. Then make strict green again; a release sweep that
+needs `--permissive` is a release that is not ready. `--strict` spells out the
+default.
+
+```bash
+tools/matrix.sh build                          # strict: the first warning stops the run
+tools/matrix.sh build --permissive             # diagnostic: every warning in one pass
+```
+
+### What a run prints
+
+```
+matrix.sh build - debug build, strict: a warning fails the device
+manifest manifest.xml: 43 product(s)
+SDK      connectiq-sdk-mac-9.1.0-2026-03-09-6a872a80b
+logs     /tmp/powernap-matrix
+--------------------------------------------------------------------
+ 1/43  d2mach1              OK     3s
+ ...
+43/43  vivoactive6          OK     3s
+--------------------------------------------------------------------
+43 of 43 devices compiled, 0 failed. Total 1m54s.
+```
+
+One line per device: `OK`, `FAIL` or `SKIP`. A device that fails prints its whole
+compiler output, framed, under the exact `monkeyc` command that produced it, so
+it can be repeated by hand; in test mode a suite that fails prints the tests that
+did not pass and the runner's own summary instead of all ~1000 lines. Nothing
+after the failure is attempted, and the summary names the device and counts the
+ones that got through before it. Every device leaves its logs in `$OUT_DIR`
+(`/tmp/powernap-matrix` by default): `build-<device>.log`, `test-<device>.log`
+for the test build and `test-run-<device>.log` for the simulator run.
+
+### Skips (test mode)
+
+A product whose device the SDK manager never downloaded, or whose device
+definition carries no watch-app slot, cannot run the suite. Test mode prints
+`SKIP` and the reason on that device's line, names it again in the summary, and
+carries on; the run can still end with exit 0, but it never passes over a device
+in silence. Build mode does not skip: the same device is a `FAIL` there, because
+every product in the manifest has to compile. Either way the run opens with a
+`note` line listing the products the SDK has no definition for - `monkeyc` warns
+about them on every single build, and in strict mode that warning is what fails
+the first device.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | every device passed; devices skipped in test mode are named in the summary |
+| `1` | a device failed - its output was printed and the run stopped at that device |
+| `2` | the run never started: bad usage, or no manifest / product list / SDK / developer key |
+
+### Environment
+
+| Variable | Default |
+|----------|---------|
+| `CIQ_SDK`, `CIQ_HOME` | the SDK the SDK manager points at (`current-sdk.cfg`), else `~/connectiq-sdk`, else the newest installed SDK |
+| `CIQ_DEVICES` | the `Devices` folder beside the SDK, where the skip check reads `compiler.json` |
+| `DEVELOPER_KEY` | `~/developer_key.der`, else `monkeyC.developerKeyPath` from `.vscode/settings.json` |
+| `PROJ_DIR` | the folder above `tools/`; point it at a frozen copy of the tree to check a release |
+| `OUT_DIR` | `/tmp/powernap-matrix` |
+| `TEST_TIMEOUT` | `420` seconds to wait for one device's suite |
+| `TEST_ATTEMPTS` | `3` tries per device, with a simulator restart in between |
+
+### When to run what
+
+**Every pull request:** the suite on the protocol set - five screens that between
+them catch what the rest would (454 px AMOLED, 176 px 1-bit octagon with a lens,
+260 px MIP, small AMOLED, and a watch with no tone support):
+
+```bash
+tools/matrix.sh test fenix847mm instinct3solar45mm fr255s venu3s vivoactive5
+```
+
+**Once before publishing:** the full sweep, every product in the manifest, all
+three strict:
+
+```bash
+tools/matrix.sh build                          # all 43 products compile, ~2 min
+tools/matrix.sh build --release                # the store build, same devices, ~2 min
+tools/matrix.sh test                           # the suite everywhere, ~1 min per device
+```
+
+**While working:** `tools/runtests.sh <device> ...` for ad-hoc runs on one or two
+devices; it takes its list from the command line, restarts the simulator and
+retries, and prints one line per device.
+
+`manifest.xml`, read through `matrix.sh`, is the source of truth for which devices
+the app supports: nothing else has to be kept in step with it. `tools/devices.txt`
+is only a hand-kept copy for `runtests.sh` and can drift, so
+`tools/runtests.sh $(tools/matrix.sh list)` is the form that cannot.
+
+If a test that reads a stored setting fails on every device, the usual culprit is
+the simulator's settings file, one per app id and shared by every build: close the
+simulator and delete `$TMPDIR/com.garmin.connectiq/GARMIN/APPS/SETTINGS/*.SET`.
 
 ## Architecture
 

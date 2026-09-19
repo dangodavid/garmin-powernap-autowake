@@ -154,6 +154,14 @@ $CIQ_HOME/bin/monkeyc \
   -y /path/to/developer_key.der
 ```
 
+Every product in `manifest.xml`, one device at a time, stopping at the first
+failure (the device list comes from the manifest, so it never goes stale):
+
+```bash
+tools/matrix.sh                 # all 43 products, ~2 min, exit 1 on the first failure
+tools/matrix.sh build --release # the same devices, built as the store package is
+```
+
 ### Run in the simulator
 
 ```bash
@@ -171,7 +179,7 @@ Command line, one or more devices (the simulator is started and restarted as nee
 
 ```bash
 tools/runtests.sh fenix847mm instinct3solar45mm fr255s venu3s vivoactive5
-tools/runtests.sh $(cat tools/devices.txt)      # all 43 supported watches
+tools/matrix.sh test                            # every product in the manifest
 ```
 
 The suite under `test/` (243 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
@@ -236,6 +244,7 @@ test/
   TraceTest.mc                  Replays of recorded naps
   StartScreenTest.mc            The cap formula, the live preview, the remembered duration, the button flow
 tools/
+  matrix.sh                     Build (or test) every product in manifest.xml, stop at the first failure
   runtests.sh                   Build + run the suite one device at a time (simulator restarts, retries)
   devices.txt                   The 43 device ids of the manifest, one per line
 ```
