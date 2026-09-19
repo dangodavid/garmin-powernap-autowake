@@ -633,8 +633,8 @@ function testOnset_fiveMinuteNapTimeline(logger as Test.Logger) as Boolean {
     d.testStart();
     d.testSetNapDurationMin(5);
     var start = d.testGetStartSec();
-    if (d.getNapDurationMin() != 5 || d.testGetDeadlineSec() != start + 20 * 60) {
-        logger.debug("expected nap 5 min and deadline start + 1200 s");
+    if (d.getNapDurationMin() != 5 || d.testGetDeadlineSec() != AlarmCap.deadlineSec(start, 15, 5)) {
+        logger.debug("expected nap 5 min and the cap of 15 + 5 min");
         return false;
     }
     d.testRunSeconds(299, 0, 10.0f);

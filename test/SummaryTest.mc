@@ -405,16 +405,18 @@ function testSummary_deadlineAlarmThenFinish(logger as Test.Logger) as Boolean {
     d.testSetFallAsleepAllowanceMin(5);
     var ok = true;
     var start = d.testGetStartSec();
-    ok = summaryHelperCheck(logger, d.testGetDeadlineSec() == start + 600, "deadline=" + d.testGetDeadlineSec() + " start=" + start) && ok;
+    var deadline = AlarmCap.deadlineSec(start, 5, 5);
+    ok = summaryHelperCheck(logger, d.testGetDeadlineSec() == deadline, "deadline=" + d.testGetDeadlineSec() + " start=" + start) && ok;
 
-    // Never still: the deadline is the only way out.
-    d.testRunMinutes(10, 70, 200.0f);
+    // Never still: the deadline is the only way out (5 + 5 min, plus the
+    // minute the cap rounds the start up by).
+    d.testRunMinutes(11, 70, 200.0f);
     ok = summaryHelperCheck(logger, d.getState() == SleepDetector.STATE_ALARM, "expected ALARM, state=" + d.getState()) && ok;
     ok = summaryHelperCheck(logger, d.getAlarmReason() == SleepDetector.ALARM_DEADLINE, "reason=" + d.getAlarmReason()) && ok;
     ok = summaryHelperCheck(logger, !d.hasSleptAtLeastOnce(), "hasSleptAtLeastOnce should be false") && ok;
     ok = summaryHelperCheck(logger, d.getSleepStartTime() == null && d.getPlannedEndTime() == null, "sleepStart/plannedEnd should be null") && ok;
     var alarmSec = summaryHelperMomentSec(d.getNapEndTime());
-    ok = summaryHelperCheck(logger, alarmSec >= start + 600 && alarmSec <= start + 605, "alarm moment=" + alarmSec + " start=" + start) && ok;
+    ok = summaryHelperCheck(logger, alarmSec == deadline, "alarm moment=" + alarmSec + " deadline=" + deadline) && ok;
     ok = summaryHelperCheck(logger, d.getSecondsUntilDeadline() == 0, "secondsUntilDeadline=" + d.getSecondsUntilDeadline()) && ok;
     ok = summaryHelperCheck(logger, d.getPlannedCompletionPct() == 0 && d.getSleepEfficiencyPct() == 0, "pcts should be 0") && ok;
     ok = summaryHelperCheck(logger, d.getActualNapDurationSec() == 0, "actual=" + d.getActualNapDurationSec()) && ok;
@@ -537,7 +539,7 @@ function testSummary_restartResetsSession(logger as Test.Logger) as Boolean {
     ok = summaryHelperCheck(logger, summaryHelperNear(d.testGetStartSec(), d.testNowSec(), 1), "startSec should be now") && ok;
     // Settings persist (30 min nap, 15 min allowance) and the deadline is rebuilt from them.
     ok = summaryHelperCheck(logger, d.getNapDurationMin() == 30 && d.getFallAsleepAllowanceMin() == 15, "settings should persist") && ok;
-    ok = summaryHelperCheck(logger, d.testGetDeadlineSec() == d.testGetStartSec() + 2700, "deadline=" + d.testGetDeadlineSec()) && ok;
+    ok = summaryHelperCheck(logger, d.testGetDeadlineSec() == AlarmCap.deadlineSec(d.testGetStartSec(), 15, 30), "deadline=" + d.testGetDeadlineSec()) && ok;
 
     // The new session accumulates from scratch.
     d.testSetBaseline(70.0f);

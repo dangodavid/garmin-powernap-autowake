@@ -10,8 +10,8 @@ import Toybox.Timer;
 //! Draws the start screen and the nap screens (monitoring, sleeping, alarm,
 //! summary), the Stay Awake screens and the "peek" card. The detector
 //! requests an update every second while a nap is active, so every value on
-//! screen is live; the start screen has its own 1 s refresh for the
-//! "Alarm by" preview.
+//! screen is live; the start screen redraws itself right after every minute
+//! change, when the clock and the "Alarm by" preview move.
 //!
 //! Every screen is described as a prioritised list of lines and laid out by
 //! ScreenLayout, which drops optional lines and shrinks fonts until the
@@ -34,7 +34,20 @@ class PowerNapView extends WatchUi.View {
     private var _tapPlusMaxY as Number = -1;    // y < this        -> +5 min
     private var _tapMinusMinY as Number = -1;   // y > this        -> -5 min ...
     private var _tapStartMinY as Number = -1;   // y >= this       -> ... start ("TAP to begin")
-    private var _uiTimer as Timer.Timer? = null;     // start screen: refresh at each minute for "Alarm by"
+    // Start-screen refresh: one timer object, re-armed for the next minute
+    // change (the clock and the "Alarm by" preview move together there).
+    private var _uiTimer as Timer.Timer? = null;
+    private var _uiTimerArmed as Boolean = false;
+    private const UI_POLL_MS = 100;                  // how late a new minute may show
+
+    // The watch remembers the duration of the last nap it started, so the
+    // next session opens on it. In Application.Storage, which writes at
+    // once, and not in Application.Properties, which is only written to
+    // disk when the app stops (a nap that ends on an empty battery would
+    // forget the pick). KEY_PHONE_NAP holds the phone's "Nap Duration"
+    // setting as it was then, so that changing the setting still wins.
+    private const KEY_LAST_NAP = "lastNapMin";
+    private const KEY_PHONE_NAP = "lastPhoneNapMin";
 
     // Two-press confirmation (4 s, in ms): BACK x2 on the start screen
     // leaves the app, START x2 during a session stops with stats.
@@ -51,6 +64,7 @@ class PowerNapView extends WatchUi.View {
     static const HINT_STOP = ["Press START again to stop", "START again to stop", "START again: stop"] as Array<String>;
     private var _hintTexts as Array<String>? = null;
     private var _hintContext as Number = ConfirmPress.CONTEXT_NONE;
+    private var _hintStartMs as Number = 0;          // when the popup was shown
     private var _lastPressContext as Number = ConfirmPress.CONTEXT_NONE;
     // A first press belongs to the screen it was made on: if the alarm starts
     // (or the screen changes) before the second press, that one arms again.
@@ -90,8 +104,8 @@ class PowerNapView extends WatchUi.View {
         _detector = detector;
         _alarm = alarm;
         _confirm = new ConfirmPress(CONFIRM_WINDOW_MS);
-        _pendingDuration = readStoredDuration();
-        _syncedDuration = _pendingDuration;
+        _syncedDuration = readPhoneDuration();
+        _pendingDuration = initialDuration();
         _debugLabel = buildDebugLabel();
     }
 
@@ -137,25 +151,20 @@ class PowerNapView extends WatchUi.View {
     //! other setting leaves the pick on the watch alone, Stay Awake included.
     function onSettingsChanged() as Void {
         if (!_started) {
-            var stored = readStoredDuration();
-            if (stored != _syncedDuration) {
-                _pendingDuration = stored;
-                _syncedDuration = stored;
+            var phone = readPhoneDuration();
+            if (phone != _syncedDuration) {
+                _pendingDuration = phone;
+                _syncedDuration = phone;
             }
             WatchUi.requestUpdate();
         }
     }
 
-    //! Confirm duration, persist it (only if changed, never Stay Awake), and
-    //! begin monitoring.
+    //! Confirm duration, remember it for the next session (never Stay
+    //! Awake, a choice made for one session), and begin monitoring.
     function startNap() as Void {
-        if (_pendingDuration != STAY_AWAKE && readStoredDuration() != _pendingDuration) {
-            try {
-                Application.Properties.setValue("napDuration", _pendingDuration);
-                _syncedDuration = _pendingDuration;
-            } catch (e instanceof Lang.Exception) {
-                // Storage full or corrupt -- proceed with in-memory value.
-            }
+        if (_pendingDuration != STAY_AWAKE) {
+            rememberDuration(_pendingDuration);
         }
         stopUiTimer();
         _detector.loadSettings();
@@ -179,10 +188,11 @@ class PowerNapView extends WatchUi.View {
         _peeking = false;
         _confirm.reset();
         _hintTexts = null;
-        // Pick up a duration changed from the phone during the nap. Stay
-        // Awake is never remembered: the next session defaults to a nap.
-        _pendingDuration = readStoredDuration();
-        _syncedDuration = _pendingDuration;
+        // The duration this nap ran with (remembered at START), or one
+        // changed from the phone during the nap. Stay Awake is never
+        // remembered: the next session defaults to a nap.
+        _syncedDuration = readPhoneDuration();
+        _pendingDuration = initialDuration();
         startUiTimer();
         WatchUi.requestUpdate();
     }
@@ -245,20 +255,14 @@ class PowerNapView extends WatchUi.View {
 
     //! Show a popup hint (see the HINT_* texts) for as long as the press
     //! just registered stays armed: a banner over the current screen. The
-    //! start screen has no 1 Hz refresh, so it redraws when the hint expires.
+    //! start screen has no 1 Hz refresh, so its own timer takes the banner
+    //! off when the window is over (and still catches the minute change).
     function showHint(texts as Array<String>) as Void {
         _hintTexts = texts;
         _hintContext = _lastPressContext;
+        _hintStartMs = nowMs();
         if (!_started) {
-            stopUiTimer();
-            try {
-                var t = new Timer.Timer();
-                t.start(method(:onUiTimer), CONFIRM_WINDOW_MS + 100, false);
-                _uiTimer = t;
-            } catch (e instanceof Lang.Exception) {
-                _uiTimer = null;
-                startUiTimer();
-            }
+            armUiTimer(uiWakeMs(clockSec()));
         }
         WatchUi.requestUpdate();
     }
@@ -318,15 +322,6 @@ class PowerNapView extends WatchUi.View {
         if (y <= minusMin) { return 0; }
         if (_tapStartMinY >= 0 && y >= _tapStartMinY) { return 0; }
         return -1;
-    }
-
-    //! Start-screen refresh: redraw, then wait for the next minute.
-    function onUiTimer() as Void {
-        _uiTimer = null;
-        if (!_started) {
-            startUiTimer();
-        }
-        WatchUi.requestUpdate();
     }
 
     // -- Main draw dispatch ---------------------------------------------
@@ -454,11 +449,11 @@ class PowerNapView extends WatchUi.View {
             L.addText(["Buzzes if you doze", "Buzz if you doze"],
                 [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 90);
         } else {
-            // Same promise as on the nap screens: start now + allowance + nap,
-            // rounded up to the minute.
-            var by = formatMoment(new Time.Moment(Time.now().value()
-                + (_detector.getFallAsleepAllowanceMin() + _pendingDuration) * 60 + 59));
-            L.addText(["Alarm by " + by, "By " + by],
+            // The same promise the nap screens show, from the same formula
+            // (AlarmCap): a nap started in this minute keeps this time.
+            // Recomputed on every draw, and the start screen redraws itself
+            // at each minute change (startUiTimer).
+            L.addText(alarmByTexts(_detector.previewDeadlineSec(_pendingDuration)),
                 [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 90);
         }
         lines.add(L.addSpacer(arrowH + 1, ScreenLayout.KEEP));
@@ -571,8 +566,8 @@ class PowerNapView extends WatchUi.View {
             L.addText(["Waiting for sleep...", "Waiting..."], fontsDetail(), Graphics.COLOR_LT_GRAY, 95);
         }
 
-        // Before sleep: the guaranteed latest alarm time (rounded UP to the
-        // minute, so the alarm is never later than the time shown). After a
+        // Before sleep: the guaranteed latest alarm time (the cap fixed at
+        // start, the very minute the start screen promised). After a
         // wake episode: the fixed alarm time. Ranked above the stillness
         // line: on the smallest screens the alarm promise must survive.
         L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_LT_GRAY, 96);
@@ -940,15 +935,21 @@ class PowerNapView extends WatchUi.View {
         return ["START: new nap", "START: new"] as Array<String>;
     }
 
-    //! The alarm promise. Before sleep: the latest possible alarm (the
-    //! deadline), rounded UP to the minute so the alarm never rings after
-    //! the time shown. Once asleep: the minute the alarm now rings in.
+    //! The alarm promise. Before sleep: the latest possible alarm (the cap
+    //! fixed at start). Once asleep: the minute the alarm now rings in.
     private function alarmLineTexts() as Array<String> {
         if (_detector.getPlannedEndTime() != null) {
             var at = alarmAtString();
             return ["Alarm at " + at, "At " + at] as Array<String>;
         }
-        var by = formatMoment(new Time.Moment(_detector.getDeadlineTime().value() + 59));
+        return alarmByTexts(_detector.getDeadlineTime().value());
+    }
+
+    //! The alarm cap as the start screen and the nap screens both word it.
+    //! The cap falls on a whole minute (AlarmCap), so the alarm rings at
+    //! the latest exactly at the time shown, never after it.
+    private function alarmByTexts(capSec as Number) as Array<String> {
+        var by = formatMoment(new Time.Moment(capSec));
         return ["Alarm by " + by, "By " + by] as Array<String>;
     }
 
@@ -996,7 +997,7 @@ class PowerNapView extends WatchUi.View {
     }
 
     private function clockString() as String {
-        return formatMoment(Time.now());
+        return formatMoment(new Time.Moment(_detector.getNowSec()));
     }
 
     //! A short text centred in the Instinct's subscreen lens.
@@ -1095,7 +1096,51 @@ class PowerNapView extends WatchUi.View {
         return (d < 0) ? 0 : d;
     }
 
-    private function readStoredDuration() as Number {
+    //! The duration the start screen opens on: the nap this watch started
+    //! last (clamped to the valid range), the setting from the phone when
+    //! that changed since, and the setting itself on the first run. Stay
+    //! Awake is never remembered, so this is always a nap duration.
+    private function initialDuration() as Number {
+        var phone = readPhoneDuration();
+        var saved = storedNumber(KEY_LAST_NAP);
+        if (saved == null) {
+            return phone;                            // first run
+        }
+        var phoneThen = storedNumber(KEY_PHONE_NAP);
+        if (phoneThen != null && (phoneThen as Number) != phone) {
+            return phone;                            // changed on the phone since
+        }
+        return clampDuration(saved as Number);
+    }
+
+    //! Remember the duration a nap just started with, together with the
+    //! phone setting it was picked against (see KEY_LAST_NAP).
+    private function rememberDuration(minutes as Number) as Void {
+        try {
+            Application.Storage.setValue(KEY_LAST_NAP, minutes);
+            Application.Storage.setValue(KEY_PHONE_NAP, _syncedDuration);
+        } catch (e instanceof Lang.Exception) {
+            // Storage full or unavailable -- the nap runs with the pick anyway.
+        }
+    }
+
+    //! A Number kept in the app's own storage, or null when it is absent,
+    //! of another type, or unreadable.
+    private function storedNumber(key as String) as Number? {
+        try {
+            var v = Application.Storage.getValue(key);
+            if (v != null && v instanceof Number) {
+                return v as Number;
+            }
+        } catch (e instanceof Lang.Exception) {
+            // Storage corrupt -- fall back to the phone setting.
+        }
+        return null;
+    }
+
+    //! The nap duration configured from the phone (Application.Properties),
+    //! clamped; the value last taken over if it cannot be read.
+    private function readPhoneDuration() as Number {
         var d = _syncedDuration;
         try {
             var saved = Application.Properties.getValue("napDuration");
@@ -1105,35 +1150,86 @@ class PowerNapView extends WatchUi.View {
         } catch (e instanceof Lang.Exception) {
             // Storage corrupt -- keep the current value.
         }
-        if (d < DURATION_MIN) { d = DURATION_MIN; }
-        if (d > DURATION_MAX) { d = DURATION_MAX; }
-        return d;
+        return clampDuration(d);
     }
 
-    //! One-shot timer to just after the next change of the "Alarm by"
-    //! preview. It is rounded up to the minute (see alarmLineTexts), so it
-    //! moves when the clock reaches second 1 of a minute.
+    private function clampDuration(minutes as Number) as Number {
+        if (minutes < DURATION_MIN) { return DURATION_MIN; }
+        if (minutes > DURATION_MAX) { return DURATION_MAX; }
+        return minutes;
+    }
+
+    //! Keep the start screen live: the time of day and the "Alarm by"
+    //! preview both move when the clock reaches a new minute (AlarmCap
+    //! counts from the minute the nap starts in), so the screen is redrawn
+    //! right after every minute change while it is open, with no press
+    //! needed. The wall clock has whole seconds only, so the timer wakes
+    //! UI_POLL_MS into the minute's last second and then looks again every
+    //! UI_POLL_MS: the new minute is on screen at most that late. The same
+    //! timer takes the exit popup off when its window is over.
     private function startUiTimer() as Void {
-        if (_uiTimer != null) {
+        if (!_uiTimerArmed) {
+            armUiTimer(uiWakeMs(clockSec()));
+        }
+    }
+
+    //! Start-screen refresh: redraw if the minute has changed or the popup
+    //! hint has expired, then wait for whichever comes first.
+    function onUiTimer() as Void {
+        _uiTimerArmed = false;
+        if (_started) {
             return;
         }
-        var sec = System.getClockTime().sec;
-        var waitSec = (sec < 1) ? (1 - sec) : (61 - sec);
+        var sec = clockSec();
+        var redraw = (sec != 59);                    // woken after a minute change
+        if (_hintTexts != null && !isHintShowing()) {
+            _hintTexts = null;                       // the popup's window is over
+            redraw = true;
+        }
+        if (redraw) {
+            WatchUi.requestUpdate();
+        }
+        armUiTimer(uiWakeMs(sec));
+    }
+
+    //! Milliseconds until the next look of the start-screen refresh (see
+    //! startUiTimer): into the last second of the minute, or every
+    //! UI_POLL_MS while already in it, and never past the popup's end.
+    private function uiWakeMs(sec as Number) as Number {
+        var ms = (sec >= 59) ? UI_POLL_MS : ((59 - sec) * 1000 + UI_POLL_MS);
+        if (_hintTexts != null) {
+            var left = CONFIRM_WINDOW_MS + UI_POLL_MS - (nowMs() - _hintStartMs);
+            if (left < ms) {
+                ms = (left < UI_POLL_MS) ? UI_POLL_MS : left;
+            }
+        }
+        return ms;
+    }
+
+    //! The second within the current minute (0-59) of the wall clock.
+    private function clockSec() as Number {
+        return _detector.getNowSec() % 60;
+    }
+
+    private function armUiTimer(ms as Number) as Void {
+        stopUiTimer();
         try {
-            var t = new Timer.Timer();
-            t.start(method(:onUiTimer), waitSec * 1000 + 200, false);
-            _uiTimer = t;
+            if (_uiTimer == null) {
+                _uiTimer = new Timer.Timer();
+            }
+            (_uiTimer as Timer.Timer).start(method(:onUiTimer), ms, false);
+            _uiTimerArmed = true;
         } catch (e instanceof Lang.Exception) {
-            // Timer limit: the preview refreshes on the next key press.
-            _uiTimer = null;
+            // Timer limit: the start screen refreshes on the next key press.
+            _uiTimerArmed = false;
         }
     }
 
     private function stopUiTimer() as Void {
-        if (_uiTimer != null) {
+        if (_uiTimer != null && _uiTimerArmed) {
             (_uiTimer as Timer.Timer).stop();
-            _uiTimer = null;
         }
+        _uiTimerArmed = false;
     }
 
     //! Millisecond clock for the two-press window (not rounded to seconds).
@@ -1194,7 +1290,7 @@ class PowerNapView extends WatchUi.View {
     // the watch. Release builds show nothing.
     (:debug)
     private function buildDebugLabel() as String {
-        return "dev #0919h";
+        return "dev #0920a";
     }
 
     (:release)
@@ -1241,6 +1337,25 @@ class PowerNapView extends WatchUi.View {
     (:debug)
     function testClockString() as String {
         return clockString();
+    }
+
+    //! The alarm cap the start screen promises for the current pick.
+    (:debug)
+    function testPreviewCapSec() as Number {
+        return _detector.previewDeadlineSec(_pendingDuration);
+    }
+
+    //! Milliseconds the start-screen refresh waits when the wall clock is
+    //! at second `sec` of a minute.
+    (:debug)
+    function testUiWakeMs(sec as Number) as Number {
+        return uiWakeMs(sec);
+    }
+
+    //! Whether the start-screen refresh timer is waiting for its next look.
+    (:debug)
+    function testUiTimerArmed() as Boolean {
+        return _uiTimerArmed;
     }
 
     //! Format a moment exactly like the screens do (12/24 h).

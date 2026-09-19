@@ -237,7 +237,7 @@ function testLayout_alarmScreens(logger as Test.Logger) as Boolean {
     d.testSetNapDurationMin(5);
     d.testRunMinutes(21, 0, 300.0f);
     v = layoutHelperView(d, new AlarmManager());
-    ok = layoutHelperCheck("alarm deadline", v, dc, ["Time's up", "Waited 20 min"] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("alarm deadline", v, dc, ["Time's up", "Waited 21 min"] as Array<String>, logger) && ok;
 
     // Smart wake.
     d = layoutHelperAsleep();
@@ -295,7 +295,7 @@ function testLayout_summaryScreens(logger as Test.Logger) as Boolean {
     d.testRunMinutes(21, 0, 300.0f);
     d.finishNap();
     v = layoutHelperView(d, new AlarmManager());
-    ok = layoutHelperCheck("summary no sleep", v, dc, ["No sleep", "Timer alarm", "Waited 20 min"] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("summary no sleep", v, dc, ["No sleep", "Timer alarm", "Waited 21 min"] as Array<String>, logger) && ok;
     return ok;
 }
 
@@ -752,9 +752,10 @@ function testLayout_completionShownWithoutRing(logger as Test.Logger) as Boolean
     return ok;
 }
 
-//! The promised time itself: "Alarm by" is the deadline rounded UP to the
-//! minute (never earlier than the real alarm), and after onset "Wake at" /
-//! "Alarm at" is the minute of the planned end.
+//! The promised time itself: "Alarm by" is the minute of the cap (AlarmCap
+//! puts it on a whole minute, so the alarm never rings after the time
+//! shown), and after onset "Wake at" / "Alarm at" is the minute of the
+//! planned end.
 (:test)
 function testLayout_promiseValues(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
@@ -763,27 +764,26 @@ function testLayout_promiseValues(logger as Test.Logger) as Boolean {
     d.testSetBaseline(70.0f);
     var v = layoutHelperView(d, new AlarmManager());
     var deadline = d.testGetDeadlineSec();
-    var latest = v.testFormatMoment(new Time.Moment(deadline + 59));
-    var ok = layoutHelperCheck("promise before sleep", v, dc, [latest] as Array<String>, logger);
+    var ok = true;
     if (deadline % 60 != 0) {
-        var early = v.testFormatMoment(new Time.Moment(deadline));
-        if (!early.equals(latest) && v.testBuildLayout(dc).showsFragment(early)) {
-            logger.debug("the promise must be rounded up, not down: " + early);
-            ok = false;
-        }
+        logger.debug("the cap must fall on a whole minute, got " + deadline);
+        ok = false;
     }
+    var latest = v.testFormatMoment(new Time.Moment(deadline));
+    ok = layoutHelperCheck("promise before sleep", v, dc, [latest] as Array<String>, logger) && ok;
     d.testForceSleep();
     var at = v.testFormatMoment(new Time.Moment(d.testGetNapEndSec()));
     ok = layoutHelperCheck("wake at after onset", v, dc, [at] as Array<String>, logger) && ok;
 
     // The start-screen preview is the same formula before START.
-    var s = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    var sd = new SleepDetector(null);
+    var s = layoutHelperStartView(sd, new AlarmManager());
     s.testSetPendingDuration(30);
-    var before = s.testFormatMoment(new Time.Moment(Time.now().value() + 45 * 60 + 59));
+    var before = s.testFormatMoment(new Time.Moment(sd.previewDeadlineSec(30)));
     var layout = s.testBuildLayout(dc);
-    var after = s.testFormatMoment(new Time.Moment(Time.now().value() + 45 * 60 + 59));
+    var after = s.testFormatMoment(new Time.Moment(sd.previewDeadlineSec(30)));
     if (!layout.showsFragment(before) && !layout.showsFragment(after)) {
-        logger.debug("start preview must show start + 15 + 30 min, rounded up: " + before);
+        logger.debug("start preview must show the cap of 15 + 30 min: " + before);
         ok = false;
     }
     return ok;

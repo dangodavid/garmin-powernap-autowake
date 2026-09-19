@@ -39,13 +39,14 @@ Command line: build with `-t` and run `monkeydo <prg> fenix847mm -t` with the si
 | File | Responsibility |
 |------|----------------|
 | `PowerNapApp.mc` | `AppBase` lifecycle: creates `SleepDetector` and `AlarmManager`, hands them to the view stack, cleans up on exit |
-| `PowerNapView.mc` | Start screen + 4 nap screens built as prioritised line lists; live 1 Hz refresh; owns the two-press `ConfirmPress` |
+| `PowerNapView.mc` | Start screen + 4 nap screens built as prioritised line lists; live 1 Hz refresh during a nap, minute-aligned refresh on the start screen; remembers the duration in `Application.Storage`; owns the two-press `ConfirmPress` |
 | `PowerNapDelegate.mc` | `InputDelegate` (not `BehaviorDelegate`): routes physical button presses and tap coordinates to view actions |
 | `SleepDetector.mc` | Core engine: wall-clock timing, per-minute sensor aggregation, onset / wake / smart-wake logic, deadline alarm |
 | `AlarmManager.mc` | Ramp-table crescendo (9 steps to full strength in ~2 min, then persistent); restarts its own timer when the wait changes; AMOLED-safe backlight handling; quiet onset gate |
 | `ScreenLayout.mc` | Line layout that fits any screen (drops/shrinks by priority, round chord, Instinct subscreen) + `Palette` |
 | `ConfirmPress.mc` | Two-press confirmation for stopping a nap or the alarm |
 | `RingMath.mc` | Angle math for the summary ring |
+| `AlarmCap.mc` | The one "Alarm by" formula (start rounded up to the next minute + allowance + nap), used by the preview and by the nap |
 
 ### State machine (SleepDetector)
 
@@ -90,7 +91,7 @@ Effective naps (planned end minus onset, possibly shortened by the deadline cap)
 
 ### Deadline cap and frozen settings
 
-The deadline (start + allowance + nap) is shown as "Alarm by HH:MM" (rounded up to the minute) and is a hard cap: a late onset shortens the nap instead of pushing the alarm past it. Detector settings are frozen for the running nap; changes from the phone apply to the next one. Alarm Type applies immediately.
+The deadline comes from `AlarmCap.deadlineSec()`: the start rounded UP to the next whole minute + allowance + nap. Both the start screen's preview and `beginSession()` call it, so a nap started anywhere in the minute the preview was drawn in keeps that time, and the cap is itself a whole minute, so the alarm rings at the latest exactly at the "Alarm by HH:MM" shown. It is a hard cap: a late onset shortens the nap instead of pushing the alarm past it. Detector settings are frozen for the running nap; changes from the phone apply to the next one. Alarm Type applies immediately. The duration a nap started with is remembered in `Application.Storage` (written at once, unlike properties, which are only saved when the app stops) and opens the next session unless the phone setting changed since.
 
 ### Alarm escalation (AlarmManager)
 

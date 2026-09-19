@@ -8,11 +8,11 @@ Put on the watch, start the app, lie down.
 
 ## How It Works
 
-1. **Start the app** from your watch menu. Use UP/DOWN or tap above/below the number to set the nap duration (5–120 min, it stops at both ends), then press START, or tap the number or the "TAP to begin" hint (touchscreen watches; FR255 and Instinct 3 show "START to begin"). The number is minutes **of sleep** ("min of sleep"): they count from the moment you fall asleep. The start screen shows the time of day at the top and, under the number, the latest possible alarm time ("Alarm by HH:MM": the alarm never rings later than that). One step below 5 min is **Stay Awake** mode (see below). The start screen's menu (hold UP on five-button watches, the menu gesture or a long press on the number on touch watches) has **Test alarm**: it plays every step of the wake-up ramp once, 3 seconds apart, with your alarm type, so you can feel it without napping; the screen shows "Step N of 9" and the intensity, BACK stops it.
+1. **Start the app** from your watch menu. Use UP/DOWN or tap above/below the number to set the nap duration (5–120 min, it stops at both ends), then press START, or tap the number or the "TAP to begin" hint (touchscreen watches; FR255 and Instinct 3 show "START to begin"). The number is minutes **of sleep** ("min of sleep"): they count from the moment you fall asleep, and it starts on the duration of your last nap (the watch remembers it; changing "Nap Duration" in the phone settings sets it again). The start screen shows the time of day at the top and, under the number, the latest possible alarm time ("Alarm by HH:MM": the alarm never rings later than that). Both follow the clock: they move on at every minute change while the screen is open, without you pressing anything. One step below 5 min is **Stay Awake** mode (see below). The start screen's menu (hold UP on five-button watches, the menu gesture or a long press on the number on touch watches) has **Test alarm**: it plays every step of the wake-up ramp once, 3 seconds apart, with your alarm type, so you can feel it without napping; the screen shows "Step N of 9" and the intensity, BACK stops it.
 2. **Calibrating (2 min):** The app measures your resting heart rate to build a personal baseline. Stillness already counts from the first second.
 3. **Monitoring:** It watches for sleep onset: two still minutes once your heart rate has dropped at least the HR Drop Threshold below the baseline, or five still minutes on stillness alone. Heart rate speeds detection up but is never required. Detection itself is silent: nothing vibrates, sounds or lights up until the alarm (the app's alarm manager refuses any output outside the alarm, and a permanent test file guards it).
 4. **Sleep detected:** The alarm time is fixed at detection + nap duration, or at the "Alarm by" time if that is earlier. The screen shows when you fell asleep, "Wake at HH:MM" and a live countdown. Example: 15 min nap started at 9:00, asleep at 9:10 → alarm at 9:25.
-5. **Guaranteed alarm time:** From the start, the screen shows "Alarm by HH:MM" = start + "max time to fall asleep" + nap duration. The alarm never rings later than that: if sleep is never detected it rings exactly then, and if you fall asleep late the nap is shortened to end by then. You can never sleep through a nap because detection failed.
+5. **Guaranteed alarm time:** From the start, the screen shows "Alarm by HH:MM" = the start rounded up to the next full minute + "max time to fall asleep" + nap duration. It is the same time the start screen promised before you pressed START (anywhere within that minute) and it is a full minute, so the alarm rings at the latest exactly at the minute shown. The alarm never rings later than that: if sleep is never detected it rings exactly then, and if you fall asleep late the nap is shortened to end by then. You can never sleep through a nap because detection failed.
 6. **Smart Wake Window (naps of 15 min or more):** In the last 20 % of the nap before the alarm (at most 5 minutes) a restless minute or a slight HR rise fires the alarm early at a natural waking moment. If the "Alarm by" cap shortened the nap below 15 minutes, there is no smart wake.
 7. **Wake-up alarm:** A slow crescendo brings you out of sleep gradually. It starts with taps so fine you barely feel them (22 % for 120 ms) and grows in nine steps to full strength about two minutes after the first tap (118 s), then keeps ringing at full strength every 5 seconds for three minutes and every 30 seconds after that until you stop it. The screen is gentle too: it stays dark until the taps are clearly felt (the 50 % step) and then shows a calm "Time to wake up"; it only flashes once the alarm is at full strength. By default a soft nature-inspired melody joins the vibration from the 40 % step on watches with a beeper or speaker (see Alarm Escalation). If your alarm type cannot be heard on the watch (for example Nature sound only on a vívoactive, which has no speaker tones, or vibration switched off in the watch settings) the other channel is used. Works with Do Not Disturb on (verified on a fēnix 8 Pro: DND does not mute the vibration).
 8. **Woke up early?** Nothing to do: lie still for two minutes and the nap continues, the alarm time stays the same. Every nap screen shows the time of day. Press UP or DOWN (or START once) to peek at the nap so far (time asleep, wakes, alarm time) for a few seconds; this never stops anything.
@@ -119,9 +119,11 @@ The first onset is not back-dated: the alarm is fixed at detection + nap duratio
 
 Going back to sleep needs 2 still minutes, no heart-rate condition, and restarts the sleep-phase heart-rate average (so a steady, slightly higher heart rate is not reported as a wake every few minutes). Time awake, including the minute that showed the wake, is excluded from the time asleep.
 
-**Deadline alarm:** If sleep is never detected, the alarm rings at start + max time to fall asleep + nap duration. The summary then says "No sleep detected".
+**Deadline alarm:** If sleep is never detected, the alarm rings at the "Alarm by" time (the start rounded up to the next full minute + max time to fall asleep + nap duration, computed by `AlarmCap` for both the start screen's preview and the nap itself). The summary then says "No sleep detected".
 
 **Settings:** nap duration, max time to fall asleep, HR drop threshold and motion sensitivity are read when a nap starts; a change made from the phone during a nap applies to the next nap. A change of Alarm Type applies immediately, also to a nap or alarm in progress.
+
+**Remembered duration:** pressing START stores the chosen duration on the watch (`Application.Storage`, written immediately), and the start screen opens on it next time, clamped to 5-120 min. Changing "Nap Duration" in the phone settings takes over again, and the first run uses that setting. Stay Awake is a choice for one session and is never stored.
 
 ---
 
@@ -172,7 +174,7 @@ tools/runtests.sh fenix847mm instinct3solar45mm fr255s venu3s vivoactive5
 tools/runtests.sh $(cat tools/devices.txt)      # all 43 supported watches
 ```
 
-The suite under `test/` (235 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
+The suite under `test/` (243 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
 
 - **Invariant tests** run seeded random naps (settings and a minute-by-minute story of dozing, stirring, waking and sensor dropouts) and check after every simulated second the rules that must always hold: the alarm always rings and never after the deadline, the planned end never moves, smart wake only inside its window, stats in range. A failure prints the seed to replay it.
 - **Negative tests** feed absurd heart rates, missing accelerometer data, a wall clock stepping back, lifecycle calls in every state and wrong-type settings.
@@ -217,6 +219,7 @@ source/
   ScreenLayout.mc               Fit-any-screen line layout, popup banner + monochrome palette
   ConfirmPress.mc               Two-press confirmation: BACK x2 leaves the app from the start screen, START x2 stops; the keys never pair
   RingMath.mc                   Progress-ring angle math
+  AlarmCap.mc                   The one "Alarm by" formula: start rounded up to the minute + allowance + nap
 test/
   OnsetTest.mc                  Calibration, stillness, onset paths
   WakeTest.mc                   Wake episodes, re-entry, sleep accumulation
@@ -231,6 +234,7 @@ test/
   MotionTest.mc                 Raw accelerometer batches, offset independence
   InvariantTest.mc              Seeded random naps + negative tests (with the real alarm manager)
   TraceTest.mc                  Replays of recorded naps
+  StartScreenTest.mc            The cap formula, the live preview, the remembered duration, the button flow
 tools/
   runtests.sh                   Build + run the suite one device at a time (simulator restarts, retries)
   devices.txt                   The 43 device ids of the manifest, one per line
@@ -252,7 +256,7 @@ tools/
 
 ## Privacy
 
-This app does **not** transmit any data outside the watch. Heart rate and accelerometer data are processed in-memory and never written to device storage or saved to a Garmin Connect activity log. The only data persisted between sessions is your chosen nap duration preference. (Developer debug builds can write a per-minute log for testing, and only when the developer creates the log file on the watch; store builds never write one.)
+This app does **not** transmit any data outside the watch. Heart rate and accelerometer data are processed in-memory and never written to device storage or saved to a Garmin Connect activity log. The only data persisted between sessions is your chosen nap duration (the setting itself and, on the watch, the duration of the last nap you started). (Developer debug builds can write a per-minute log for testing, and only when the developer creates the log file on the watch; store builds never write one.)
 
 ---
 

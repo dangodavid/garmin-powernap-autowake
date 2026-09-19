@@ -5,11 +5,13 @@ import Toybox.Time;
 // -----------------------------------------------------------------------------
 // Wall-clock alarm timing, deadline alarm and smart-wake window tests.
 //
-// testStart() freezes the detector clock: only the fake offset moves time, one
-// second per fed tick, so every expectation below is exact. Expectations are
-// expressed against the detector's own clock (testNowSec / testGetNapEndSec /
-// testGetDeadlineSec); the alarm-tick helper also checks the state on every
-// tick before the alarm second.
+// testStart() freezes the detector clock on a whole minute: only the fake
+// offset moves time, one second per fed tick, so every expectation below is
+// exact. Expectations are expressed against the detector's own clock
+// (testNowSec / testGetNapEndSec / testGetDeadlineSec); the alarm-tick helper
+// also checks the state on every tick before the alarm second. The cap comes
+// from AlarmCap (the start rounded up to the next whole minute + allowance +
+// nap), so from a whole-minute start it lies one minute after their sum.
 // -----------------------------------------------------------------------------
 
 // ── Helpers (debug builds only: they call the detector's test hooks) ─────────
@@ -222,8 +224,8 @@ function testTiming_deadlineAlarmNap5NeverStill(logger as Test.Logger) as Boolea
     d.testStart();
     d.testSetNapDurationMin(5);
     var deadline = d.testGetDeadlineSec();
-    if (deadline - d.testGetStartSec() != 20 * 60) {
-        logger.debug("deadline expected 1200 s after start, got " + (deadline - d.testGetStartSec()));
+    if (deadline != AlarmCap.deadlineSec(d.testGetStartSec(), 15, 5)) {
+        logger.debug("deadline expected at the cap of 15 + 5 min, got " + (deadline - d.testGetStartSec()));
         return false;
     }
 
@@ -254,8 +256,8 @@ function testTiming_deadlineAlarmNap120NeverStill(logger as Test.Logger) as Bool
     d.testStart();
     d.testSetNapDurationMin(120);
     var deadline = d.testGetDeadlineSec();
-    if (deadline - d.testGetStartSec() != 135 * 60) {
-        logger.debug("deadline expected 8100 s after start, got " + (deadline - d.testGetStartSec()));
+    if (deadline != AlarmCap.deadlineSec(d.testGetStartSec(), 15, 120)) {
+        logger.debug("deadline expected at the cap of 15 + 120 min, got " + (deadline - d.testGetStartSec()));
         return false;
     }
 
@@ -286,14 +288,14 @@ function testTiming_deadlineUsesCustomAllowance(logger as Test.Logger) as Boolea
     d.testStart();
     d.testSetNapDurationMin(30);
     var start = d.testGetStartSec();
-    if (d.testGetDeadlineSec() - start != 45 * 60) {
-        logger.debug("default allowance 15 + nap 30 should give 2700 s, got " + (d.testGetDeadlineSec() - start));
+    if (d.testGetDeadlineSec() != AlarmCap.deadlineSec(start, 15, 30)) {
+        logger.debug("default allowance 15 + nap 30 missed the cap, got " + (d.testGetDeadlineSec() - start));
         return false;
     }
     d.testSetFallAsleepAllowanceMin(5);
     var deadline = d.testGetDeadlineSec();
-    if (deadline - start != 35 * 60 || d.getFallAsleepAllowanceMin() != 5) {
-        logger.debug("allowance 5 + nap 30 should give 2100 s, got " + (deadline - start));
+    if (deadline != AlarmCap.deadlineSec(start, 5, 30) || d.getFallAsleepAllowanceMin() != 5) {
+        logger.debug("allowance 5 + nap 30 missed the cap, got " + (deadline - start));
         return false;
     }
 
@@ -312,9 +314,10 @@ function testTiming_deadlineUsesCustomAllowance(logger as Test.Logger) as Boolea
     return true;
 }
 
-//! The deadline is a hard upper bound: nap 30, allowance 5 (deadline 35 min),
-//! restless for 10 min, onset at 10 min -> the alarm is capped at 35 min
-//! (not 40) with NAP_COMPLETE, and 83 % of the planned nap is reported.
+//! The deadline is a hard upper bound: nap 30, allowance 5 (the cap of a nap
+//! started on a whole minute is 36 min), restless for 10 min, onset at 10 min
+//! -> the alarm is capped at the deadline (not at onset + 30 min) with
+//! NAP_COMPLETE, and 26 of the 30 planned minutes (86 %) are reported.
 (:test)
 function testTiming_deadlineCapsPlannedEndAfterLateOnset(logger as Test.Logger) as Boolean {
     var d = new SleepDetector(null);
@@ -324,8 +327,9 @@ function testTiming_deadlineCapsPlannedEndAfterLateOnset(logger as Test.Logger) 
     d.testSetBaseline(70.0f);
     var start = d.testGetStartSec();
     var deadline = d.testGetDeadlineSec();
-    if (deadline != start + 35 * 60) {
-        logger.debug("deadline expected at 35 min, got " + (deadline - start));
+    if (deadline != AlarmCap.deadlineSec(start, 5, 30) || deadline != start + 36 * 60) {
+        logger.debug("deadline expected at the cap (36 min from a whole-minute start), got "
+            + (deadline - start));
         return false;
     }
 
@@ -352,8 +356,8 @@ function testTiming_deadlineCapsPlannedEndAfterLateOnset(logger as Test.Logger) 
         logger.debug("expected NAP_COMPLETE (sleep was detected), got " + d.getAlarmReason());
         return false;
     }
-    if (d.getPlannedCompletionPct() != 83) {
-        logger.debug("25 of 30 planned minutes -> 83 %, got " + d.getPlannedCompletionPct());
+    if (d.getPlannedCompletionPct() != 86) {
+        logger.debug("26 of 30 planned minutes -> 86 %, got " + d.getPlannedCompletionPct());
         return false;
     }
     return true;
@@ -432,8 +436,10 @@ function testTiming_secondsUntilDeadlineCountsDown(logger as Test.Logger) as Boo
     d.testSetNapDurationMin(5);
     var deadline = d.testGetDeadlineSec();
     var first = d.getSecondsUntilDeadline();
-    if (first != 20 * 60 || first != deadline - d.testNowSec()) {
-        logger.debug("initial seconds until deadline should be 1200, got " + first);
+    // 15 + 5 min plus the minute the cap rounds the start up by (the test
+    // clock starts on a whole minute).
+    if (first != 21 * 60 || first != deadline - d.testNowSec()) {
+        logger.debug("initial seconds until deadline should be 1260, got " + first);
         return false;
     }
 
@@ -454,7 +460,7 @@ function testTiming_secondsUntilDeadlineCountsDown(logger as Test.Logger) as Boo
         return false;
     }
 
-    d.testAdvanceClock(20 * 60);
+    d.testAdvanceClock(25 * 60);
     if (d.getSecondsUntilDeadline() != 0) {
         logger.debug("countdown past the deadline should clamp to 0, got " + d.getSecondsUntilDeadline());
         return false;
@@ -848,8 +854,10 @@ function testTiming_fallingAsleepLateMovesTheAlarm(logger as Test.Logger) as Boo
         logger.debug("no fall-asleep time before onset");
         ok = false;
     }
-    if (d.testGetDeadlineSec() != start + 30 * 60) {
-        logger.debug("the promise at 9:00 must be 9:30");
+    // The cap of a nap started at 9:00:00 is 9:31 (the start is rounded up
+    // to the next minute, then 15 + 15).
+    if (d.testGetDeadlineSec() != AlarmCap.deadlineSec(start, 15, 15)) {
+        logger.debug("the promise at 9:00 must be 9:31");
         ok = false;
     }
     d.testRunMinutes(5, 72, 200.0f);             // 9:00-9:05 moving
@@ -878,19 +886,19 @@ function testTiming_fallingAsleepLateMovesTheAlarm(logger as Test.Logger) as Boo
     start = d.testGetStartSec();
     d.testRunMinutes(15, 72, 200.0f);            // 9:00-9:15 moving
     d.testRunMinutes(5, 70, 10.0f);              // 9:15-9:20 still -> asleep at 9:20
-    if (d.testGetNapEndSec() != start + 30 * 60) {
-        logger.debug("asleep at 9:20 must be capped at 9:30, alarm " + (d.testGetNapEndSec() - start) / 60 + " min");
+    if (d.testGetNapEndSec() != AlarmCap.deadlineSec(start, 15, 15)) {
+        logger.debug("asleep at 9:20 must be capped at 9:31, alarm " + (d.testGetNapEndSec() - start) / 60 + " min");
         ok = false;
     }
 
-    // Never asleep -> 9:30.
+    // Never asleep -> the cap, 9:31.
     d = new SleepDetector(null);
     d.testStart();
     d.testSetNapDurationMin(15);
     start = d.testGetStartSec();
-    ok = timingRunToAlarm(d, start + 30 * 60, 72, 200.0f, -1, logger) && ok;
+    ok = timingRunToAlarm(d, AlarmCap.deadlineSec(start, 15, 15), 72, 200.0f, -1, logger) && ok;
     if (d.getAlarmReason() != SleepDetector.ALARM_DEADLINE) {
-        logger.debug("never asleep must ring at 9:30 (deadline), reason " + d.getAlarmReason());
+        logger.debug("never asleep must ring at the cap (deadline), reason " + d.getAlarmReason());
         ok = false;
     }
     return ok;

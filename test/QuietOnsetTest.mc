@@ -182,7 +182,7 @@ function testQuiet_lateOnsetRingsOnlyAtDeadline(logger as Test.Logger) as Boolea
         d.testSetNapDurationMin(10);
         var deadline = d.testGetDeadlineSec();
         var what = "type " + type;
-        var ok = quietRun(d, a, 19 * 60, 70, 200.0f, what + " awake", logger)
+        var ok = quietRun(d, a, 20 * 60, 70, 200.0f, what + " awake", logger)
             && quietRun(d, a, 5 * 60, 70, 10.0f, what + " late onset", logger);
         if (ok && (d.getState() != SleepDetector.STATE_SLEEPING || d.testGetNapEndSec() != deadline
             || deadline - d.testNowSec() != 60)) {

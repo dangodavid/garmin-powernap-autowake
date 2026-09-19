@@ -31,9 +31,15 @@ class DelegateRig {
     var view as PowerNapView;
     var delegate as PowerNapDelegate;
     private var _napProp as Object?;
+    private var _lastNap as Number?;
+    private var _phoneNap as Number?;
 
     function initialize(pending as Number) {
         _napProp = Application.Properties.getValue("napDuration");
+        // START remembers the duration in Application.Storage; put back
+        // whatever this device had, so one test cannot set up the next.
+        _lastNap = delegateHelperStored("lastNapMin");
+        _phoneNap = delegateHelperStored("lastPhoneNapMin");
         alarm = new AlarmManager();
         alarm.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
         detector = new SleepDetector(alarm);
@@ -76,15 +82,44 @@ class DelegateRig {
     }
 
     //! Stop everything (including the start screen's refresh timer, which
-    //! resetToStart() starts) and restore the stored nap duration.
+    //! resetToStart() starts) and restore the stored nap duration, both the
+    //! phone setting and the duration remembered on the watch.
     function cleanup() as Void {
         alarm.stop();
         detector.stop();
         view.onHide();
         try {
             Application.Properties.setValue("napDuration", (_napProp != null) ? _napProp as Number : 30);
+            delegateHelperRestore("lastNapMin", _lastNap);
+            delegateHelperRestore("lastPhoneNapMin", _phoneNap);
         } catch (e instanceof Lang.Exception) {
         }
+    }
+}
+
+//! A Number kept in Application.Storage, or null.
+(:debug)
+function delegateHelperStored(key as String) as Number? {
+    try {
+        var v = Application.Storage.getValue(key);
+        if (v != null && v instanceof Number) {
+            return v as Number;
+        }
+    } catch (e instanceof Lang.Exception) {
+    }
+    return null;
+}
+
+//! Put a remembered Storage value back (delete it when there was none).
+(:debug)
+function delegateHelperRestore(key as String, value as Number?) as Void {
+    try {
+        if (value == null) {
+            Application.Storage.deleteValue(key);
+        } else {
+            Application.Storage.setValue(key, value as Number);
+        }
+    } catch (e instanceof Lang.Exception) {
     }
 }
 

@@ -131,7 +131,7 @@ function testReg_settingsFrozenDuringNap(logger as Test.Logger) as Boolean {
         Application.Properties.setValue("fallAsleepAllowance", 30);
         d.loadSettings();
         if (d.getNapDurationMin() != 30 || d.getFallAsleepAllowanceMin() != 15
-            || d.testGetDeadlineSec() != start + 45 * 60) {
+            || d.testGetDeadlineSec() != AlarmCap.deadlineSec(start, 15, 30)) {
             logger.debug("running nap must keep 30/15 and its deadline");
             ok = false;
         }
@@ -145,7 +145,7 @@ function testReg_settingsFrozenDuringNap(logger as Test.Logger) as Boolean {
         d.loadSettings();
         d.testStartKeepSettings();
         if (d.getNapDurationMin() != 60 || d.getFallAsleepAllowanceMin() != 30
-            || d.testGetDeadlineSec() != d.testGetStartSec() + 90 * 60) {
+            || d.testGetDeadlineSec() != AlarmCap.deadlineSec(d.testGetStartSec(), 30, 60)) {
             logger.debug("next nap must use 60/30, got " + d.getNapDurationMin() + "/" + d.getFallAsleepAllowanceMin());
             ok = false;
         }
@@ -420,8 +420,9 @@ function testReg_confirmPressRules(logger as Test.Logger) as Boolean {
 // ── Smart wake on a deadline-capped nap ────────────────────────────────────
 
 //! Onset at 40 min of a 30 min nap with a 15 min allowance: the cap leaves a
-//! 5 min nap, so there is no smart-wake window; a stir minute is ignored and
-//! the alarm rings at the 45 min deadline with NAP_COMPLETE.
+//! nap of 6 min (the deadline of a nap started on a whole minute is 46 min),
+//! so there is no smart-wake window; a stir minute is ignored and the alarm
+//! rings at the deadline with NAP_COMPLETE.
 (:test)
 function testReg_cappedShortNapHasNoSmartWake(logger as Test.Logger) as Boolean {
     var d = new SleepDetector(null);
@@ -431,7 +432,8 @@ function testReg_cappedShortNapHasNoSmartWake(logger as Test.Logger) as Boolean 
     d.testRunMinutes(40, 70, 200.0f);
     d.testForceSleep();
     var ok = true;
-    if (d.testGetNapEndSec() != start + 45 * 60 || d.getSmartWakeWindowSec() != 0) {
+    var deadline = AlarmCap.deadlineSec(start, 15, 30);
+    if (d.testGetNapEndSec() != deadline || d.getSmartWakeWindowSec() != 0) {
         logger.debug("capped 5 min nap: end " + (d.testGetNapEndSec() - start) + " window " + d.getSmartWakeWindowSec());
         ok = false;
     }
@@ -441,9 +443,9 @@ function testReg_cappedShortNapHasNoSmartWake(logger as Test.Logger) as Boolean 
         logger.debug("stir must not end a capped short nap, state " + d.getState());
         ok = false;
     }
-    d.testRunMinutes(4, 55, 10.0f);
+    d.testRunMinutes(5, 55, 10.0f);
     if (d.getState() != SleepDetector.STATE_ALARM || d.getAlarmReason() != SleepDetector.ALARM_NAP_COMPLETE
-        || d.testNowSec() != start + 45 * 60) {
+        || d.testNowSec() != deadline) {
         logger.debug("expected NAP_COMPLETE exactly at the deadline, state " + d.getState()
             + " reason " + d.getAlarmReason());
         ok = false;
@@ -451,8 +453,9 @@ function testReg_cappedShortNapHasNoSmartWake(logger as Test.Logger) as Boolean 
     return ok;
 }
 
-//! A 60 min nap capped to 20 min (allowance 5, onset at 45 min) gets a window
-//! of 20 % of the real 20 min (240 s), not of the configured 60 min (300 s).
+//! A 60 min nap capped to 21 min (allowance 5, onset at 45 min, cap at 66 min)
+//! gets a window of 20 % of the real 21 min (252 s), not of the configured
+//! 60 min (300 s).
 (:test)
 function testReg_cappedNapWindowUsesEffectiveLength(logger as Test.Logger) as Boolean {
     var d = new SleepDetector(null);
@@ -462,8 +465,8 @@ function testReg_cappedNapWindowUsesEffectiveLength(logger as Test.Logger) as Bo
     d.testSetBaseline(70.0f);
     d.testRunMinutes(45, 70, 200.0f);
     d.testForceSleep();
-    if (d.getSmartWakeWindowSec() != 240) {
-        logger.debug("window expected 240 s, got " + d.getSmartWakeWindowSec());
+    if (d.getSmartWakeWindowSec() != 252) {
+        logger.debug("window expected 252 s, got " + d.getSmartWakeWindowSec());
         return false;
     }
     return true;
@@ -545,7 +548,7 @@ function testReg_startClampsDuration(logger as Test.Logger) as Boolean {
             logger.debug("start(" + inputs[i] + "): " + d.getNapDurationMin() + " min, stay awake " + stay);
             return false;
         }
-        if (!stay && d.testGetDeadlineSec() != d.testGetStartSec() + (15 + expected[i]) * 60) {
+        if (!stay && d.testGetDeadlineSec() != AlarmCap.deadlineSec(d.testGetStartSec(), 15, expected[i])) {
             logger.debug("start(" + inputs[i] + "): deadline must use the documented 15 min allowance");
             return false;
         }

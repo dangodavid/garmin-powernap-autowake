@@ -21,9 +21,11 @@ import Toybox.WatchUi;
 //!
 //! Wake-up guarantee
 //! -----------------
-//! The deadline is start + fallAsleepAllowance + napDuration, fixed when the
-//! nap starts and shown on screen as "Alarm by HH:MM". It is a hard upper
-//! bound on the alarm time:
+//! The deadline is the alarm cap of AlarmCap (start rounded up to the next
+//! whole minute + fallAsleepAllowance + napDuration), fixed when the nap
+//! starts and shown on screen as "Alarm by HH:MM" - the very time the start
+//! screen promised a moment earlier. It is a hard upper bound on the alarm
+//! time:
 //! * Sleep detected  -> alarm at min(onset + napDuration, deadline).
 //!                      Falling asleep late shortens the nap instead of
 //!                      pushing the alarm past the promised time.
@@ -183,6 +185,7 @@ class SleepDetector {
     private var _secInMinute as Number = 0;
     private var _clockOffsetSec as Number = 0;       // only changed by debug helpers
     private var _frozenBaseSec as Number = 0;        // > 0 only in test sessions
+    private var _clockPinned as Boolean = false;     // tests: keep the frozen clock across start()
     private var _fakeRuntime as Boolean = false;     // tests: start() without sensors/timers
     (:debug) private var _lastTrace as String = "";  // debug builds: last trace line (tests)
 
@@ -280,7 +283,9 @@ class SleepDetector {
         _startSec = now;
         _sessionNapSec = _napDurationMin * 60;
         // Stay Awake has no deadline: nothing rings unless the user dozes.
-        _deadlineSec = _stayAwake ? 0 : (now + _fallAsleepAllowanceMin * 60 + _sessionNapSec);
+        // The cap comes from AlarmCap, the same formula the start screen
+        // showed as "Alarm by HH:MM" a moment ago (previewDeadlineSec).
+        _deadlineSec = _stayAwake ? 0 : AlarmCap.deadlineSec(now, _fallAsleepAllowanceMin, _napDurationMin);
         _sleepStartSec = null;
         _napEndSec = 0;
         _finishSec = null;
@@ -306,8 +311,12 @@ class SleepDetector {
     function start(napMin as Number) as Void {
         _napDurationMin = (napMin <= 0) ? 0 : clampNumber(napMin, 5, 120);
         if (_fakeRuntime) {
-            _frozenBaseSec = Time.now().value();
-            _clockOffsetSec = 0;
+            if (!_clockPinned) {
+                // Test sessions run on a clock frozen at a whole minute (see
+                // testStartKeepSettings); testPinClock() picks its own second.
+                _frozenBaseSec = Time.now().value() / 60 * 60;
+                _clockOffsetSec = 0;
+            }
             beginSession();
             return;
         }
@@ -898,6 +907,19 @@ class SleepDetector {
         return (_sessionNapSec > 0 || _stayAwake) ? (_sessionNapSec / 60) : _napDurationMin;
     }
     function getFallAsleepAllowanceMin() as Number { return _fallAsleepAllowanceMin; }
+
+    //! The alarm cap a nap of napMin minutes would get if it started right
+    //! now, with the settings the next start() will use: what the start
+    //! screen shows as "Alarm by HH:MM". Same formula, same clock and same
+    //! allowance as beginSession(), so pressing START inside the minute the
+    //! preview was drawn in keeps that time.
+    function previewDeadlineSec(napMin as Number) as Number {
+        return AlarmCap.deadlineSec(nowSec(), _fallAsleepAllowanceMin, napMin);
+    }
+
+    //! The wall clock the app runs on, in seconds since the epoch (the
+    //! screens read the time of day from here, so tests can freeze it).
+    function getNowSec() as Number { return nowSec(); }
     function getWakeEpisodes() as Number { return _wakeEpisodes; }
     function getStillMinutes() as Number { return _stillMinutes; }
     function getAvgSleepHR() as Number {
@@ -1101,11 +1123,27 @@ class SleepDetector {
     }
 
     //! Like testStart() but keeps whatever loadSettings() last read.
+    //! The frozen clock starts on a whole minute, so the cap (AlarmCap
+    //! rounds the start up to the next minute) lands exactly one minute
+    //! after start + allowance + nap and every expectation stays exact.
     (:debug)
     function testStartKeepSettings() as Void {
-        _frozenBaseSec = Time.now().value();
-        _clockOffsetSec = 0;
+        if (!_clockPinned) {
+            _frozenBaseSec = Time.now().value() / 60 * 60;
+            _clockOffsetSec = 0;
+        }
         beginSession();
+    }
+
+    //! Pin the frozen clock to an exact second and keep it there across
+    //! start() / testStart*(): tests of the minute boundary (the start
+    //! screen's live preview and the cap of a nap started from it).
+    //! testAdvanceClock() moves it as usual.
+    (:debug)
+    function testPinClock(sec as Number) as Void {
+        _frozenBaseSec = sec;
+        _clockOffsetSec = 0;
+        _clockPinned = true;
     }
 
     //! Make start() (called by the view) run without sensors or timers, on a
@@ -1231,13 +1269,13 @@ class SleepDetector {
     function testSetNapDurationMin(min as Number) as Void {
         _napDurationMin = min;
         _sessionNapSec = min * 60;
-        _deadlineSec = _startSec + _fallAsleepAllowanceMin * 60 + _sessionNapSec;
+        _deadlineSec = AlarmCap.deadlineSec(_startSec, _fallAsleepAllowanceMin, min);
     }
 
     (:debug)
     function testSetFallAsleepAllowanceMin(min as Number) as Void {
         _fallAsleepAllowanceMin = min;
-        _deadlineSec = _startSec + _fallAsleepAllowanceMin * 60 + _sessionNapSec;
+        _deadlineSec = AlarmCap.deadlineSec(_startSec, min, _sessionNapSec / 60);
     }
 
     (:debug)
