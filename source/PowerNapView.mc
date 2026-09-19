@@ -1116,7 +1116,7 @@ class PowerNapView extends WatchUi.View {
     // the watch. Release builds show nothing.
     (:debug)
     private function buildDebugLabel() as String {
-        return "dev #0919d";
+        return "dev #0919e";
     }
 
     (:release)
