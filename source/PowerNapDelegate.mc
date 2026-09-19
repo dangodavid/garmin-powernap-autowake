@@ -26,6 +26,7 @@ import Toybox.System;
 //!
 //!   Screen                         BACK               START              UP/DOWN
 //!   Start                          exit               start nap          +/- 5 min
+//!     (MENU / long press: menu with "Test alarm"; the preview screen's BACK ends it)
 //!   Nap / Stay Awake guard / peek  x2: exit (no       x2: stop, summary  peek card
 //!                                  summary); 1st:     1st: peek card
 //!                                  "Press BACK again"
@@ -59,6 +60,8 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     private var _alarm    as AlarmManager;
     private var _exitEnabled as Boolean = true;   // tests switch System.exit() off
     private var _exitRequested as Boolean = false;
+    private var _viewsEnabled as Boolean = true;  // tests switch WatchUi.pushView off
+    private var _menuRequests as Number = 0;
 
     function initialize(view as PowerNapView, detector as SleepDetector, alarm as AlarmManager) {
         InputDelegate.initialize();
@@ -73,9 +76,10 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         return handleTap(clickEvent.getCoordinates()[1]);
     }
 
-    //! A tap at height y. Start screen: tap zones; nap and alarm: ignored.
+    //! A tap at height y. Start screen: tap zones; nap, alarm and the alarm
+    //! preview: ignored.
     function handleTap(y as Number) as Boolean {
-        if (_view.isInputLocked()) {
+        if (_view.isInputLocked() || previewActive()) {
             return true;
         }
         if (!_view.isStarted()) {
@@ -103,22 +107,37 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         return _view.isStarted() && _detector.getState() != SleepDetector.STATE_SUMMARY;
     }
 
+    //! True while the alarm preview plays on the start screen: only BACK acts.
+    private function previewActive() as Boolean {
+        return !_view.isStarted() && _alarm.isPreviewing();
+    }
+
     //! A right swipe that does not start at the left edge arrives here; left
     //! unhandled it becomes the system back action and exits the app.
     function onSwipe(swipeEvent as WatchUi.SwipeEvent) as Boolean {
-        return napActive();
+        return napActive() || previewActive();
     }
 
+    //! Touch watches: a long press on the number of the start screen opens
+    //! the menu (their menu gesture); during a nap or the preview holds are
+    //! consumed.
     function onHold(clickEvent as WatchUi.ClickEvent) as Boolean {
+        if (!_view.isStarted()) {
+            if (!_view.isInputLocked() && !previewActive()
+                && _view.tapActionAt(clickEvent.getCoordinates()[1]) == 0) {
+                openMenu();
+            }
+            return true;
+        }
         return napActive();
     }
 
     function onFlick(flickEvent as WatchUi.FlickEvent) as Boolean {
-        return napActive();
+        return napActive() || previewActive();
     }
 
     function onDrag(dragEvent as WatchUi.DragEvent) as Boolean {
-        return napActive();
+        return napActive() || previewActive();
     }
 
     // -- Physical buttons -----------------------------------------------
@@ -136,8 +155,20 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         }
         var state = _detector.getState();
 
+        // -- Alarm preview ("Test alarm"): BACK ends it, everything else waits
+        if (previewActive()) {
+            if (key == WatchUi.KEY_ESC) {
+                _view.stopPreview();
+            }
+            return true;
+        }
+
         // -- Start screen ----------------------------------------------
         if (!_view.isStarted()) {
+            if (key == WatchUi.KEY_MENU) {
+                openMenu();
+                return true;
+            }
             if (key == WatchUi.KEY_UP) {
                 _view.adjustDuration(5);
                 return true;
@@ -233,6 +264,22 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         WatchUi.requestUpdate();
     }
 
+    //! The start-screen menu (MENU key, or a long press on a touch screen):
+    //! "Test alarm" plays the wake-up ramp once. Never during a nap.
+    private function openMenu() as Void {
+        _menuRequests += 1;
+        if (!_viewsEnabled) {
+            return;
+        }
+        try {
+            var menu = new WatchUi.Menu2({:title => "Power Nap"});
+            menu.addItem(new WatchUi.MenuItem("Test alarm", "Feel the wake-up ramp", :testAlarm, null));
+            WatchUi.pushView(menu, new PowerNapMenuDelegate(_view), WatchUi.SLIDE_UP);
+        } catch (e instanceof Lang.Exception) {
+            // No menu on this device: nothing to do.
+        }
+    }
+
     //! Leave the app: the nap and the alarm end here, no summary.
     private function exitApp() as Void {
         _detector.stop();
@@ -245,15 +292,45 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
 
     // -- Test hooks (debug builds only) -----------------------------------
 
-    //! Keep BACK on the start screen and summary from ending the test run.
+    //! Keep BACK on the start screen and summary from ending the test run,
+    //! and the menu from pushing a system view.
     (:debug)
     function testDisableExit() as Void {
         _exitEnabled = false;
+        _viewsEnabled = false;
+    }
+
+    //! How many times the start-screen menu was requested.
+    (:debug)
+    function testMenuRequests() as Number {
+        return _menuRequests;
     }
 
     //! Whether exitApp() ran (with System.exit() switched off by tests).
     (:debug)
     function testExitRequested() as Boolean {
         return _exitRequested;
+    }
+}
+
+//! The start-screen menu: "Test alarm" starts the ramp preview.
+class PowerNapMenuDelegate extends WatchUi.Menu2InputDelegate {
+
+    private var _view as PowerNapView;
+
+    function initialize(view as PowerNapView) {
+        Menu2InputDelegate.initialize();
+        _view = view;
+    }
+
+    function onSelect(item as WatchUi.MenuItem) as Void {
+        WatchUi.popView(WatchUi.SLIDE_DOWN);
+        if (item.getId() == :testAlarm) {
+            _view.startPreview();
+        }
+    }
+
+    function onBack() as Void {
+        WatchUi.popView(WatchUi.SLIDE_DOWN);
     }
 }

@@ -929,3 +929,115 @@ function testAlarm_fullIntensityOnlyAtFullStep(logger as Test.Logger) as Boolean
     }
     return ok;
 }
+
+// -- Preview ("Test alarm") ---------------------------------------------------
+
+//! The preview plays every step of the ramp exactly once, in order, one
+//! ring per step, with the configured channel and the same backlight rule,
+//! and reports the step and intensity just played for the screen.
+(:test)
+function testAlarm_previewPlaysEachStepOnce(logger as Test.Logger) as Boolean {
+    var alarm = new AlarmManager();
+    alarm.testSetAlarmType(0);
+    alarm.testForceBacklightThrow(false);
+    var steps = alarm.getPreviewSteps();
+    var ok = steps == alarm.testGetRampSize() - 1 && steps >= 9;
+    alarm.startPreview();
+    if (!alarm.isPreviewing() || alarm.getPreviewStep() != 1 || alarm.testGetVibrateCount() != 1
+        || alarm.getPreviewPct() != alarm.testGetRampRow(0)[0] || alarm.isAlarming()
+        || alarm.testGetBacklightCount() != 0) {
+        logger.debug("start: previewing " + alarm.isPreviewing() + " step " + alarm.getPreviewStep()
+            + " vib " + alarm.testGetVibrateCount() + " pct " + alarm.getPreviewPct());
+        ok = false;
+    }
+    for (var s = 2; s <= steps; s++) {
+        alarm.testPreviewTick();
+        if (alarm.getPreviewStep() != s || alarm.testGetVibrateCount() != s
+            || alarm.getPreviewPct() != alarm.testGetRampRow(s - 1)[0] || !alarm.isPreviewing()) {
+            logger.debug("tick " + s + ": step " + alarm.getPreviewStep() + " vib " + alarm.testGetVibrateCount()
+                + " pct " + alarm.getPreviewPct());
+            ok = false;
+        }
+    }
+    // Backlight from the 50 % step: bright rings are steps 4-8 (5 of them):
+    // the first two, then every 6th -> 2 requests.
+    if (alarm.testGetBacklightCount() != 2 || alarm.testGetBlockedDeliveries() != 0) {
+        logger.debug("backlight " + alarm.testGetBacklightCount() + " blocked " + alarm.testGetBlockedDeliveries());
+        ok = false;
+    }
+    alarm.stop();
+    return ok;
+}
+
+//! After the last step the preview ends by itself: no persistent phase, no
+//! further output, no alarm state; stop() ends a running preview too.
+(:test)
+function testAlarm_previewNeverEntersPersistentPhase(logger as Test.Logger) as Boolean {
+    var alarm = new AlarmManager();
+    alarm.testSetAlarmType(0);
+    alarm.startPreview();
+    var steps = alarm.getPreviewSteps();
+    for (var s = 2; s <= steps; s++) {
+        alarm.testPreviewTick();
+    }
+    var played = alarm.testGetVibrateCount();
+    alarm.testPreviewTick();                 // the tick after the last step ends the preview
+    var ok = played == steps && !alarm.isPreviewing() && !alarm.isAlarming()
+        && alarm.testGetVibrateCount() == steps;
+    for (var i = 0; i < 5; i++) {
+        alarm.testPreviewTick();
+        alarm.testFireRing();
+    }
+    if (alarm.testGetVibrateCount() != steps || alarm.isPreviewing() || alarm.isAlarming()
+        || alarm.testGetBlockedDeliveries() != 0) {
+        logger.debug("output after the preview ended: vib " + alarm.testGetVibrateCount()
+            + " previewing " + alarm.isPreviewing());
+        ok = false;
+    }
+    alarm.startPreview();
+    alarm.testPreviewTick();
+    alarm.stop();
+    if (alarm.isPreviewing() || alarm.testGetVibrateCount() != 2) {
+        logger.debug("stop() must end a running preview");
+        ok = false;
+    }
+    alarm.testPreviewTick();
+    if (alarm.testGetVibrateCount() != 2) {
+        logger.debug("a stale preview tick after stop() must not play");
+        ok = false;
+    }
+    if (!ok) {
+        logger.debug("played " + played + " of " + steps);
+    }
+    return ok;
+}
+
+//! A preview and an alarm exclude each other: startAlarm() during a preview
+//! is refused (no ring, no alarm state), startPreview() during the alarm is
+//! refused, and a stopped preview lets the alarm start again.
+(:test)
+function testAlarm_previewAndAlarmExclude(logger as Test.Logger) as Boolean {
+    var alarm = new AlarmManager();
+    alarm.testSetAlarmType(0);
+    alarm.startPreview();
+    alarm.startAlarm();
+    alarm.startDozeAlarm();
+    var ok = alarm.isPreviewing() && !alarm.isAlarming() && alarm.testGetRingCount() == 0
+        && alarm.testGetVibrateCount() == 1;
+    if (!ok) {
+        logger.debug("alarm during preview: alarming " + alarm.isAlarming() + " rings " + alarm.testGetRingCount());
+    }
+    alarm.stopPreview();
+    alarm.startAlarm();
+    if (!alarm.isAlarming() || alarm.testGetRingCount() != 1) {
+        logger.debug("the alarm must start once the preview is over");
+        ok = false;
+    }
+    alarm.startPreview();
+    if (alarm.isPreviewing() || alarm.getPreviewStep() != 0 || alarm.testGetVibrateCount() != 1) {
+        logger.debug("preview during the alarm must be refused");
+        ok = false;
+    }
+    alarm.stop();
+    return ok;
+}

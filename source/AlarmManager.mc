@@ -81,6 +81,12 @@ import Toybox.WatchUi;
 //! refuses every call unless the detector told the manager that the running
 //! session is Stay Awake (setStayAwake). A refused call is a no-op that
 //! increments _blockedDeliveries, which the tests assert stays 0.
+//!
+//! Preview ("Test alarm" in the start-screen menu, never during a nap): the
+//! ramp is played once, one ring per step 3 s apart, with the configured
+//! alarm type and the same backlight rule, without the persistent phase; it
+//! stops by itself after the last step. A preview and an alarm exclude each
+//! other. The gate allows output while a preview runs.
 class AlarmManager {
 
     // Alarm type constants matching settings values
@@ -138,6 +144,12 @@ class AlarmManager {
     private var _nudging     as Boolean      = false; // inside nudge(): output allowed once
     private var _blockedDeliveries as Number = 0;     // calls refused by the quiet onset gate
 
+    // Preview of the ramp (see class doc): one ring per step, 3 s apart.
+    private const PREVIEW_INTERVAL_MS = 3000;
+    private var _previewing   as Boolean      = false;
+    private var _previewStep  as Number       = 0;    // the next step to play
+    private var _previewTimer as Timer.Timer? = null;
+
     // Diagnostics (read by tests; cheap enough to keep in release)
     private var _vibrateCount   as Number  = 0;
     private var _toneCount      as Number  = 0;     // rings with the tone channel sounding
@@ -179,7 +191,7 @@ class AlarmManager {
 
     //! Start the ramp at the first ring of `step`.
     function startAlarmFromStep(step as Number) as Void {
-        if (_isAlarming) {
+        if (_isAlarming || _previewing) {
             return;
         }
         _isAlarming = true;
@@ -246,7 +258,8 @@ class AlarmManager {
         _stayAwake = stayAwake;
     }
 
-    //! Stop the alarm and reset state for the next session.
+    //! Stop the alarm (and a running preview) and reset state for the next
+    //! session.
     function stop() as Void {
         _isAlarming = false;
         _ringCount  = 0;
@@ -256,10 +269,94 @@ class AlarmManager {
             _repeatTimer.stop();
             _repeatTimer = null;
         }
+        stopPreview();
     }
 
     function isAlarming() as Boolean {
         return _isAlarming;
+    }
+
+    // -- Preview ("Test alarm") -----------------------------------------------
+
+    //! Play every step of the ramp once, 3 s apart, then stop by itself.
+    //! Refused while the alarm rings.
+    function startPreview() as Void {
+        if (_isAlarming || _previewing) {
+            return;
+        }
+        _previewing = true;
+        _previewStep = 0;
+        _ringsFired = 0;
+        _brightRings = 0;
+        _vibrateCount = 0;
+        _toneCount = 0;
+        _backlightCount = 0;
+        firePreviewStep();
+        try {
+            _previewTimer = new Timer.Timer();
+            _previewTimer.start(method(:onPreviewTick), PREVIEW_INTERVAL_MS, true);
+        } catch (e instanceof Lang.Exception) {
+            // Timer limit: the first step played, the preview ends here.
+            _previewing = false;
+            _previewTimer = null;
+        }
+    }
+
+    //! Timer callback: the next step, or the end of the preview.
+    function onPreviewTick() as Void {
+        if (!_previewing) {
+            return;
+        }
+        if (_previewStep >= getPreviewSteps()) {
+            stopPreview();
+        } else {
+            firePreviewStep();
+        }
+        WatchUi.requestUpdate();
+    }
+
+    //! End the preview (BACK, the end of the ramp, or stop()).
+    function stopPreview() as Void {
+        _previewing = false;
+        _previewStep = 0;
+        if (_previewTimer != null) {
+            _previewTimer.stop();
+            _previewTimer = null;
+        }
+    }
+
+    function isPreviewing() as Boolean {
+        return _previewing;
+    }
+
+    //! Steps a preview plays: every row but the persistent one.
+    function getPreviewSteps() as Number {
+        return RAMP.size() - 1;
+    }
+
+    //! The step the preview played last, 1-based ("step N of M"); 0 before.
+    function getPreviewStep() as Number {
+        return _previewStep;
+    }
+
+    //! Intensity of the step the preview played last, %.
+    function getPreviewPct() as Number {
+        return (_previewStep > 0) ? pctOfStep(_previewStep - 1) : 0;
+    }
+
+    //! One preview ring: the next step, delivered like an alarm ring.
+    private function firePreviewStep() as Void {
+        var step = _previewStep;
+        _previewStep += 1;
+        _ringsFired += 1;
+        deliver(step);
+        if (pctOfStep(step) >= BACKLIGHT_FROM_PCT) {
+            var bright = _brightRings;
+            _brightRings += 1;
+            if (bright < BACKLIGHT_INITIAL_RINGS || (bright % BACKLIGHT_EVERY_N_RINGS) == 0) {
+                requestBacklight();
+            }
+        }
     }
 
     //! Display phase of the next ring for the view, 0-3.
@@ -321,10 +418,11 @@ class AlarmManager {
         }
     }
 
-    //! The quiet onset gate: output is allowed only while the alarm rings or
-    //! from inside nudge(). Any other call is refused and counted.
+    //! The quiet onset gate: output is allowed only while the alarm rings,
+    //! from inside nudge(), or during a preview. Any other call is refused
+    //! and counted.
     private function outputAllowed() as Boolean {
-        if (_isAlarming || _nudging) {
+        if (_isAlarming || _nudging || _previewing) {
             return true;
         }
         _blockedDeliveries += 1;
@@ -698,6 +796,10 @@ class AlarmManager {
     //! Fire one more ring synchronously (as the repeat timer would).
     (:debug)
     function testFireRing() as Void { onRepeatAlarm(); }
+
+    //! Advance the preview synchronously (as its timer would).
+    (:debug)
+    function testPreviewTick() as Void { onPreviewTick(); }
 
     (:debug)
     function testSetAlarmType(type as Number) as Void { _alarmType = type; }

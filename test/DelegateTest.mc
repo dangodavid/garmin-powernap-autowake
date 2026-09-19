@@ -740,3 +740,88 @@ function testDelegate_napPressKeepsStillness(logger as Test.Logger) as Boolean {
     r.cleanup();
     return ok;
 }
+
+// -- Start-screen menu and the alarm preview ----------------------------------
+
+//! MENU opens the start-screen menu only on the start screen: during a nap,
+//! on the alarm and on the summary the key is consumed and no menu opens.
+(:test)
+function testDelegate_menuOnlyOnStartScreen(logger as Test.Logger) as Boolean {
+    var r = new DelegateRig(30);
+    r.key(WatchUi.KEY_MENU);
+    var ok = r.delegate.testMenuRequests() == 1 && !r.view.isStarted();
+    r.startNap();
+    if (!r.key(WatchUi.KEY_MENU) || r.delegate.testMenuRequests() != 1 || !r.detector.isActiveState()) {
+        logger.debug("MENU during a nap must be consumed without a menu");
+        ok = false;
+    }
+    r.detector.testForceSleep();
+    r.detector.testAdvanceClock(31 * 60);
+    r.detector.testTick();
+    r.key(WatchUi.KEY_MENU);
+    if (r.delegate.testMenuRequests() != 1 || !r.alarm.isAlarming()) {
+        logger.debug("MENU on the alarm must be consumed without a menu");
+        ok = false;
+    }
+    r.key(WatchUi.KEY_ENTER);
+    r.key(WatchUi.KEY_ENTER);
+    r.view.testExpireInputLock();
+    r.key(WatchUi.KEY_MENU);
+    if (r.delegate.testMenuRequests() != 1 || r.detector.getState() != SleepDetector.STATE_SUMMARY) {
+        logger.debug("MENU on the summary must not open the menu");
+        ok = false;
+    }
+    if (r.delegate.testExitRequested()) {
+        logger.debug("MENU must never exit");
+        ok = false;
+    }
+    r.cleanup();
+    return ok;
+}
+
+//! "Test alarm": the preview plays on the start screen; while it runs
+//! START, UP, DOWN and taps do nothing, and one BACK ends it and returns to
+//! the start screen (no exit, no nap). It never starts during a nap.
+(:test)
+function testDelegate_previewBackReturnsToStart(logger as Test.Logger) as Boolean {
+    var r = new DelegateRig(30);
+    r.view.startPreview();
+    var ok = r.alarm.isPreviewing() && !r.view.isStarted() && r.alarm.testGetVibrateCount() == 1;
+    r.key(WatchUi.KEY_ENTER);
+    r.key(WatchUi.KEY_UP);
+    r.key(WatchUi.KEY_DOWN);
+    r.delegate.handleTap(10);
+    if (!r.alarm.isPreviewing() || r.view.isStarted() || r.view.testGetPendingDuration() != 30) {
+        logger.debug("keys during the preview must do nothing: started " + r.view.isStarted()
+            + " pending " + r.view.testGetPendingDuration());
+        ok = false;
+    }
+    r.alarm.testPreviewTick();
+    r.key(WatchUi.KEY_ESC);
+    if (r.alarm.isPreviewing() || r.view.isStarted() || r.delegate.testExitRequested()
+        || r.alarm.testGetVibrateCount() != 2) {
+        logger.debug("BACK must end the preview and show the start screen");
+        ok = false;
+    }
+    r.alarm.testPreviewTick();               // a stale tick after BACK plays nothing
+    if (r.alarm.testGetVibrateCount() != 2) {
+        logger.debug("no output after the preview was stopped");
+        ok = false;
+    }
+    r.key(WatchUi.KEY_ESC);                  // the start screen's BACK exits as usual
+    if (!r.delegate.testExitRequested()) {
+        logger.debug("BACK on the start screen after the preview must exit");
+        ok = false;
+    }
+    r.cleanup();
+
+    r = new DelegateRig(30);
+    r.startNap();
+    r.view.startPreview();
+    if (r.alarm.isPreviewing() || r.alarm.testGetVibrateCount() != 0 || r.alarm.testGetBlockedDeliveries() != 0) {
+        logger.debug("the preview must never start during a nap");
+        ok = false;
+    }
+    r.cleanup();
+    return ok;
+}

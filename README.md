@@ -8,7 +8,7 @@ Put on the watch, start the app, lie down.
 
 ## How It Works
 
-1. **Start the app** from your watch menu. Use UP/DOWN or tap above/below the number to set the nap duration (5–120 min, it stops at both ends), then press START, or tap the number or the "TAP to begin" hint (touchscreen watches; FR255 and Instinct 3 show "START to begin"). The number is minutes **of sleep** ("min of sleep"): they count from the moment you fall asleep. The start screen already shows the latest possible alarm time ("Latest alarm HH:MM"). One step below 5 min is **Stay Awake** mode (see below).
+1. **Start the app** from your watch menu. Use UP/DOWN or tap above/below the number to set the nap duration (5–120 min, it stops at both ends), then press START, or tap the number or the "TAP to begin" hint (touchscreen watches; FR255 and Instinct 3 show "START to begin"). The number is minutes **of sleep** ("min of sleep"): they count from the moment you fall asleep. The start screen already shows the latest possible alarm time ("Latest alarm HH:MM"). One step below 5 min is **Stay Awake** mode (see below). The start screen's menu (hold UP on five-button watches, the menu gesture or a long press on the number on touch watches) has **Test alarm**: it plays every step of the wake-up ramp once, 3 seconds apart, with your alarm type, so you can feel it without napping; the screen shows "Step N of 9" and the intensity, BACK stops it.
 2. **Calibrating (2 min):** The app measures your resting heart rate to build a personal baseline. Stillness already counts from the first second.
 3. **Monitoring:** It watches for sleep onset: two still minutes once your heart rate has dropped at least the HR Drop Threshold below the baseline, or five still minutes on stillness alone. Heart rate speeds detection up but is never required. Detection itself is silent: nothing vibrates, sounds or lights up until the alarm (the app's alarm manager refuses any output outside the alarm, and a permanent test file guards it).
 4. **Sleep detected:** The alarm time is fixed at detection + nap duration, or at the "Latest alarm" time if that is earlier. The screen shows when you fell asleep, "Wake at HH:MM" and a live countdown. Example: 15 min nap started at 9:00, asleep at 9:10 → alarm at 9:25.
@@ -165,7 +165,7 @@ $CIQ_HOME/bin/monkeydo bin/PowerNap.prg fenix847mm
 Ctrl+Shift+P -> Monkey C: Run Tests
 ```
 
-The suite under `test/` (210 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
+The suite under `test/` (224 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
 
 - **Invariant tests** run seeded random naps (settings and a minute-by-minute story of dozing, stirring, waking and sensor dropouts) and check after every simulated second the rules that must always hold: the alarm always rings and never after the deadline, the planned end never moves, smart wake only inside its window, stats in range. A failure prints the seed to replay it.
 - **Negative tests** feed absurd heart rates, missing accelerometer data, a wall clock stepping back, lifecycle calls in every state and wrong-type settings.
@@ -203,7 +203,7 @@ resources-launcher/             App icon at each watch's native size (monkey.jun
 source/
   PowerNapApp.mc                AppBase: lifecycle (incl. task-switcher active/inactive)
   PowerNapView.mc               UI: start screen, nap, Stay Awake and peek screens as line lists
-  PowerNapDelegate.mc           Input handler: buttons, start-screen touch zones, peek
+  PowerNapDelegate.mc           Input handler: key model, start-screen touch zones, peek, menu (Test alarm)
   SleepDetector.mc              Sleep-detection engine (wall clock, per-minute aggregates, Stay Awake)
   AlarmManager.mc               Ramp-table vibration/melody alarm with channel fallback, quiet onset gate, nudge
   MotionMath.mc                 Offset-free motion measure for one accelerometer batch
@@ -214,7 +214,7 @@ test/
   OnsetTest.mc                  Calibration, stillness, onset paths
   WakeTest.mc                   Wake episodes, re-entry, sleep accumulation
   TimingTest.mc                 Wall-clock alarm, deadline cap, smart wake
-  AlarmManagerTest.mc           Ramp constraints and schedule, melodies, backlight regression
+  AlarmManagerTest.mc           Ramp constraints and schedule, melodies, backlight regression, preview
   SummaryTest.mc                Finish/cancel paths, statistics, RingMath
   RegressionTest.mc             HR wake rules, frozen settings, lifecycle, channel fallback
   LayoutTest.mc                 Every screen fits the running device

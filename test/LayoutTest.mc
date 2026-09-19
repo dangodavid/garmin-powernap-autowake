@@ -885,3 +885,35 @@ function testLayout_workOfHeaviestScreens(logger as Test.Logger) as Boolean {
     return w1[0] <= LAYOUT_MAX_PASSES && w1[1] <= LAYOUT_MAX_FITS
         && w2[0] <= LAYOUT_MAX_PASSES && w2[1] <= LAYOUT_MAX_FITS;
 }
+
+//! The alarm preview screen fits at every step of the ramp (step and
+//! intensity shown, footer "BACK to stop"), and the start screen is back
+//! once the preview has ended.
+(:test)
+function testLayout_previewScreen(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var a = new AlarmManager();
+    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
+    var v = layoutHelperStartView(new SleepDetector(null), a);
+    var ok = true;
+    a.startPreview();
+    var steps = a.getPreviewSteps();
+    for (var s = 1; s <= steps; s++) {
+        var pct = a.getPreviewPct();
+        ok = layoutHelperCheck("preview step " + s, v, dc,
+            ["Step " + s + " of " + steps + "|" + s + "/" + steps, pct + "%"] as Array<String>, logger) && ok;
+        var footer = v.testBuildLayout(dc).getFooterText();
+        if (footer == null || (footer as String).find("BACK") == null) {
+            logger.debug("preview step " + s + ": footer '" + footer + "'");
+            ok = false;
+        }
+        a.testPreviewTick();
+    }
+    if (a.isPreviewing()) {
+        logger.debug("the preview must end after its last step");
+        ok = false;
+    }
+    ok = layoutHelperCheck("start screen after preview", v, dc, ["30", "min"] as Array<String>, logger) && ok;
+    a.stop();
+    return ok;
+}

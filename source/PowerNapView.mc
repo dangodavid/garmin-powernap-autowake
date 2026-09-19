@@ -235,6 +235,22 @@ class PowerNapView extends WatchUi.View {
         return elapsed >= 0 && elapsed < PEEK_MS;
     }
 
+    //! "Test alarm" from the start-screen menu: play the wake-up ramp once
+    //! (AlarmManager.startPreview) on the preview screen. Never during a nap.
+    function startPreview() as Void {
+        if (_started || _alarm.isAlarming()) {
+            return;
+        }
+        _alarm.startPreview();
+        WatchUi.requestUpdate();
+    }
+
+    //! End the preview (BACK); the start screen comes back.
+    function stopPreview() as Void {
+        _alarm.stopPreview();
+        WatchUi.requestUpdate();
+    }
+
     //! Start-screen tap: +1 = add 5 min, -1 = remove 5 min, 0 = start.
     //! Above the number adds, the number and its label start, below them
     //! removes, and the "TAP to begin" hint at the bottom starts again (a
@@ -269,6 +285,10 @@ class PowerNapView extends WatchUi.View {
         dc.clear();
 
         if (!_started) {
+            if (_alarm.isPreviewing()) {
+                buildLayout(dc).draw(dc, false);
+                return;
+            }
             drawStartScreen(dc);
             return;
         }
@@ -311,6 +331,11 @@ class PowerNapView extends WatchUi.View {
     //! its tap zones from where the number and its label were placed.
     private function buildLayout(dc as Graphics.Dc) as ScreenLayout {
         if (!_started) {
+            if (_alarm.isPreviewing()) {
+                var P = previewLayout(dc);
+                P.solve(dc);
+                return P;
+            }
             return solveStartScreen(dc, [] as Array<LayoutLine>);
         }
         var state = _detector.getState();
@@ -423,6 +448,29 @@ class PowerNapView extends WatchUi.View {
             dc.drawLine(cx - i, up.y + (arrowH - i), cx + i, up.y + (arrowH - i));
             dc.drawLine(cx - i, down.y + i, cx + i, down.y + i);
         }
+    }
+
+    // -- Alarm preview ("Test alarm") --------------------------------------
+
+    //! What the wrist feels right now: the step just played (1-based) of
+    //! the ramp and its intensity; BACK ends the preview.
+    private function previewLayout(dc as Graphics.Dc) as ScreenLayout {
+        var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
+        var step = _alarm.getPreviewStep();
+        var steps = _alarm.getPreviewSteps();
+        var pct = _alarm.getPreviewPct();
+        L.addText(["ALARM PREVIEW", "PREVIEW"], fontsTitle(), Graphics.COLOR_BLUE, 60);
+        L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
+        L.addText(["Step " + step + " of " + steps, step + "/" + steps], fontsBody(), Graphics.COLOR_WHITE,
+            ScreenLayout.KEEP);
+        L.addText([pct + "%"],
+            [Graphics.FONT_NUMBER_MEDIUM, Graphics.FONT_NUMBER_MILD, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL]
+                as Array<Graphics.FontDefinition>,
+            (pct >= 100) ? Graphics.COLOR_RED : ((pct >= 50) ? Graphics.COLOR_YELLOW : Graphics.COLOR_GREEN),
+            ScreenLayout.KEEP);
+        L.addText(["Feel the wake-up ramp", "Wake-up ramp"], fontsDetail(), Graphics.COLOR_LT_GRAY, 70);
+        L.setFooterTexts(["BACK to stop", "BACK"] as Array<String>, Graphics.COLOR_LT_GRAY);
+        return L;
     }
 
     // -- Screen 1: Calibrating / Monitoring / Awake ---------------------
