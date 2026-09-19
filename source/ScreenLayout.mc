@@ -48,6 +48,7 @@ class LayoutLine {
     var isDivider as Boolean;                      // divider or spacer: no text
     var dividerHalf as Number = 0;
     var spacerH as Number = 0;                     // > 0: spacer of this height, drawn by the view
+    var linkedTo as Number = -1;                   // divider: hidden whenever this line is hidden
     var gapAfter as Number = -1;                   // -1 = layout default
 
     // Solved by ScreenLayout.solve()
@@ -58,9 +59,11 @@ class LayoutLine {
     var slotH as Number = 0;
     var drawFont as Graphics.FontDefinition;
     var drawText as String;
-    var drawX as Number = 0;
+    var drawX as Number = 0;                       // text centre, or divider start
+    var drawX1 as Number = 0;                      // divider end
     var drawY as Number = 0;
     var fits as Boolean = true;
+    var shortened as Boolean = false;              // a shorter text variant had to be used
 
     function initialize(texts as Array<String>, fonts as Array<Graphics.FontDefinition>,
                         color as Graphics.ColorType, priority as Number, isDivider as Boolean) {
@@ -84,8 +87,14 @@ class LayoutLine {
 //!   IMPORTANT lines dropped. Lines at or above KEEP are never dropped.
 //! * A KEEP line too wide for its row (e.g. next to the Instinct lens) makes
 //!   the layout hide optional lines until the block moves to rows it fits.
+//! * Next to the Instinct lens the block first moves down (the rows below
+//!   the lens are wider) before any line is hidden.
 //! * Lines hidden for their row width on the way are brought back at the end
-//!   (highest priority first) when the final layout has room for them.
+//!   (highest priority first) when the final layout has room for them, if
+//!   need be by hiding lower-priority lines instead.
+//! * The footer is solved once per solve(): the longest variant that fits
+//!   within the bottom rows (it never climbs above FOOTER_MIN_PCT).
+//! * A divider belongs to the line above it and is clipped to its row.
 //! * Each text line then picks the largest font/text variant whose ink fits
 //!   the visible width at its own rows (round chord, Instinct subscreen).
 class ScreenLayout {
@@ -94,6 +103,9 @@ class ScreenLayout {
     //! Lines from this priority on (the alarm promise, warnings) survive
     //! until every font has shrunk.
     static const IMPORTANT = 90;
+    //! The footer never moves above this share of the height: a hint that
+    //! does not fit lower uses a shorter variant instead of eating the band.
+    private const FOOTER_MIN_PCT = 72;
 
     private var _w as Number;
     private var _h as Number;
@@ -113,6 +125,7 @@ class ScreenLayout {
 
     private var _footerText as String? = null;       // the variant chosen by solve()
     private var _footerTexts as Array<String>? = null;
+    private var _footerPreferBottom as Boolean = false;  // see setFooterChoices
     private var _footerColor as Graphics.ColorType = Graphics.COLOR_LT_GRAY;
     private var _footerFont as Graphics.FontDefinition = Graphics.FONT_XTINY;
     private var _footerX as Number = 0;
@@ -122,6 +135,12 @@ class ScreenLayout {
     private var _bandTop as Number = 0;
     private var _bandBottom as Number = 0;
     private var _overflow as Boolean = false;
+    private var _passes as Number = 0;               // solveOnce() calls in the last solve()
+    private var _fitCalls as Number = 0;             // fitLine() + probe calls in the last solve()
+    // inkBounds() results for the current solve(), keyed y * 1024 + fh: the
+    // same rows are measured again and again across passes (and every
+    // screen is solved once a second, against the Instinct watchdog).
+    private var _inkCache as Dictionary<Number, Array<Number> >? = null;
 
     function initialize(w as Number, h as Number, topPct as Number) {
         _w = w;
@@ -168,10 +187,12 @@ class ScreenLayout {
         return line;
     }
 
+    //! A thin line under the previous line (the title): it is hidden with it.
     function addDivider(halfWidthPct as Number, color as Graphics.ColorType, priority as Number) as LayoutLine {
         var line = new LayoutLine([""] as Array<String>,
             [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, color, priority, true);
         line.dividerHalf = _w * halfWidthPct / 100;
+        line.linkedTo = _lines.size() - 1;
         _lines.add(line);
         return line;
     }
@@ -190,12 +211,22 @@ class ScreenLayout {
         setFooterTexts([text] as Array<String>, color);
     }
 
-    //! Footer with shorter alternatives (longest first): the longest one that
-    //! fits the bottom row is used.
+    //! Footer with shorter alternatives (longest first) for a hint whose full
+    //! wording matters: the longest one that fits, moving up as far as
+    //! FOOTER_MIN_PCT of the height (round bottoms are narrow).
     function setFooterTexts(texts as Array<String>, color as Graphics.ColorType) as Void {
         _footerTexts = texts;
         _footerText = texts[0];
         _footerColor = color;
+        _footerPreferBottom = false;
+    }
+
+    //! Footer alternatives on a screen whose content matters more than the
+    //! hint's wording (the summary): the longest one that fits the bottom
+    //! row, else the shortest one moved up as little as needed.
+    function setFooterChoices(texts as Array<String>, color as Graphics.ColorType) as Void {
+        setFooterTexts(texts, color);
+        _footerPreferBottom = true;
     }
 
     //! Extra clearance from the display edge.
@@ -214,6 +245,11 @@ class ScreenLayout {
     //! Lay out; optional lines that cannot fit their row even with the
     //! smallest font and shortest text are hidden and the layout re-solved.
     function solve(dc as Graphics.Dc) as Void {
+        _passes = 0;
+        _fitCalls = 0;
+        _inkCache = {} as Dictionary<Number, Array<Number> >;
+        // The footer does not depend on the lines: once per solve.
+        solveFooter(dc);
         for (var pass = 0; pass < 8; pass++) {
             solveOnce(dc);
             var anyHidden = false;
@@ -232,21 +268,33 @@ class ScreenLayout {
             if (!anyHidden && keepMisfit) {
                 // A must-keep line is too wide for its row: a shorter block
                 // sits lower, away from the narrow top rows and the lens.
+                // Hide the lowest visible optional line, and keep the lines
+                // already dropped for height (all lower) from refilling the
+                // space, or the block would never get shorter.
                 var idx = lowestDroppable(KEEP);
                 if (idx >= 0) {
-                    _lines[idx].forceHidden = true;
+                    var cut = _lines[idx].priority;
+                    for (var i = 0; i < _lines.size(); i++) {
+                        var line = _lines[i];
+                        if (i == idx || (!line.visible && !line.isDivider && line.priority <= cut)) {
+                            line.forceHidden = true;
+                        }
+                    }
                     anyHidden = true;
                 }
             }
             if (!anyHidden) { break; }
         }
         restoreHidden(dc);
+        _inkCache = null;
     }
 
     //! A line hidden because it did not fit its row at an intermediate block
     //! position may fit where the final layout would put it. Try each hidden
     //! line again, highest priority first, and keep it when the whole layout
-    //! still fits with it (no overflow, every visible line fits its row).
+    //! still fits with it (no overflow, every visible line fits its row). If
+    //! it does not, hide lower-priority lines (lowest first) to make room; if
+    //! that does not help either, everything is put back.
     private function restoreHidden(dc as Graphics.Dc) as Void {
         var retry = [] as Array<Number>;
         for (var i = 0; i < _lines.size(); i++) {
@@ -255,7 +303,10 @@ class ScreenLayout {
         if (retry.size() == 0) {
             return;
         }
-        var solved = false;   // is the current solve the accepted state?
+        // The accepted state (the current solve) is kept, so a failed last
+        // retry is undone without solving again.
+        var accepted = snapshot();
+        var solved = true;    // is the current solve the accepted state?
         while (retry.size() > 0) {
             var best = 0;
             for (var j = 1; j < retry.size(); j++) {
@@ -265,16 +316,89 @@ class ScreenLayout {
             retry.remove(idx);
             _lines[idx].forceHidden = false;
             solveOnce(dc);
-            if (!_overflow && _lines[idx].visible && allLinesFit()) {
+            var ok = restoredFits(idx);
+            var madeRoom = [] as Array<Number>;
+            while (!ok) {
+                var low = lowestVisibleBelow(_lines[idx].priority, idx);
+                if (low < 0) { break; }
+                _lines[low].forceHidden = true;
+                madeRoom.add(low);
+                solveOnce(dc);
+                ok = restoredFits(idx);
+            }
+            if (ok) {
+                accepted = snapshot();
                 solved = true;
             } else {
                 _lines[idx].forceHidden = true;
+                for (var k = 0; k < madeRoom.size(); k++) {
+                    _lines[madeRoom[k]].forceHidden = false;
+                }
                 solved = false;
             }
         }
         if (!solved) {
-            solveOnce(dc);
+            restoreSnapshot(accepted);
         }
+    }
+
+    //! Everything solveOnce() decides for the lines, to put it back later.
+    private function snapshot() as Array<Array> {
+        var out = [] as Array<Array>;
+        for (var i = 0; i < _lines.size(); i++) {
+            var l = _lines[i];
+            out.add([l.visible, l.fontIndex, l.fits, l.shortened, l.y, l.slotH, l.drawFont, l.drawText,
+                l.drawX, l.drawX1, l.drawY] as Array);
+        }
+        out.add([_overflow] as Array);
+        return out;
+    }
+
+    private function restoreSnapshot(snap as Array<Array>) as Void {
+        for (var i = 0; i < _lines.size(); i++) {
+            var l = _lines[i];
+            var v = snap[i];
+            l.visible = v[0] as Boolean;
+            l.fontIndex = v[1] as Number;
+            l.fits = v[2] as Boolean;
+            l.shortened = v[3] as Boolean;
+            l.y = v[4] as Number;
+            l.slotH = v[5] as Number;
+            l.drawFont = v[6] as Graphics.FontDefinition;
+            l.drawText = v[7] as String;
+            l.drawX = v[8] as Number;
+            l.drawX1 = v[9] as Number;
+            l.drawY = v[10] as Number;
+        }
+        _overflow = snap[_lines.size()][0] as Boolean;
+    }
+
+    //! Line idx is on screen and the whole layout fits.
+    private function restoredFits(idx as Number) as Boolean {
+        return !_overflow && _lines[idx].visible && allLinesFit();
+    }
+
+    //! Visible optional text line (not idx) with the lowest priority below
+    //! `below` (the later one on ties), or -1.
+    private function lowestVisibleBelow(below as Number, idx as Number) as Number {
+        var best = -1;
+        for (var i = 0; i < _lines.size(); i++) {
+            var line = _lines[i];
+            if (i == idx || !line.visible || line.isDivider || line.priority >= below || line.priority >= KEEP) {
+                continue;
+            }
+            if (best < 0 || line.priority <= _lines[best].priority) { best = i; }
+        }
+        return best;
+    }
+
+    //! Some visible text line shows a shorter variant than its first text.
+    private function anyShortened() as Boolean {
+        for (var i = 0; i < _lines.size(); i++) {
+            var line = _lines[i];
+            if (line.visible && !line.isDivider && line.shortened) { return true; }
+        }
+        return false;
     }
 
     //! Every visible text line fits the width of its row.
@@ -287,7 +411,7 @@ class ScreenLayout {
     }
 
     private function solveOnce(dc as Graphics.Dc) as Void {
-        solveFooter(dc);
+        _passes += 1;
         _bandTop = (_h * _topPct) / 100;
         var avail = _bandBottom - _bandTop;
 
@@ -320,11 +444,45 @@ class ScreenLayout {
             }
             total = shrinkToFit(dc, totalHeight(dc), avail);
         }
+        // A divider goes with the line above it.
+        if (hideOrphanDividers()) {
+            total = totalHeight(dc);
+        }
         _overflow = (total > avail);
 
-        // 4. Vertical positions, centred in the band.
-        var y = _bandTop;
-        if (avail > total) { y += (avail - total) / 2; }
+        // 4. Vertical positions centred in the band, 5. horizontal fit.
+        var slack = avail - total;
+        var y0 = _bandTop + ((slack > 0) ? slack / 2 : 0);
+        placeAndFit(dc, y0);
+        if (_hasSub && slack > 0 && (!allLinesFit() || anyShortened())) {
+            // Next to the Instinct lens the top rows are narrow: before any
+            // line is hidden or shortened, try lower block positions within
+            // the band (cheap probes). Best: every line fits with its full
+            // text; else the first position where every line fits at all.
+            var best = -1;
+            var fallback = allLinesFit() ? y0 : -1;
+            for (var y = y0 + 4; y <= _bandTop + slack; y += 4) {
+                var p = probeAt(dc, y);
+                if (p == 2) {
+                    best = y;
+                    break;
+                }
+                if (p == 1 && fallback < 0) {
+                    fallback = y;
+                }
+            }
+            if (best < 0) {
+                best = fallback;
+            }
+            if (best >= 0 && best != y0) {
+                placeAndFit(dc, best);
+            }
+        }
+    }
+
+    //! Stack the visible lines from y0 and fit each one to its rows.
+    private function placeAndFit(dc as Graphics.Dc, y0 as Number) as Void {
+        var y = y0;
         var last = lastVisible();
         for (var i = 0; i < _lines.size(); i++) {
             var line = _lines[i];
@@ -334,23 +492,96 @@ class ScreenLayout {
             y += line.slotH;
             if (i != last) { y += gapAfter(line); }
         }
-
-        // 5. Horizontal fit per line.
         for (var i = 0; i < _lines.size(); i++) {
             var line = _lines[i];
             if (!line.visible) { continue; }
             if (line.isDivider) {
-                line.drawX = _cx;
-                line.drawY = line.y;
+                fitDivider(line);
                 continue;
             }
             fitLine(dc, line);
         }
     }
 
+    //! How the visible lines would fit with the block starting at y0, without
+    //! changing them: 0 = some line does not fit, 1 = all fit but some need
+    //! a shorter text, 2 = all fit with their full text. Stops at the first
+    //! line that does not fit.
+    private function probeAt(dc as Graphics.Dc, y0 as Number) as Number {
+        var y = y0;
+        var last = lastVisible();
+        var result = 2;
+        for (var i = 0; i < _lines.size(); i++) {
+            var line = _lines[i];
+            if (!line.visible) { continue; }
+            var slotH = slotHeight(dc, line);
+            if (!line.isDivider) {
+                var f = probeLine(dc, line, y, slotH);
+                if (f == 0) {
+                    return 0;
+                }
+                if (f == 1) {
+                    result = 1;
+                }
+            }
+            y += slotH;
+            if (i != last) { y += gapAfter(line); }
+        }
+        return result;
+    }
+
+    //! fitLine's choice at a given slot, without storing it: 2 = the first
+    //! text fits, 1 = only a shorter text fits, 0 = nothing fits.
+    private function probeLine(dc as Graphics.Dc, line as LayoutLine, y as Number, slotH as Number) as Number {
+        _fitCalls += 1;
+        for (var ti = 0; ti < line.texts.size(); ti++) {
+            for (var fi = line.fontIndex; fi < line.fonts.size(); fi++) {
+                var font = line.fonts[fi];
+                var fh = dc.getFontHeight(font);
+                if (fh > slotH && fi != line.fontIndex) { continue; }
+                var b = inkBounds(y + (slotH - fh) / 2, fh);
+                if (dc.getTextWidthInPixels(line.texts[ti], font) <= b[1] - b[0]) {
+                    return (ti == 0) ? 2 : 1;
+                }
+            }
+        }
+        return 0;
+    }
+
+    //! A divider is centred and clipped to the visible width of its row.
+    private function fitDivider(line as LayoutLine) as Void {
+        line.drawY = line.y;
+        if (line.spacerH > 0) {
+            line.drawX = _cx;
+            line.drawX1 = _cx;
+            return;
+        }
+        var b = inkBounds(line.y, 1);
+        var left = _cx - line.dividerHalf;
+        var right = _cx + line.dividerHalf;
+        if (left < b[0]) { left = b[0]; }
+        if (right > b[1]) { right = b[1]; }
+        line.drawX = left;
+        line.drawX1 = (right > left) ? right : left;
+    }
+
+    //! Hide dividers whose title line is hidden; true if any changed.
+    private function hideOrphanDividers() as Boolean {
+        var changed = false;
+        for (var i = 0; i < _lines.size(); i++) {
+            var line = _lines[i];
+            if (line.visible && line.linkedTo >= 0 && !_lines[line.linkedTo].visible) {
+                line.visible = false;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
     //! Full text first (at the largest font that fits), shorter variants only
     //! when even the smallest font is too wide.
     private function fitLine(dc as Graphics.Dc, line as LayoutLine) as Void {
+        _fitCalls += 1;
         var chosen = false;
         for (var ti = 0; ti < line.texts.size() && !chosen; ti++) {
             for (var fi = line.fontIndex; fi < line.fonts.size(); fi++) {
@@ -365,6 +596,7 @@ class ScreenLayout {
                     line.drawX = (b[0] + b[1]) / 2;
                     line.drawY = ty;
                     line.fits = true;
+                    line.shortened = (ti > 0);
                     chosen = true;
                     break;
                 }
@@ -381,11 +613,14 @@ class ScreenLayout {
             line.drawX = (b[0] + b[1]) / 2;
             line.drawY = ty;
             line.fits = false;
+            line.shortened = true;
         }
     }
 
-    //! Footer: the longest variant that fits the bottom row; if none does,
-    //! the shortest one, as low as possible while it fits the visible width.
+    //! Footer placement (see setFooterTexts / setFooterChoices). It never
+    //! moves above FOOTER_MIN_PCT of the height: a hint that does not fit
+    //! lower uses a shorter variant, and if none fits the shortest one sits
+    //! at the bottom row, so the band keeps its room either way.
     private function solveFooter(dc as Graphics.Dc) as Void {
         var fh = dc.getFontHeight(_footerFont);
         if (_footerTexts == null) {
@@ -393,24 +628,40 @@ class ScreenLayout {
             return;
         }
         var texts = _footerTexts as Array<String>;
-        var y = _h - fh - 2;
-        var b = inkBounds(y, fh);
-        var chosen = texts[texts.size() - 1];
-        for (var i = 0; i < texts.size(); i++) {
-            if (dc.getTextWidthInPixels(texts[i], _footerFont) <= b[1] - b[0]) {
-                chosen = texts[i];
-                break;
+        var bottom = _h - fh - 2;
+        var limit = _h * FOOTER_MIN_PCT / 100;
+        var first = 0;
+        if (_footerPreferBottom) {
+            var b0 = inkBounds(bottom, fh);
+            for (var i = 0; i < texts.size(); i++) {
+                if (dc.getTextWidthInPixels(texts[i], _footerFont) <= b0[1] - b0[0]) {
+                    placeFooter(texts[i], bottom, b0, true);
+                    return;
+                }
+            }
+            first = texts.size() - 1;              // then only the shortest may move up
+        }
+        for (var i = first; i < texts.size(); i++) {
+            var tw = dc.getTextWidthInPixels(texts[i], _footerFont);
+            var y = bottom;
+            var b = inkBounds(y, fh);
+            while (y > limit && (b[1] - b[0]) < tw) {
+                y -= 2;
+                b = inkBounds(y, fh);
+            }
+            if ((b[1] - b[0]) >= tw) {
+                placeFooter(texts[i], y, b, true);
+                return;
             }
         }
-        _footerText = chosen;
-        var tw = dc.getTextWidthInPixels(chosen, _footerFont);
-        while (y > _cy && (b[1] - b[0]) < tw) {
-            y -= 2;
-            b = inkBounds(y, fh);
-        }
+        placeFooter(texts[texts.size() - 1], bottom, inkBounds(bottom, fh), false);
+    }
+
+    private function placeFooter(text as String, y as Number, b as Array<Number>, fits as Boolean) as Void {
+        _footerText = text;
         _footerY = y;
         _footerX = (b[0] + b[1]) / 2;
-        _footerFits = (b[1] - b[0]) >= tw;
+        _footerFits = fits;
         _bandBottom = y - _gap;
     }
 
@@ -490,6 +741,14 @@ class ScreenLayout {
     //! Horizontal [left, right] available to text whose slot starts at y
     //! with font height fh (ink assumed within 15-85 % of the height).
     private function inkBounds(y as Number, fh as Number) as Array<Number> {
+        var cache = _inkCache;
+        var key = y * 1024 + fh;
+        if (cache != null) {
+            var hit = cache[key];
+            if (hit != null) {
+                return hit;
+            }
+        }
         var y0 = y + fh * 15 / 100;
         var y1 = y + fh * 85 / 100;
         var hw0 = halfWidthAt(y0);
@@ -517,7 +776,11 @@ class ScreenLayout {
             }
         }
         if (right < left) { right = left; }
-        return [left, right] as Array<Number>;
+        var result = [left, right] as Array<Number>;
+        if (cache != null) {
+            cache.put(key, result);
+        }
+        return result;
     }
 
     //! Half of the usable display width at row y (display outline, and the
@@ -565,7 +828,9 @@ class ScreenLayout {
             }
             dc.setColor(Palette.fg(line.color, invert), Graphics.COLOR_TRANSPARENT);
             if (line.isDivider) {
-                dc.drawLine(_cx - line.dividerHalf, line.y, _cx + line.dividerHalf, line.y);
+                if (line.drawX1 > line.drawX) {
+                    dc.drawLine(line.drawX, line.y, line.drawX1, line.y);
+                }
             } else {
                 dc.drawText(line.drawX, line.drawY, line.drawFont, line.drawText,
                     Graphics.TEXT_JUSTIFY_CENTER);
@@ -634,6 +899,27 @@ class ScreenLayout {
 
     function getFooterText() as String? { return _footerText; }
 
+    //! Work done by the last solve(): [solveOnce passes, fitLine calls].
+    //! Screens redraw every second, so this is what the watchdog sees.
+    (:debug)
+    function testWork() as Array<Number> {
+        return [_passes, _fitCalls] as Array<Number>;
+    }
+
+    //! Every visible divider lies within the visible width of its row and
+    //! follows a visible line (tests).
+    (:debug)
+    function testDividersFit() as Boolean {
+        for (var i = 0; i < _lines.size(); i++) {
+            var line = _lines[i];
+            if (!line.visible || !line.isDivider || line.spacerH > 0) { continue; }
+            if (line.linkedTo >= 0 && !_lines[line.linkedTo].visible) { return false; }
+            var b = inkBounds(line.y, 1);
+            if (line.drawX1 > line.drawX && (line.drawX < b[0] || line.drawX1 > b[1])) { return false; }
+        }
+        return true;
+    }
+
     //! Height of the font line `index` is drawn with (tests).
     (:debug)
     function testSlotHeight(index as Number) as Number {
@@ -643,11 +929,13 @@ class ScreenLayout {
     //! One line per text line: visibility, text, y, slot height (tests).
     (:debug)
     function testDescribe() as String {
-        var out = "band " + _bandTop + ".." + _bandBottom + " footerY " + _footerY + "\n";
+        var out = "band " + _bandTop + ".." + _bandBottom + " footerY " + _footerY + " passes " + _passes
+            + " fits " + _fitCalls + "\n";
         for (var i = 0; i < _lines.size(); i++) {
             var line = _lines[i];
             out += (line.visible ? "  + " : "  - ") + "p" + line.priority + " '" + line.drawText + "' y" + line.y
-                + " h" + line.slotH + "\n";
+                + " h" + line.slotH + (line.forceHidden ? " HIDDEN" : "") + (line.fits ? "" : " MISFIT")
+                + (line.shortened ? " short" : "") + "\n";
         }
         return out;
     }

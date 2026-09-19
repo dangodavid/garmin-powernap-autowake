@@ -1,0 +1,4 @@
+<drawables>
+    <!-- Pure black / white / transparent for the 1-bit display: no dithering -->
+    <bitmap id="LauncherIcon" filename="launcher_icon_62_mono.png" dithering="none" />
+</drawables>

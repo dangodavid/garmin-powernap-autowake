@@ -3,6 +3,7 @@ import Toybox.Lang;
 import Toybox.Graphics;
 import Toybox.System;
 import Toybox.Application;
+import Toybox.Time;
 
 // -----------------------------------------------------------------------------
 // Screen layout tests.
@@ -49,12 +50,29 @@ function layoutHelperStartView(d as SleepDetector, a as AlarmManager) as PowerNa
     return v;
 }
 
+//! Layout work budget per screen build (every screen redraws once a second,
+//! and the Instinct watchdog allows 240k bytecodes per event): solve passes
+//! and fitLine calls. Round screens need 1-2 passes; the Instinct lens more.
+(:debug)
+const LAYOUT_MAX_PASSES = 6;
+(:debug)
+const LAYOUT_MAX_FITS = 60;
+
 //! Common checks; mustShow are text fragments that must appear on screen.
 (:debug)
 function layoutHelperCheck(name as String, v as PowerNapView, dc as Graphics.Dc,
                            mustShow as Array<String>, logger as Test.Logger) as Boolean {
     var layout = v.testBuildLayout(dc);
     var ok = true;
+    var work = layout.testWork();
+    if (work[0] > LAYOUT_MAX_PASSES || work[1] > LAYOUT_MAX_FITS) {
+        logger.debug(name + ": layout work " + work[0] + " passes, " + work[1] + " line fits, over budget");
+        ok = false;
+    }
+    if (!layout.testDividersFit()) {
+        logger.debug(name + ": a divider is outside the visible width or has no title");
+        ok = false;
+    }
     if (layout.hasOverflow()) {
         logger.debug(name + ": content overflows the screen");
         ok = false;
@@ -245,8 +263,12 @@ function testLayout_summaryScreens(logger as Test.Logger) as Boolean {
     d.testRunMinutes(31, 55, 10.0f);
     d.finishNap();
     var v = layoutHelperView(d, new AlarmManager());
+    if ((v.testBuildLayout(dc).getFooterText() as String).find("START") == null) {
+        logger.debug("the summary footer must tell that START sets up a new nap");
+        ok = false;
+    }
     ok = layoutHelperCheck("summary full", v, dc,
-        ["COMPLETE|DONE", "30:00", "Uninterrupted", "in 0 min|0 min to sleep"] as Array<String>, logger) && ok;
+        ["COMPLETE|DONE|100%", "30:00", "Uninterrupted", "in 0 min|0 min to sleep"] as Array<String>, logger) && ok;
 
     d = layoutHelperAsleep();
     for (var i = 0; i < 2; i++) {
@@ -257,7 +279,8 @@ function testLayout_summaryScreens(logger as Test.Logger) as Boolean {
     d.testRunMinutes(20, 55, 10.0f);
     d.finishNap();
     v = layoutHelperView(d, new AlarmManager());
-    ok = layoutHelperCheck("summary wakes", v, dc, ["COMPLETE|DONE", "2 wakes"] as Array<String>, logger) && ok;
+    // Without the ring (Instinct) the title may shrink to just the %.
+    ok = layoutHelperCheck("summary wakes", v, dc, ["COMPLETE|DONE|100%", "2 wakes"] as Array<String>, logger) && ok;
 
     d = layoutHelperAsleep();
     d.testRunMinutes(10, 55, 10.0f);
@@ -433,8 +456,11 @@ function testLayout_stayAwakeScreens(logger as Test.Logger) as Boolean {
 
     d.dismissAlarm();
     d.testRunMinutes(1, 70, 200.0f);
+    // The 176 px Instinct has room for three lines here: the hint (95) and
+    // the doze count (85) win over the session time (80).
     ok = layoutHelperCheck("stay guarding after a doze", v, dc,
-        ["Keeping you awake|Keeping awake|On guard", "1 doze", "Awake"] as Array<String>, logger) && ok;
+        (dc.getHeight() >= 200 ? ["Keeping you awake|Keeping awake|On guard", "1 doze", "Awake"]
+                               : ["Keeping you awake|Keeping awake|On guard", "1 doze"]) as Array<String>, logger) && ok;
 
     // Crowded: both warnings and the armed footer; the warnings must stay.
     d.noteInactive();
@@ -588,4 +614,148 @@ function testLayout_startNumberShrinksOnlyForThePromise(logger as Test.Logger) a
         }
     }
     return ok;
+}
+
+//! Cases the audit found on the Instinct lens (they must hold everywhere):
+//! the promise survives the calibrating screen with a 3-digit HR and the
+//! armed footer; the Stay Awake hint shows; 10 h sessions and 12 dozes fit.
+(:test)
+function testLayout_lensAndLongValues(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var ok = true;
+
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testFeedHR(100);
+    var v = layoutHelperView(d, new AlarmManager());
+    v.pressStop(ConfirmPress.CONTEXT_NAP);
+    ok = layoutHelperCheck("calibrating HR 100 armed", v, dc, ["Calibrating", "Latest|By "] as Array<String>, logger) && ok;
+    d.noteInactive();
+    ok = layoutHelperCheck("calibrating HR 100 armed + inactive", v, dc,
+        ["Calibrating", "Latest|By ", "Keep app open"] as Array<String>, logger) && ok;
+
+    d = new SleepDetector(null);
+    d.testStartStayAwake();
+    d.testRunMinutes(3, 70, 200.0f);
+    v = layoutHelperView(d, new AlarmManager());
+    ok = layoutHelperCheck("stay guard hint", v, dc, ["Buzz"] as Array<String>, logger) && ok;
+
+    d = new SleepDetector(null);
+    d.testStartStayAwake();
+    d.testRunMinutes(3, 70, 200.0f);
+    d.testAdvanceClock(10 * 3600);
+    v = layoutHelperView(d, new AlarmManager());
+    ok = layoutHelperCheck("stay guard 10 h", v, dc, ["10:0"] as Array<String>, logger) && ok;
+    v.showPeek();
+    v.pressStop(ConfirmPress.CONTEXT_NAP);
+    ok = layoutHelperCheck("stay peek 10 h armed", v, dc, ["10:0"] as Array<String>, logger) && ok;
+    d.cancel();
+    ok = layoutHelperCheck("stay summary 10 h", v, dc, ["10:0", "No dozes"] as Array<String>, logger) && ok;
+
+    // 12 dozes.
+    var a = new AlarmManager();
+    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
+    d = new SleepDetector(null);
+    d.testStartStayAwake();
+    v = layoutHelperView(d, a);
+    for (var i = 0; i < 12; i++) {
+        d.testRunMinutes(5, 70, 10.0f);
+        if (i == 11) {
+            ok = layoutHelperCheck("doze alarm #12", v, dc, ["Doze #12|dozed off|Dozed off"] as Array<String>, logger) && ok;
+        }
+        d.dismissAlarm();
+        d.testRunMinutes(1, 70, 200.0f);
+    }
+    ok = layoutHelperCheck("stay guard 12 dozes", v, dc, ["12 dozes"] as Array<String>, logger) && ok;
+    d.cancel();
+    ok = layoutHelperCheck("stay summary 12 dozes", v, dc, ["12 dozes"] as Array<String>, logger) && ok;
+    return ok;
+}
+
+//! Without the summary ring (the Instinct) the completion % is shown as text.
+(:test)
+function testLayout_completionShownWithoutRing(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var probe = new PowerNapView(new SleepDetector(null), new AlarmManager());
+    if (probe.testHasSubscreen() == false && System.getDeviceSettings().screenShape == System.SCREEN_SHAPE_ROUND) {
+        return true;                             // round screens show it as the ring
+    }
+    var d = layoutHelperAsleep();
+    d.testRunMinutes(31, 55, 10.0f);
+    d.finishNap();
+    var v = layoutHelperView(d, new AlarmManager());
+    var ok = layoutHelperCheck("summary full (no ring)", v, dc, ["100%"] as Array<String>, logger);
+    d = layoutHelperAsleep();
+    d.testRunMinutes(10, 55, 10.0f);
+    d.cancel();
+    v = layoutHelperView(d, new AlarmManager());
+    ok = layoutHelperCheck("summary stopped (no ring)", v, dc, ["33%"] as Array<String>, logger) && ok;
+    return ok;
+}
+
+//! The promised time itself: "Latest alarm" is the deadline rounded UP to the
+//! minute (never earlier than the real alarm), and after onset "Wake at" /
+//! "Alarm at" is the minute of the planned end.
+(:test)
+function testLayout_promiseValues(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testSetBaseline(70.0f);
+    var v = layoutHelperView(d, new AlarmManager());
+    var deadline = d.testGetDeadlineSec();
+    var latest = v.testFormatMoment(new Time.Moment(deadline + 59));
+    var ok = layoutHelperCheck("promise before sleep", v, dc, [latest] as Array<String>, logger);
+    if (deadline % 60 != 0) {
+        var early = v.testFormatMoment(new Time.Moment(deadline));
+        if (!early.equals(latest) && v.testBuildLayout(dc).showsFragment(early)) {
+            logger.debug("the promise must be rounded up, not down: " + early);
+            ok = false;
+        }
+    }
+    d.testForceSleep();
+    var at = v.testFormatMoment(new Time.Moment(d.testGetNapEndSec()));
+    ok = layoutHelperCheck("wake at after onset", v, dc, [at] as Array<String>, logger) && ok;
+
+    // The start-screen preview is the same formula before START.
+    var s = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    s.testSetPendingDuration(30);
+    var before = s.testFormatMoment(new Time.Moment(Time.now().value() + 45 * 60 + 59));
+    var layout = s.testBuildLayout(dc);
+    var after = s.testFormatMoment(new Time.Moment(Time.now().value() + 45 * 60 + 59));
+    if (!layout.showsFragment(before) && !layout.showsFragment(after)) {
+        logger.debug("start preview must show start + 15 + 30 min, rounded up: " + before);
+        ok = false;
+    }
+    return ok;
+}
+
+//! Logs the layout work of the heaviest screens on this device (the most
+//! lines, warnings, armed footers), for the record; the budget itself is
+//! checked by every layoutHelperCheck.
+(:test)
+function testLayout_workOfHeaviestScreens(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testFeedHR(100);
+    d.noteInactive();
+    var v = layoutHelperView(d, new AlarmManager());
+    v.testForceDnd(true);
+    v.testForceBattery(5);
+    v.pressStop(ConfirmPress.CONTEXT_NAP);
+    var w1 = v.testBuildLayout(dc).testWork();
+    d = new SleepDetector(null);
+    d.testStartStayAwake();
+    d.testRunMinutes(3, 70, 200.0f);
+    d.noteInactive();
+    v = layoutHelperView(d, new AlarmManager());
+    v.testForceDnd(true);
+    v.testForceBattery(5);
+    v.pressStop(ConfirmPress.CONTEXT_NAP);
+    var w2 = v.testBuildLayout(dc).testWork();
+    logger.debug("layout work: calibrating crowded " + w1[0] + "/" + w1[1] + ", Stay Awake crowded "
+        + w2[0] + "/" + w2[1] + " (passes/line fits)");
+    return w1[0] <= LAYOUT_MAX_PASSES && w1[1] <= LAYOUT_MAX_FITS
+        && w2[0] <= LAYOUT_MAX_PASSES && w2[1] <= LAYOUT_MAX_FITS;
 }

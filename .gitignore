@@ -3,3 +3,6 @@ bin/
 
 # Developer tool context (local only)
 CLAUDE.md
+
+# macOS
+.DS_Store

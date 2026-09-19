@@ -54,6 +54,7 @@ class PowerNapView extends WatchUi.View {
 
     private var _forceDnd as Number = -1;            // tests: 1 DND on, 0 off, -1 real setting
     private var _forceBatteryPct as Number = -1;     // tests: >= 0 replaces the battery level
+    private var _msOffset as Number = 0;             // tests: moves the millisecond clock
 
     // Below this battery level (and not charging) the nap screens warn.
     private const LOW_BATTERY_PCT = 10;
@@ -347,7 +348,8 @@ class PowerNapView extends WatchUi.View {
             L.addText([_debugLabel], [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
                 Graphics.COLOR_LT_GRAY, 10);
         }
-        L.setFooter(hasTouch() ? "TAP to begin" : "START to begin", Graphics.COLOR_LT_GRAY);
+        L.setFooterTexts(hasTouch() ? ["TAP to begin", "TAP"] as Array<String> : ["START to begin", "START"] as Array<String>,
+            Graphics.COLOR_LT_GRAY);
         return L;
     }
 
@@ -398,14 +400,16 @@ class PowerNapView extends WatchUi.View {
         addClock(L);
         L.addText(["POWER NAP"], fontsTitle(), Graphics.COLOR_BLUE, 60);
         L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
-        L.addText(["HR " + hrString(_detector.getCurrentHR())], fontsBody(), Graphics.COLOR_RED, 70);
+        L.addText(hrTexts(), fontsBody(), Graphics.COLOR_RED, 70);
 
-        var status = calibrating ? "Calibrating..." : (awake ? "Awake" : "Monitoring");
-        L.addText([status], fontsBody(), Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+        // "Calibrating" (no dots) fits the narrow row next to the Instinct lens.
+        var status = calibrating ? ["Calibrating...", "Calibrating"] : [awake ? "Awake" : "Monitoring"];
+        L.addText(status as Array<String>, fontsBody(), Graphics.COLOR_WHITE, ScreenLayout.KEEP);
 
         if (awake) {
             // The alarm time is fixed; the countdown keeps running while awake.
-            L.addText(["Alarm in " + formatCountdown(_detector.getRemainingSeconds())],
+            var left = formatCountdown(_detector.getRemainingSeconds());
+            L.addText(["Alarm in " + left, "In " + left],
                 fontsDetail(), Graphics.COLOR_YELLOW, 95);
         } else if (calibrating) {
             L.addText(["Building baseline...", "Baseline..."], fontsDetail(), Graphics.COLOR_LT_GRAY, 95);
@@ -435,7 +439,7 @@ class PowerNapView extends WatchUi.View {
             L.addText(["Alarm " + n + " min after sleep", n + " min after sleep", "Nap " + n + " min"],
                 fontsDetail(), Graphics.COLOR_LT_GRAY, 75);
         }
-        L.setFooter(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
         return L;
     }
 
@@ -457,7 +461,7 @@ class PowerNapView extends WatchUi.View {
         // Above the countdown: the time the alarm now rings at (it moved with
         // sleep onset). Inside the smart-wake window it may ring earlier.
         var at = alarmAtString();
-        var label = L.addText(smartWake ? ["Smart Wake"] : ["Wake at " + at, "At " + at, "Wake in"],
+        var label = L.addText(smartWake ? ["Smart Wake", "Smart"] : ["Wake at " + at, "At " + at, "Wake in"],
             fontsBody(), Graphics.COLOR_WHITE, 90);
         label.gapAfter = 2;
         L.addText([formatCountdown(_detector.getRemainingSeconds())],
@@ -465,8 +469,8 @@ class PowerNapView extends WatchUi.View {
                 as Array<Graphics.FontDefinition>,
             smartWake ? Graphics.COLOR_YELLOW : Graphics.COLOR_GREEN, ScreenLayout.KEEP);
         addInactiveWarning(L);
-        L.addText(["HR " + hrString(_detector.getCurrentHR())], fontsDetail(), Graphics.COLOR_RED, 40);
-        L.setFooter(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        L.addText(hrTexts(), fontsDetail(), Graphics.COLOR_RED, 40);
+        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
         return L;
     }
 
@@ -517,7 +521,7 @@ class PowerNapView extends WatchUi.View {
         // The phase of the ring the user just felt (the style above follows it too).
         L.addText(["ALARM " + (_alarm.getLastRingPhase() + 1) + "/4"], fontsBody(),
             loud ? Graphics.COLOR_YELLOW : Graphics.COLOR_LT_GRAY, 40);
-        L.setFooter(stopHint(ConfirmPress.CONTEXT_ALARM), text);
+        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_ALARM), text);
         return L;
     }
 
@@ -538,8 +542,14 @@ class PowerNapView extends WatchUi.View {
         var cancelled  = _detector.isCancelled();
         var accent     = summaryAccent(completion);
 
-        L.addText(cancelled ? ["NAP STOPPED", "STOPPED", "STOP"] : ["NAP COMPLETE", "COMPLETE", "DONE"],
-            fontsBody(), accent, ScreenLayout.KEEP);
+        // Without the ring (the Instinct) the title carries the completion %.
+        var pct = isRoundScreen() ? "" : (" " + completion + "%");
+        var titles = cancelled ? ["NAP STOPPED" + pct, "STOPPED" + pct, "STOP" + pct]
+                               : ["NAP COMPLETE" + pct, "COMPLETE" + pct, "DONE" + pct];
+        if (pct.length() > 0) {
+            titles.add(pct.substring(1, pct.length()) as String);   // next to the lens: just "100%"
+        }
+        L.addText(titles as Array<String>, fontsBody(), accent, ScreenLayout.KEEP);
         L.addText([(sleptSec > 0) ? formatCountdown(sleptSec) : "--:--"],
             [Graphics.FONT_NUMBER_MILD, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL] as Array<Graphics.FontDefinition>,
             Graphics.COLOR_WHITE, ScreenLayout.KEEP);
@@ -580,7 +590,7 @@ class PowerNapView extends WatchUi.View {
             L.addText([formatMoment(sleepStart as Time.Moment) + " - " + formatMoment(napEnd as Time.Moment)],
                 [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 40);
         }
-        L.setFooterTexts(summaryFooter(), Graphics.COLOR_LT_GRAY);
+        L.setFooterChoices(summaryFooter(), Graphics.COLOR_LT_GRAY);
         return L;
     }
 
@@ -595,7 +605,7 @@ class PowerNapView extends WatchUi.View {
         var endStr = (napEnd != null) ? formatMoment(napEnd as Time.Moment) : "--:--";
         L.addText([formatMoment(_detector.getStartTime()) + " - " + endStr],
             fontsDetail(), Graphics.COLOR_LT_GRAY, 50);
-        L.setFooterTexts(summaryFooter(), Graphics.COLOR_LT_GRAY);
+        L.setFooterChoices(summaryFooter(), Graphics.COLOR_LT_GRAY);
         return L;
     }
 
@@ -623,7 +633,8 @@ class PowerNapView extends WatchUi.View {
                 L.addText(["Stillness " + _detector.getOnsetProgressPct() + "%"],
                     fontsDetail(), Graphics.COLOR_YELLOW, 95);
             } else {
-                L.addText(["Buzzes if you doze", "Buzz if you doze"], fontsDetail(), Graphics.COLOR_LT_GRAY, 95);
+                L.addText(["Buzzes if you doze", "Buzz if you doze", "Buzz if doze"], fontsDetail(),
+                    Graphics.COLOR_LT_GRAY, 95);
             }
         }
         L.addText(["Awake " + formatLong(_detector.getSessionSec())], fontsDetail(), Graphics.COLOR_LT_GRAY, 80);
@@ -633,8 +644,8 @@ class PowerNapView extends WatchUi.View {
         }
         addWarnings(L, 97);
         addInactiveWarning(L);
-        L.addText(["HR " + hrString(_detector.getCurrentHR())], fontsDetail(), Graphics.COLOR_RED, 40);
-        L.setFooter(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        L.addText(hrTexts(), fontsDetail(), Graphics.COLOR_RED, 40);
+        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
         return L;
     }
 
@@ -653,7 +664,7 @@ class PowerNapView extends WatchUi.View {
         var endStr = (napEnd != null) ? formatMoment(napEnd as Time.Moment) : "--:--";
         L.addText([formatMoment(_detector.getStartTime()) + " - " + endStr],
             [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 40);
-        L.setFooterTexts(summaryFooter(), Graphics.COLOR_LT_GRAY);
+        L.setFooterChoices(summaryFooter(), Graphics.COLOR_LT_GRAY);
         return L;
     }
 
@@ -667,7 +678,8 @@ class PowerNapView extends WatchUi.View {
         if (_detector.isStayAwake()) {
             L.addText(["STAY AWAKE"], fontsTitle(), Graphics.COLOR_ORANGE, 60);
             L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
-            L.addText(["Awake " + formatLong(_detector.getSessionSec())], fontsBody(),
+            var awakeFor = formatLong(_detector.getSessionSec());
+            L.addText(["Awake " + awakeFor, awakeFor], fontsBody(),
                 Graphics.COLOR_WHITE, ScreenLayout.KEEP);
             var dozes = _detector.getDozeCount();
             L.addText((dozes == 0) ? ["No dozes"] : dozesText(dozes), fontsDetail(),
@@ -688,7 +700,7 @@ class PowerNapView extends WatchUi.View {
             }
             L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_YELLOW, 95);
         }
-        L.setFooter(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
         return L;
     }
 
@@ -774,28 +786,33 @@ class PowerNapView extends WatchUi.View {
         return false;
     }
 
-    //! Footer of the nap screens. Once armed it says what the second press
+    //! Footer of the nap screens (longest first, shorter variants for narrow
+    //! screens and wide fonts). Once armed it says what the second press
     //! does: with sleep recorded (or in Stay Awake mode) it ends the nap and
     //! shows the results, otherwise it goes back to the start screen.
-    private function stopHint(context as Number) as String {
+    private function stopHint(context as Number) as Array<String> {
         if (_confirm.isArmed(nowMs(), context)) {
             if (context == ConfirmPress.CONTEXT_NAP
                 && (_detector.hasSleptAtLeastOnce() || _detector.isStayAwake())) {
-                return "Again: stop + stats";
+                return ["Again: stop + stats", "Again: stop", "Again"] as Array<String>;
             }
-            return "Press again to stop";
+            return ["Press again to stop", "Again to stop", "Again"] as Array<String>;
         }
-        return "BACK x2 to stop";
+        return ["BACK x2 to stop", "BACK x2"] as Array<String>;
     }
 
     private function footerColor(context as Number) as Graphics.ColorType {
         return _confirm.isArmed(nowMs(), context) ? Graphics.COLOR_RED : Graphics.COLOR_LT_GRAY;
     }
 
-    //! START sets up a new nap, BACK exits (the START hint is dropped where
-    //! the bottom of the screen is too narrow for both).
+    //! START sets up a new nap, BACK exits. Where the bottom is too narrow
+    //! for both (inside the summary ring it always is) the START hint wins:
+    //! BACK exiting is what every Garmin app does, a new nap is not obvious.
     private function summaryFooter() as Array<String> {
-        return ["START new, BACK exit", "BACK to exit"] as Array<String>;
+        // The Instinct's summary needs every row: its hint must fit the
+        // bottom row. Inside the round ring the shortest variant is used.
+        return (isRoundScreen() ? ["START new, BACK exit", "START: new nap"]
+                                : ["START new, BACK exit", "START: new"]) as Array<String>;
     }
 
     //! The alarm promise. Before sleep: the latest possible alarm (the
@@ -968,11 +985,16 @@ class PowerNapView extends WatchUi.View {
 
     //! Millisecond clock for the two-press window (not rounded to seconds).
     private function nowMs() as Number {
-        return System.getTimer();
+        return System.getTimer() + _msOffset;
     }
 
-    private function hrString(hr as Number) as String {
-        return (hr > 0) ? (hr.toString() + " BPM") : "--";
+    //! "HR 62 BPM" / "HR 62", or "HR --" while no reading arrives.
+    private function hrTexts() as Array<String> {
+        var hr = _detector.getCurrentHR();
+        if (hr <= 0) {
+            return ["HR --"] as Array<String>;
+        }
+        return ["HR " + hr + " BPM", "HR " + hr] as Array<String>;
     }
 
     private function formatCountdown(totalSeconds as Number) as String {
@@ -1073,9 +1095,21 @@ class PowerNapView extends WatchUi.View {
         return clockString();
     }
 
+    //! Format a moment exactly like the screens do (12/24 h).
+    (:debug)
+    function testFormatMoment(moment as Time.Moment) as String {
+        return formatMoment(moment);
+    }
+
     (:debug)
     function testHasSubscreen() as Boolean {
         return hasSubscreen();
+    }
+
+    //! Move the view's millisecond clock (confirm window, input lock, peek).
+    (:debug)
+    function testAdvanceMs(ms as Number) as Void {
+        _msOffset += ms;
     }
 
     //! End the input lock now (tests of deliberate follow-up presses).

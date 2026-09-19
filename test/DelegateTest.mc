@@ -421,3 +421,66 @@ function testDelegate_resetToStartReloadsSettings(logger as Test.Logger) as Bool
     }
     return ok;
 }
+
+//! Stay Awake: pressing a button during the drowsiness warning answers it:
+//! the still run starts over and no doze alarm follows.
+(:test)
+function testDelegate_stayAwakePressEndsStillRun(logger as Test.Logger) as Boolean {
+    var r = new DelegateRig(0);
+    r.key(WatchUi.KEY_ENTER);
+    r.detector.testRunMinutes(3, 70, 10.0f);
+    var warned = r.detector.isDozeWarning();
+    r.key(WatchUi.KEY_UP);
+    var cleared = !r.detector.isDozeWarning() && r.view.isPeeking();
+    r.detector.testRunMinutes(2, 70, 10.0f);
+    var ok = warned && cleared && r.detector.getState() == SleepDetector.STATE_MONITORING
+        && r.detector.getDozeCount() == 0;
+    if (!ok) {
+        logger.debug("warned " + warned + " cleared " + cleared + " state " + r.detector.getState());
+    }
+    r.cleanup();
+    return ok;
+}
+
+//! A nap button press never touches detection (only Stay Awake resets on it).
+(:test)
+function testDelegate_napPressKeepsStillness(logger as Test.Logger) as Boolean {
+    var r = new DelegateRig(30);
+    r.startNap();
+    r.detector.testRunMinutes(2, 70, 10.0f);
+    var still = r.detector.getStillMinutes();
+    r.key(WatchUi.KEY_UP);
+    var ok = still > 0 && r.detector.getStillMinutes() == still;
+    if (!ok) {
+        logger.debug("still " + still + " -> " + r.detector.getStillMinutes());
+    }
+    r.cleanup();
+    return ok;
+}
+
+//! The input lock lasts while presses keep coming: 2 s after the stop a
+//! press is ignored and extends it; only after a 2.5 s pause does a press act.
+(:test)
+function testDelegate_lockExtendsWhilePressesContinue(logger as Test.Logger) as Boolean {
+    var r = new DelegateRig(10);
+    r.startNap();
+    r.detector.testForceSleep();
+    r.detector.testAdvanceClock(10 * 60);
+    r.detector.testTick();
+    r.key(WatchUi.KEY_ENTER);
+    r.key(WatchUi.KEY_ENTER);                    // alarm stopped -> summary, locked
+    var ok = r.detector.getState() == SleepDetector.STATE_SUMMARY;
+    r.view.testAdvanceMs(2000);
+    r.key(WatchUi.KEY_ENTER);                    // ignored, extends the lock
+    r.view.testAdvanceMs(2000);                  // 4 s after the stop, 2 s after the press
+    r.key(WatchUi.KEY_ENTER);                    // still ignored
+    ok = ok && r.view.isStarted() && r.detector.getState() == SleepDetector.STATE_SUMMARY;
+    r.view.testAdvanceMs(2600);                  // a real pause
+    r.key(WatchUi.KEY_ENTER);                    // acts: new nap set-up (start screen)
+    ok = ok && !r.view.isStarted();
+    if (!ok) {
+        logger.debug("state " + r.detector.getState() + " started " + r.view.isStarted());
+    }
+    r.cleanup();
+    return ok;
+}

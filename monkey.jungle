@@ -4,4 +4,52 @@ project.manifest = manifest.xml
 # are stripped automatically by the compiler in non-test builds
 base.sourcePath = source;test
 
-base.resourcePath = resources;resources/strings;resources/drawables;resources/layouts;resources/settings;resources/properties
+# resources/ is scanned recursively (strings, drawables, settings, properties).
+# Listing its subfolders again makes every per-device resourcePath below warn
+# "already exists in the resource path"; the compiled output is identical.
+base.resourcePath = resources
+
+# Launcher icon at each device's native size (compiler.json "launcherIcon").
+# resources/drawables/launcher_icon.png is the 60x60 default; a folder appended
+# here comes last on the device's path, so its LauncherIcon overrides it.
+# The PNGs are drawn by resources-launcher/generate_launcher_icons.py.
+
+# 40x40, 8-bit MIP (64-colour palette)
+enduro3.resourcePath = $(enduro3.resourcePath);resources-launcher/mip-40x40
+fenix7.resourcePath = $(fenix7.resourcePath);resources-launcher/mip-40x40
+fenix7pro.resourcePath = $(fenix7pro.resourcePath);resources-launcher/mip-40x40
+fenix7s.resourcePath = $(fenix7s.resourcePath);resources-launcher/mip-40x40
+fenix7spro.resourcePath = $(fenix7spro.resourcePath);resources-launcher/mip-40x40
+fenix7x.resourcePath = $(fenix7x.resourcePath);resources-launcher/mip-40x40
+fenix7xpro.resourcePath = $(fenix7xpro.resourcePath);resources-launcher/mip-40x40
+fenix8solar47mm.resourcePath = $(fenix8solar47mm.resourcePath);resources-launcher/mip-40x40
+fenix8solar51mm.resourcePath = $(fenix8solar51mm.resourcePath);resources-launcher/mip-40x40
+fr255.resourcePath = $(fr255.resourcePath);resources-launcher/mip-40x40
+fr255m.resourcePath = $(fr255m.resourcePath);resources-launcher/mip-40x40
+fr255s.resourcePath = $(fr255s.resourcePath);resources-launcher/mip-40x40
+fr255sm.resourcePath = $(fr255sm.resourcePath);resources-launcher/mip-40x40
+fr955.resourcePath = $(fr955.resourcePath);resources-launcher/mip-40x40
+
+# 54x54
+fr57042mm.resourcePath = $(fr57042mm.resourcePath);resources-launcher/54x54
+venu441mm.resourcePath = $(venu441mm.resourcePath);resources-launcher/54x54
+vivoactive6.resourcePath = $(vivoactive6.resourcePath);resources-launcher/54x54
+
+# 56x56
+vivoactive5.resourcePath = $(vivoactive5.resourcePath);resources-launcher/56x56
+
+# 62x62, 1-bit black/white (Instinct 3 Solar)
+instinct3solar45mm.resourcePath = $(instinct3solar45mm.resourcePath);resources-launcher/mono-62x62
+
+# 65x65
+d2mach2.resourcePath = $(d2mach2.resourcePath);resources-launcher/65x65
+fenix847mm.resourcePath = $(fenix847mm.resourcePath);resources-launcher/65x65
+fenix8pro47mm.resourcePath = $(fenix8pro47mm.resourcePath);resources-launcher/65x65
+fr57047mm.resourcePath = $(fr57047mm.resourcePath);resources-launcher/65x65
+fr965.resourcePath = $(fr965.resourcePath);resources-launcher/65x65
+fr970.resourcePath = $(fr970.resourcePath);resources-launcher/65x65
+venu445mm.resourcePath = $(venu445mm.resourcePath);resources-launcher/65x65
+
+# 70x70
+venu3.resourcePath = $(venu3.resourcePath);resources-launcher/70x70
+venu3s.resourcePath = $(venu3s.resourcePath);resources-launcher/70x70

@@ -282,3 +282,40 @@ function testStay_nextNapIsNormal(logger as Test.Logger) as Boolean {
     }
     return ok;
 }
+
+//! Answering the nudge ("Move a bit") with a few seconds of movement ends the
+//! still run at once: the warning clears immediately and no doze alarm rings
+//! two minutes later. (Before, 3-4 s of movement still counted as a still
+//! minute and the doze alarm rang for a user who did what the watch asked.)
+(:test)
+function testStay_movingAfterNudgeEndsStillRun(logger as Test.Logger) as Boolean {
+    var a = stayHelperAlarm();
+    var d = stayHelperStart(a);
+    d.testRunMinutes(3, 70, 10.0f);
+    var warned = d.isDozeWarning() && a.testGetNudgeCount() == 1;
+    d.testRunSeconds(4, 70, 150.0f);
+    var cleared = !d.isDozeWarning() && d.getStillMinutes() == 0;
+    d.testRunSeconds(56, 70, 10.0f);
+    d.testRunMinutes(1, 70, 10.0f);
+    var ok = warned && cleared && d.getState() == SleepDetector.STATE_MONITORING
+        && d.getDozeCount() == 0 && !a.isAlarming();
+    if (!ok) {
+        logger.debug("warned " + warned + " cleared " + cleared + " state " + d.getState()
+            + " dozes " + d.getDozeCount());
+    }
+    a.stop();
+    return ok;
+}
+
+//! The nudge's own buzz (at most 2 active seconds) does not count as moving.
+(:test)
+function testStay_twoActiveSecondsDoNotEndTheWarning(logger as Test.Logger) as Boolean {
+    var d = stayHelperStart(null);
+    d.testRunMinutes(3, 70, 10.0f);
+    d.testRunSeconds(2, 70, 150.0f);
+    var ok = d.isDozeWarning() && d.getStillMinutes() == 3;
+    if (!ok) {
+        logger.debug("2 active seconds ended the warning, still " + d.getStillMinutes());
+    }
+    return ok;
+}

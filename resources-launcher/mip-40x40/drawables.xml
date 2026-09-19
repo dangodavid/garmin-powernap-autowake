@@ -1,0 +1,4 @@
+<drawables>
+    <!-- Already in the 64-colour MIP palette: no dithering -->
+    <bitmap id="LauncherIcon" filename="launcher_icon_40_mip.png" dithering="none" />
+</drawables>

@@ -16,7 +16,7 @@ Put on the watch, start the app, lie down.
 6. **Smart Wake Window (naps of 15 min or more):** In the last 20 % of the nap before the alarm (at most 5 minutes) a restless minute or a slight HR rise fires the alarm early at a natural waking moment. If the "Latest alarm" cap shortened the nap below 15 minutes, there is no smart wake.
 7. **Wake-up alarm:** An escalating haptic pattern brings you out of sleep gradually, from a barely-perceptible feather tap to full intensity after 84 seconds. The screen is gentle too: it stays dark for the first minute and then shows a calm "Time to wake up"; it only flashes once the alarm is at full intensity. After three minutes at full intensity it keeps ringing every 30 seconds until you stop it. If your alarm type cannot be heard on the watch (for example Tone Only on a vívoactive, which has no speaker tones, or vibration switched off in the watch settings) the other channel is used.
 8. **Woke up early?** Nothing to do: lie still for two minutes and the nap continues, the alarm time stays the same. Every nap screen shows the time of day. Press UP, DOWN or START to peek at the nap so far (time asleep, wakes, alarm time) for a few seconds; this never stops anything.
-9. **Stop:** Press BACK (or START) twice within 4 seconds to stop the alarm. Screen taps and swipes are ignored during a nap and during the alarm, and stopping a running nap also needs two BACK presses, so a wrist or sleeve on the pillow cannot silence anything. After the first BACK press the screen says what the second one does ("Again: stop + stats" once sleep was recorded; before that it returns to the start screen). For 2.5 seconds after a stop every press is ignored, so extra presses of a half-asleep hand cannot skip the summary or start a new nap.
+9. **Stop:** Press BACK (or START) twice within 4 seconds to stop the alarm. Screen taps and swipes are ignored during a nap and during the alarm, and stopping a running nap also needs two BACK presses, so a wrist or sleeve on the pillow cannot silence anything. After the first BACK press the screen says what the second one does ("Again: stop + stats" once sleep was recorded; before that it returns to the start screen). For 2.5 seconds after a stop every press is ignored (each further press extends the pause), so extra presses of a half-asleep hand cannot skip the summary or start a new nap.
 10. **Summary screen:** Shows time asleep, how long it took you to fall asleep ("Fell asleep in 10 min"), how much of the planned nap was completed (ring), the number of wake episodes, average and minimum HR, and the time window you slept. START sets up a new nap, BACK exits.
 
 **Warnings before you nap:** "Low battery N%" below 10 % (not charging), and "DND on: alarm may be silent" when Do Not Disturb is on, since DND may keep the watch from vibrating.
@@ -45,7 +45,7 @@ The wake-up alarm is designed to ease you out of sleep rather than startle you. 
 
 Press DOWN below 5 min on the start screen ("0 stay awake"). The watch then keeps you awake instead of letting you sleep: it shows "Keeping you awake", and
 
-- after 3 still minutes it gives one gentle buzz and shows **"Stay alert! Move a bit"**;
+- after 3 still minutes it gives one gentle buzz and shows **"Stay alert! Move a bit"**; moving for a few seconds or pressing any button answers it and the watch starts counting again;
 - if you doze off anyway (the same detection as a nap: 2 still minutes with a heart-rate drop, or 5 still minutes) the **doze alarm** rings right away at medium strength and shows "You dozed off";
 - stopping the doze alarm (two presses) puts the watch back on guard, so one session catches every doze;
 - BACK twice ends the session; the summary shows how long you stayed awake and how many dozes were caught.
@@ -158,7 +158,7 @@ $CIQ_HOME/bin/monkeydo bin/PowerNap.prg fenix847mm
 Ctrl+Shift+P -> Monkey C: Run Tests
 ```
 
-The suite under `test/` (187 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
+The suite under `test/` (200 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
 
 - **Invariant tests** run seeded random naps (settings and a minute-by-minute story of dozing, stirring, waking and sensor dropouts) and check after every simulated second the rules that must always hold: the alarm always rings and never after the deadline, the planned end never moves, smart wake only inside its window, stats in range. A failure prints the seed to replay it.
 - **Negative tests** feed absurd heart rates, missing accelerometer data, a wall clock stepping back, lifecycle calls in every state and wrong-type settings.
@@ -185,13 +185,14 @@ monkey.jungle                   Build configuration
 resources/
   drawables/
     drawables.xml               Drawable resource definitions
-    launcher_icon.png           60×60 app icon
+    launcher_icon.png           60×60 app icon (fallback size)
   properties/
     properties.xml              Default property values
   settings/
     settings.xml                Companion-app settings UI
   strings/
     strings.xml                 Localized strings (English)
+resources-launcher/             App icon at each watch's native size (monkey.jungle picks it per device)
 source/
   PowerNapApp.mc                AppBase: lifecycle (incl. task-switcher active/inactive)
   PowerNapView.mc               UI: start screen, nap, Stay Awake and peek screens as line lists

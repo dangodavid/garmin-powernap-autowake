@@ -586,3 +586,71 @@ function testReg_confirmPressAcrossTimerWrap(logger as Test.Logger) as Boolean {
     }
     return true;
 }
+
+// ── Full audit (2026-09-19) ─────────────────────────────────────────────────
+
+//! Feed n seconds with HR alternating a/b and the given motion.
+(:debug)
+function regHelperAlternatingHr(d as SleepDetector, seconds as Number, a as Number, b as Number, motion as Float) as Void {
+    for (var i = 0; i < seconds; i++) {
+        d.testFeedSecond((i % 2 == 0) ? a : b, motion);
+    }
+}
+
+//! The HR drop is measured on exact minute means, like the baseline: a true
+//! drop of 4.5 BPM (65/66 against 70) does not meet the 5 BPM setting, a true
+//! drop of 5.0 (64/66) does. Whole-BPM means used to read 65 and fire early.
+(:test)
+function testReg_hrDropUsesExactMinuteMeans(logger as Test.Logger) as Boolean {
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testRunMinutes(2, 70, 200.0f);
+    regHelperAlternatingHr(d, 180, 65, 66, 5.0f);
+    var ok = true;
+    if (d.getState() != SleepDetector.STATE_MONITORING) {
+        logger.debug("4.5 BPM drop must not shorten onset, state " + d.getState());
+        ok = false;
+    }
+    d = new SleepDetector(null);
+    d.testStart();
+    d.testRunMinutes(2, 70, 200.0f);
+    regHelperAlternatingHr(d, 180, 64, 66, 5.0f);
+    if (d.getState() != SleepDetector.STATE_SLEEPING) {
+        logger.debug("5.0 BPM drop must allow onset at 3 still minutes, state " + d.getState());
+        ok = false;
+    }
+    return ok;
+}
+
+//! A minute without any HR reading clears the live HR ("HR --") instead of
+//! showing the last value for the rest of the session.
+(:test)
+function testReg_liveHrClearsWithoutReadings(logger as Test.Logger) as Boolean {
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testRunSeconds(60, 60, 5.0f);
+    var before = d.getCurrentHR();
+    d.testRunSeconds(60, 0, 5.0f);
+    var ok = before == 60 && d.getCurrentHR() == 0;
+    if (!ok) {
+        logger.debug("HR before " + before + ", after a minute without readings " + d.getCurrentHR());
+    }
+    return ok;
+}
+
+//! Stay Awake: hiding the app while a doze alarm rings sets the "Keep app
+//! open" warning for the rest of the session (the session goes on after it).
+(:test)
+function testReg_stayAwakeAlarmHiddenSetsWarning(logger as Test.Logger) as Boolean {
+    var d = new SleepDetector(null);
+    d.testStartStayAwake();
+    d.testRunMinutes(5, 70, 10.0f);
+    var alarmed = d.getAlarmReason() == SleepDetector.ALARM_DOZE;
+    d.noteInactive();
+    d.dismissAlarm();
+    var ok = alarmed && d.wasInactiveDuringNap() && d.getState() == SleepDetector.STATE_MONITORING;
+    if (!ok) {
+        logger.debug("alarmed " + alarmed + " warning " + d.wasInactiveDuringNap());
+    }
+    return ok;
+}

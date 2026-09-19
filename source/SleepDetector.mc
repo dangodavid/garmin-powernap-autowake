@@ -115,6 +115,7 @@ class SleepDetector {
     private const HR_REF_MINUTES           = 10;    // rolling HR reference: minutes before the window
     private const HR_REF_MIN_MINUTES       = 5;     // ... used once at least this many exist
     private const DOZE_ALARM_PHASE         = 2;     // the doze alarm starts at the medium phase
+    private const REACTION_ACTIVE_SEC      = 3;     // moving this long after the nudge = awake
 
     // ── State ───────────────────────────────────────────────────────────
     private var _state as Number = STATE_CALIBRATING;
@@ -136,7 +137,9 @@ class SleepDetector {
     private var _accActiveSec as Number = 0;
 
     // Last completed minute
-    private var _minuteHr as Number = 0;
+    private var _minuteHr as Number = 0;            // whole BPM (display, trace, sleep-phase rise)
+    private var _minuteHrExact as Float = 0.0f;     // exact mean (HR drop against the baseline)
+    private var _minuteHadMotion as Boolean = false;
     private var _minuteMotionMean as Float = 0.0f;
     private var _minuteActiveSec as Number = 0;
     private var _minuteStill as Boolean = false;
@@ -148,8 +151,11 @@ class SleepDetector {
     private var _hrBaseline as Float = 0.0f;         // 0 = unknown (HR path disabled)
 
     // Rolling detection state
-    private var _hrWindow as Array<Number> = [] as Array<Number>;  // per-minute HR means
-    private var _hrHistory as Array<Number> = [] as Array<Number>; // Stay Awake: last 13 minute means
+    // Exact per-minute HR means: the baseline is an exact mean too, so the
+    // HR drop is compared on one scale (whole-BPM means would read ~0.5 BPM
+    // more drop than there is).
+    private var _hrWindow as Array<Float> = [] as Array<Float>;    // last minutes
+    private var _hrHistory as Array<Float> = [] as Array<Float>;   // Stay Awake: last 13 minutes
     private var _stillMinutes as Number = 0;                        // consecutive still minutes
     private var _hrRiseMinutes as Number = 0;                       // consecutive minutes with HR rise
     private var _sleepMinuteHrSum as Number = 0;                    // per-minute HR means during sleep
@@ -178,6 +184,7 @@ class SleepDetector {
     private var _clockOffsetSec as Number = 0;       // only changed by debug helpers
     private var _frozenBaseSec as Number = 0;        // > 0 only in test sessions
     private var _fakeRuntime as Boolean = false;     // tests: start() without sensors/timers
+    (:debug) private var _lastTrace as String = "";  // debug builds: last trace line (tests)
 
     // Settings
     private var _napDurationMin as Number = 30;
@@ -252,6 +259,8 @@ class SleepDetector {
         _currentHR = 0;
         resetAccumulators();
         _minuteHr = 0;
+        _minuteHrExact = 0.0f;
+        _minuteHadMotion = false;
         _minuteMotionMean = 0.0f;
         _minuteActiveSec = 0;
         _minuteStill = false;
@@ -261,8 +270,8 @@ class SleepDetector {
         _calibHrCount = 0;
         _hrBaseline = 0.0f;
 
-        _hrWindow = [] as Array<Number>;
-        _hrHistory = [] as Array<Number>;
+        _hrWindow = [] as Array<Float>;
+        _hrHistory = [] as Array<Float>;
         _stillMinutes = 0;
         _hrRiseMinutes = 0;
         _sleepMinuteHrSum = 0;
@@ -366,9 +375,23 @@ class SleepDetector {
     //! system denies vibration/tones and limits sensors, so the view warns
     //! the user to stay in the app for the rest of the nap.
     function noteInactive() as Void {
-        if (isActiveState()) {
+        // A Stay Awake doze alarm is part of a session that goes on after it.
+        if (isActiveState() || (_stayAwake && _running && _state == STATE_ALARM)) {
             _wasInactive = true;
         }
+    }
+
+    //! Stay Awake: the user just showed they are awake (a button press, or a
+    //! clear movement after the nudge). The still run ends at once and a
+    //! clean minute starts, so the drowsiness warning clears right away.
+    function noteUserAwake() as Void {
+        if (!_stayAwake || !_running || !isActiveState()) {
+            return;
+        }
+        _stillMinutes = 0;
+        resetAccumulators();
+        _secInMinute = 0;
+        trace("awake");
     }
 
     //! The app is back in the foreground (AppBase.onActive): check the alarm
@@ -445,6 +468,11 @@ class SleepDetector {
         _accMotionCount += 1;
         if (magnitude > _motionThreshold) {
             _accActiveSec += 1;
+            // Stay Awake: moving for a few seconds after the nudge answers it
+            // ("Move a bit"); the nudge's own buzz is shorter than this.
+            if (_accActiveSec >= REACTION_ACTIVE_SEC && isDozeWarning()) {
+                noteUserAwake();
+            }
         }
     }
 
@@ -496,6 +524,13 @@ class SleepDetector {
     //! Consume the per-minute accumulators and run the detection logic.
     private function onMinute() as Void {
         _minuteHr = (_accHrCount > 0) ? (_accHrSum / _accHrCount) : 0;
+        _minuteHrExact = (_accHrCount > 0) ? (_accHrSum.toFloat() / _accHrCount.toFloat()) : 0.0f;
+        if (_accHrCount == 0) {
+            // No reading for a whole minute (sensor lost contact): the screens
+            // show "HR --" instead of the last value as if it were live.
+            _currentHR = 0;
+        }
+        _minuteHadMotion = (_accMotionCount > 0);
         if (_accMotionCount > 0) {
             _minuteMotionMean = _accMotionSum / _accMotionCount.toFloat();
             _minuteActiveSec = _accActiveSec;
@@ -512,19 +547,22 @@ class SleepDetector {
         _minutesCompleted += 1;
 
         if (_minuteHr > 0) {
-            _hrWindow.add(_minuteHr);
+            _hrWindow.add(_minuteHrExact);
             if (_hrWindow.size() > HR_WINDOW_MINUTES) {
-                _hrWindow = _hrWindow.slice(-HR_WINDOW_MINUTES, null) as Array<Number>;
+                _hrWindow = _hrWindow.slice(-HR_WINDOW_MINUTES, null) as Array<Float>;
             }
             if (_stayAwake) {
-                _hrHistory.add(_minuteHr);
+                _hrHistory.add(_minuteHrExact);
                 if (_hrHistory.size() > HR_REF_MINUTES + HR_WINDOW_MINUTES) {
-                    _hrHistory = _hrHistory.slice(-(HR_REF_MINUTES + HR_WINDOW_MINUTES), null) as Array<Number>;
+                    _hrHistory = _hrHistory.slice(-(HR_REF_MINUTES + HR_WINDOW_MINUTES), null) as Array<Float>;
                 }
             }
         }
         _stillMinutes = _minuteStill ? (_stillMinutes + 1) : 0;
-        trace("m," + _state + "," + _minuteHr + "," + (_minuteMotionMean * 10.0f).toNumber()
+        // Motion in centi-mg (-1: no accelerometer data), so a replay sees
+        // the same still/wake decisions the watch made.
+        trace("m," + _state + "," + _minuteHr + ","
+            + (_minuteHadMotion ? (_minuteMotionMean * 100.0f + 0.5f).toNumber() : -1)
             + "," + _minuteActiveSec + "," + _stillMinutes + "," + _hrBaseline.toNumber());
 
         if (_state == STATE_CALIBRATING) {
@@ -611,11 +649,11 @@ class SleepDetector {
         if (older < HR_REF_MIN_MINUTES) {
             return 0.0f;
         }
-        var sum = 0;
+        var sum = 0.0f;
         for (var i = 0; i < older; i++) {
             sum += _hrHistory[i];
         }
-        return sum.toFloat() / older.toFloat();
+        return sum / older.toFloat();
     }
 
     //! MONITORING -> SLEEPING.
@@ -796,7 +834,7 @@ class SleepDetector {
         _alarmReason = ALARM_NONE;
         _finishSec = null;
         _stillMinutes = 0;
-        _hrWindow = [] as Array<Number>;
+        _hrWindow = [] as Array<Float>;
         resetAccumulators();
         _secInMinute = 0;
         trace("resume");
@@ -996,13 +1034,13 @@ class SleepDetector {
         return v;
     }
 
-    private function arrayMeanFloat(arr as Array<Number>) as Float {
+    private function arrayMeanFloat(arr as Array<Float>) as Float {
         if (arr.size() == 0) { return 0.0f; }
-        var sum = 0;
+        var sum = 0.0f;
         for (var i = 0; i < arr.size(); i++) {
             sum += arr[i];
         }
-        return sum.toFloat() / arr.size().toFloat();
+        return sum / arr.size().toFloat();
     }
 
     //! Debug builds record the session to the watch log, one line per minute
@@ -1012,6 +1050,7 @@ class SleepDetector {
     //! clock) and never in release builds (no health data is stored).
     (:debug)
     private function trace(line as String) as Void {
+        _lastTrace = line;
         if (_frozenBaseSec == 0) {
             System.println("PN," + (nowSec() - _startSec) + "," + line);
         }
@@ -1211,6 +1250,10 @@ class SleepDetector {
 
     (:debug)
     function testGetMinuteMotionMean() as Float { return _minuteMotionMean; }
+
+    //! The last trace line (debug builds), e.g. "m,1,62,812,0,3,70".
+    (:debug)
+    function testGetLastTrace() as String { return _lastTrace; }
 
     (:debug)
     function testGetMinuteActiveSec() as Number { return _minuteActiveSec; }

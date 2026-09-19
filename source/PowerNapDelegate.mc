@@ -32,7 +32,9 @@ import Toybox.System;
 //!   including the alarm, so no gesture reaches system navigation;
 //! * every other key is consumed too;
 //! * for 2.5 s after a confirmed stop or a screen change every press is
-//!   ignored, so a burst of presses cannot run on into the next screen.
+//!   ignored (each ignored press extends it), so a burst of presses cannot
+//!   run on into the next screen;
+//! * in Stay Awake mode a button press counts as proof of being awake.
 //!
 //! The logic lives in handleKey()/handleTap() so tests can drive it without
 //! constructing system input events.
@@ -113,7 +115,9 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     //! One button press (a WatchUi.KEY_* value).
     function handleKey(key as Number) as Boolean {
         if (_view.isInputLocked()) {
-            // Presses that keep coming right after a stop or a screen change.
+            // Presses that keep coming right after a stop or a screen change:
+            // ignored, and the lock lasts until they stop for a moment.
+            _view.lockInput();
             return true;
         }
         var state = _detector.getState();
@@ -164,6 +168,12 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         }
 
         // -- Active nap (CALIBRATING / MONITORING / SLEEPING) ------------
+        if (_detector.isStayAwake()
+            && (key == WatchUi.KEY_ESC || key == WatchUi.KEY_UP || key == WatchUi.KEY_DOWN || key == WatchUi.KEY_ENTER)) {
+            // Stay Awake: a press is proof of being awake (it also answers
+            // the "Stay alert!" nudge), so the still run starts over.
+            _detector.noteUserAwake();
+        }
         if (key == WatchUi.KEY_ESC) {
             if (_view.pressStop(ConfirmPress.CONTEXT_NAP)) {
                 if (_detector.hasSleptAtLeastOnce() || _detector.isStayAwake()) {
