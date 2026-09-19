@@ -72,7 +72,7 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     private var _detector as SleepDetector;
     private var _alarm    as AlarmManager;
     private var _exitEnabled as Boolean = true;   // tests switch System.exit() off
-    private var _exitRequested as Boolean = false;
+    (:debug) private var _exitRequested as Boolean = false;
     private var _viewsEnabled as Boolean = true;  // tests switch WatchUi.pushView off
     private var _menuRequests as Number = 0;
 
@@ -326,10 +326,21 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     private function exitApp() as Void {
         _detector.stop();
         _alarm.stop();
-        _exitRequested = true;
+        noteExitRequested();
         if (_exitEnabled) {
             System.exit();
         }
+    }
+
+    // Debug builds remember that exitApp() ran, for testExitRequested();
+    // release builds have neither the field nor anything to write to it.
+    (:debug)
+    private function noteExitRequested() as Void {
+        _exitRequested = true;
+    }
+
+    (:release)
+    private function noteExitRequested() as Void {
     }
 
     // -- Test hooks (debug builds only) -----------------------------------
