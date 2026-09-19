@@ -9,13 +9,14 @@ class PowerNapApp extends Application.AppBase {
 
     private var _sleepDetector as SleepDetector?;
     private var _alarmManager as AlarmManager?;
+    private var _view as PowerNapView?;
 
     function initialize() {
         AppBase.initialize();
     }
 
     //! Called when the application starts. Creates the sleep detector and alarm
-    //! manager instances, then pushes the main view.
+    //! manager; the view and delegate come from getInitialView().
     function onStart(state as Dictionary?) as Void {
         _alarmManager = new AlarmManager();
         _sleepDetector = new SleepDetector(_alarmManager);
@@ -30,6 +31,7 @@ class PowerNapApp extends Application.AppBase {
             _sleepDetector = new SleepDetector(_alarmManager);
         }
         var view = new PowerNapView(_sleepDetector as SleepDetector, _alarmManager as AlarmManager);
+        _view = view;
         var delegate = new PowerNapDelegate(view, _sleepDetector as SleepDetector, _alarmManager as AlarmManager);
         return [view, delegate];
     }
@@ -44,13 +46,38 @@ class PowerNapApp extends Application.AppBase {
         }
     }
 
-    //! Called when a setting changes in the companion app.
+    //! Task-switcher devices (fenix 8, Venu 3/4, vivoactive 6, ...): the app
+    //! was sent to the background. The system now denies vibration and tones
+    //! and limits sensors; the view warns the user once they come back.
+    function onInactive(state as Dictionary?) as Void {
+        if (_sleepDetector != null) {
+            (_sleepDetector as SleepDetector).noteInactive();
+        }
+    }
+
+    //! Back in the foreground: check the alarm immediately and, if it is
+    //! already ringing (silently, while we were hidden), ring right now.
+    function onActive(state as Dictionary?) as Void {
+        if (_sleepDetector != null) {
+            (_sleepDetector as SleepDetector).onResume();
+        }
+        if (_alarmManager != null && (_alarmManager as AlarmManager).isAlarming()) {
+            (_alarmManager as AlarmManager).ringNow();
+        }
+    }
+
+    //! Called when a setting changes in the companion app. A running nap
+    //! keeps its settings (the detector ignores the reload); the start
+    //! screen follows a new nap duration.
     function onSettingsChanged() as Void {
         if (_sleepDetector != null) {
             (_sleepDetector as SleepDetector).loadSettings();
         }
         if (_alarmManager != null) {
             (_alarmManager as AlarmManager).loadSettings();
+        }
+        if (_view != null) {
+            (_view as PowerNapView).onSettingsChanged();
         }
         WatchUi.requestUpdate();
     }

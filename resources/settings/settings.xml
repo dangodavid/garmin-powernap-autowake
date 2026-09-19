@@ -2,6 +2,9 @@
     <setting propertyKey="@Properties.napDuration" title="@Strings.NapDurationTitle">
         <settingConfig type="numeric" min="5" max="120" />
     </setting>
+    <setting propertyKey="@Properties.fallAsleepAllowance" title="@Strings.FallAsleepAllowanceTitle" prompt="@Strings.FallAsleepAllowancePrompt">
+        <settingConfig type="numeric" min="5" max="30" />
+    </setting>
     <setting propertyKey="@Properties.alarmType" title="@Strings.AlarmTypeTitle">
         <settingConfig type="list">
             <listEntry value="0">@Strings.VibrationOnly</listEntry>

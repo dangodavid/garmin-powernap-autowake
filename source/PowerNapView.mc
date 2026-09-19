@@ -4,39 +4,46 @@ import Toybox.Time;
 import Toybox.Time.Gregorian;
 import Toybox.Application;
 import Toybox.Lang;
+import Toybox.System;
 
+//! Draws the start screen and the four nap screens (monitoring, sleeping,
+//! alarm, summary). The detector requests an update every second while a
+//! nap is active, so every value on screen is live.
+//!
+//! Every nap screen is described as a prioritised list of lines and laid out
+//! by ScreenLayout, which drops optional lines and shrinks fonts until the
+//! content fits between the top margin and the footer on any display
+//! (176 px Instinct to 454 px AMOLED), and keeps each line inside the round
+//! bezel / subscreen.
 class PowerNapView extends WatchUi.View {
 
     private var _detector as SleepDetector;
     private var _alarm as AlarmManager;
-    private var _alarmTriggered as Boolean = false;
 
-    // Debug label: shows "dev HH:MM" on start screen in debug builds only.
-    // Release/store builds show nothing (buildDebugLabel returns "").
+    // Debug label: shows "dev #<build>" on start screen in debug builds only.
     private var _debugLabel as String = "";
 
     // Start screen state
     private var _started as Boolean = false;
     private var _pendingDuration as Number = 30;
+    // Tap zones measured from the last start-screen draw (-1 = not drawn yet)
+    private var _tapPlusMaxY as Number = -1;    // y < this        -> +5 min
+    private var _tapMinusMinY as Number = -1;   // y > this        -> -5 min
+
+    // Two-press confirmation for stopping a nap or the alarm (4 s, in ms).
+    private var _confirm as ConfirmPress;
+    private const CONFIRM_WINDOW_MS = 4000;
 
     // Duration options in minutes (step 5, wrap-around)
     private const DURATION_MIN = 5;
     private const DURATION_MAX = 120;
 
-
     function initialize(detector as SleepDetector, alarm as AlarmManager) {
         View.initialize();
         _detector = detector;
         _alarm = alarm;
-        // Load last used duration from persistent storage
-        try {
-            var saved = Application.Properties.getValue("napDuration");
-            if (saved != null && saved instanceof Number) {
-                _pendingDuration = saved as Number;
-            }
-        } catch (e instanceof Lang.Exception) {
-            // Storage corrupt -- use default 30 min.
-        }
+        _confirm = new ConfirmPress(CONFIRM_WINDOW_MS);
+        _pendingDuration = readStoredDuration();
         _debugLabel = buildDebugLabel();
     }
 
@@ -48,10 +55,9 @@ class PowerNapView extends WatchUi.View {
         // Cleanup is handled by PowerNapApp.onStop() when the app exits.
         // Do NOT stop sensors/timers here: onHide() can be called when a
         // system overlay appears (incoming call, control menu, battery alert).
-        // Stopping here would kill an active nap session.
     }
 
-    // -- Public interface for delegate ----------------------------------
+    // -- Public interface for delegate / app ----------------------------
 
     function isStarted() as Boolean {
         return _started;
@@ -68,22 +74,29 @@ class PowerNapView extends WatchUi.View {
         WatchUi.requestUpdate();
     }
 
-    //! Confirm duration, persist it, and begin sleep monitoring.
+    //! Settings changed from the phone: follow a new nap duration while the
+    //! start screen is showing (a running nap keeps its own settings).
+    function onSettingsChanged() as Void {
+        if (!_started) {
+            _pendingDuration = readStoredDuration();
+            WatchUi.requestUpdate();
+        }
+    }
+
+    //! Confirm duration, persist it (only if changed), and begin monitoring.
     function startNap() as Void {
-        try {
-            Application.Properties.setValue("napDuration", _pendingDuration);
-        } catch (e instanceof Lang.Exception) {
-            // Storage full or corrupt -- proceed with in-memory value.
+        if (readStoredDuration() != _pendingDuration) {
+            try {
+                Application.Properties.setValue("napDuration", _pendingDuration);
+            } catch (e instanceof Lang.Exception) {
+                // Storage full or corrupt -- proceed with in-memory value.
+            }
         }
         _detector.loadSettings();
         _detector.start();
         _started = true;
+        _confirm.reset();
         WatchUi.requestUpdate();
-    }
-
-    //! Reset alarm flag after dismiss.
-    function resetAlarmFlag() as Void {
-        _alarmTriggered = false;
     }
 
     //! Cancel the current nap and return to the start screen so the user
@@ -92,8 +105,32 @@ class PowerNapView extends WatchUi.View {
         _detector.stop();
         _alarm.stop();
         _started = false;
-        _alarmTriggered = false;
+        _confirm.reset();
+        // Pick up a duration changed from the phone during the aborted nap.
+        _pendingDuration = readStoredDuration();
         WatchUi.requestUpdate();
+    }
+
+    //! Register a stop press in the given ConfirmPress context. Returns true
+    //! when it is the confirming second press.
+    function pressStop(context as Number) as Boolean {
+        var confirmed = _confirm.press(nowMs(), context);
+        WatchUi.requestUpdate();
+        return confirmed;
+    }
+
+    //! Start-screen tap: +1 = add 5 min, -1 = remove 5 min, 0 = start.
+    function tapActionAt(y as Number) as Number {
+        var plusMax = _tapPlusMaxY;
+        var minusMin = _tapMinusMinY;
+        if (plusMax < 0 || minusMin < 0) {
+            var h = System.getDeviceSettings().screenHeight;
+            plusMax = h * 35 / 100;
+            minusMin = h * 65 / 100;
+        }
+        if (y < plusMax) { return 1; }
+        if (y > minusMin) { return -1; }
+        return 0;
     }
 
     // -- Main draw dispatch ---------------------------------------------
@@ -107,473 +144,421 @@ class PowerNapView extends WatchUi.View {
             return;
         }
 
+        var invert = false;
         var state = _detector.getState();
-
-        // Alarm is started by SleepDetector.transitionToAlarm() from the
-        // timer callback, so it fires even when the display is off (AMOLED).
-        // No need to start it here -- just track the flag for view state.
-        if (state == SleepDetector.STATE_ALARM && !_alarmTriggered) {
-            _alarmTriggered = true;
+        if (state == SleepDetector.STATE_ALARM && (Time.now().value() % 2 == 0)) {
+            // 1 Hz flash (the detector refreshes the view every second).
+            var fill = Palette.isMono() ? Graphics.COLOR_WHITE : Graphics.COLOR_RED;
+            dc.setColor(fill, fill);
+            dc.fillRectangle(0, 0, dc.getWidth(), dc.getHeight());
+            invert = Palette.isMono();
+        }
+        if (state == SleepDetector.STATE_SUMMARY && _detector.hasSleptAtLeastOnce() && isRoundScreen()) {
+            // Only round screens get the ring (it follows the bezel); the
+            // completion % is also shown as text on every screen.
+            drawRing(dc, RingMath.clampPct(_detector.getPlannedCompletionPct()),
+                summaryAccent(RingMath.clampPct(_detector.getPlannedCompletionPct())));
         }
 
-        if (state == SleepDetector.STATE_CALIBRATING || state == SleepDetector.STATE_MONITORING) {
-            drawMonitoring(dc);
-        } else if (state == SleepDetector.STATE_SLEEPING) {
-            drawSleeping(dc);
-        } else if (state == SleepDetector.STATE_ALARM) {
-            drawAlarm(dc);
-        } else if (state == SleepDetector.STATE_SUMMARY) {
-            drawSummary(dc);
-        } else if (state == SleepDetector.STATE_TIMEOUT) {
-            drawTimeout(dc);
+        var layout = buildLayout(dc);
+        if (layout != null) {
+            (layout as ScreenLayout).draw(dc, invert);
         }
     }
 
+    //! Solved layout for the current nap state (null on the start screen).
+    private function buildLayout(dc as Graphics.Dc) as ScreenLayout? {
+        if (!_started) {
+            return null;
+        }
+        var state = _detector.getState();
+        var layout;
+        if (state == SleepDetector.STATE_CALIBRATING || state == SleepDetector.STATE_MONITORING) {
+            layout = monitoringLayout(dc);
+        } else if (state == SleepDetector.STATE_SLEEPING) {
+            layout = sleepingLayout(dc);
+        } else if (state == SleepDetector.STATE_ALARM) {
+            layout = alarmLayout(dc);
+        } else {
+            layout = _detector.hasSleptAtLeastOnce() ? summaryLayout(dc) : noSleepLayout(dc);
+        }
+        layout.solve(dc);
+        return layout;
+    }
+
     // -- Screen 0: Start / Duration Picker -----------------------------
+
+    //! Start-screen geometry: the block is centred vertically. Also records
+    //! the tap zones so they always match what is drawn: everything above
+    //! the number adds 5 min, everything below the "min" label removes 5 min,
+    //! the number and the label start the nap.
+    //! Returns [titleY, upArrowY, numberY, minLabelY, downArrowY, hintY].
+    private function measureStartScreen(dc as Graphics.Dc) as Array<Number> {
+        var w  = dc.getWidth();
+        var h  = dc.getHeight();
+        // With a subscreen (Instinct) the title goes into the lens instead.
+        var titleH = hasSubscreen() ? 0 : dc.getFontHeight(Graphics.FONT_SMALL);
+        var numH   = dc.getFontHeight(Graphics.FONT_NUMBER_MEDIUM);
+        var minH   = dc.getFontHeight(Graphics.FONT_SMALL);
+        var hintH  = dc.getFontHeight(Graphics.FONT_XTINY);
+        var arrowH = w * 6 / 100;
+        var gap    = h * 3 / 100;
+
+        var titleGap = (titleH > 0) ? gap : 0;
+        var blockH = titleH + titleGap + arrowH + gap + numH + minH + gap + arrowH + gap + hintH;
+        var titleY = (h - blockH) / 2;
+        var upY    = titleY + titleH + titleGap;
+        var numY   = upY + arrowH + gap;
+        var minY   = numY + numH;
+        var downY  = minY + minH + gap;
+        var hintY  = downY + arrowH + gap;
+        _tapPlusMaxY = numY;
+        _tapMinusMinY = minY + minH;
+        return [titleY, upY, numY, minY, downY, hintY] as Array<Number>;
+    }
 
     private function drawStartScreen(dc as Graphics.Dc) as Void {
         var w  = dc.getWidth();
         var h  = dc.getHeight();
         var cx = w / 2;
-
-        var titleH = dc.getFontHeight(Graphics.FONT_SMALL);
-        var numH   = dc.getFontHeight(Graphics.FONT_NUMBER_MEDIUM);
-        var minH   = dc.getFontHeight(Graphics.FONT_SMALL);
-        var hintH  = dc.getFontHeight(Graphics.FONT_XTINY);
         var arrowH = w * 6 / 100;  // arrow triangle height in px
-        var gap    = h * 3 / 100;  // vertical gap between elements
+        var pos = measureStartScreen(dc);
+        var y = pos[0];
 
-        // Calculate total block height and centre it vertically
-        var blockH = titleH + gap + arrowH + gap + numH + minH + gap + arrowH + gap + hintH;
-        var y = (h - blockH) / 2;
+        dc.setColor(Palette.fg(Graphics.COLOR_BLUE, false), Graphics.COLOR_TRANSPARENT);
+        var sub = subscreenBox();
+        if (sub != null) {
+            var box = sub as Array<Number>;
+            var fh = dc.getFontHeight(Graphics.FONT_XTINY);
+            dc.drawText(box[0] + box[2] / 2, box[1] + (box[3] - fh) / 2, Graphics.FONT_XTINY, "NAP",
+                Graphics.TEXT_JUSTIFY_CENTER);
+        } else {
+            dc.drawText(cx, y, Graphics.FONT_SMALL, "POWER NAP", Graphics.TEXT_JUSTIFY_CENTER);
+        }
 
-        // -- Title --
-        dc.setColor(Graphics.COLOR_BLUE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_SMALL, "POWER NAP",
-            Graphics.TEXT_JUSTIFY_CENTER);
-        y += titleH + gap;
-
-        // -- Up arrow --
-        dc.setColor(Graphics.COLOR_GREEN, Graphics.COLOR_TRANSPARENT);
+        y = pos[1];
+        dc.setColor(Palette.fg(Graphics.COLOR_GREEN, false), Graphics.COLOR_TRANSPARENT);
         for (var i = 0; i <= arrowH; i++) {
             dc.drawLine(cx - i, y + (arrowH - i), cx + i, y + (arrowH - i));
         }
-        y += arrowH + gap;
 
-        // -- Duration number --
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_NUMBER_MEDIUM, _pendingDuration.toString(),
+        dc.drawText(cx, pos[2], Graphics.FONT_NUMBER_MEDIUM, _pendingDuration.toString(),
             Graphics.TEXT_JUSTIFY_CENTER);
-        y += numH;
 
-        // -- "min" label (tight below number) --
-        dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_SMALL, "min",
-            Graphics.TEXT_JUSTIFY_CENTER);
-        y += minH + gap;
+        dc.setColor(Palette.fg(Graphics.COLOR_LT_GRAY, false), Graphics.COLOR_TRANSPARENT);
+        dc.drawText(cx, pos[3], Graphics.FONT_SMALL, "min", Graphics.TEXT_JUSTIFY_CENTER);
 
-        // -- Down arrow --
-        dc.setColor(Graphics.COLOR_GREEN, Graphics.COLOR_TRANSPARENT);
+        y = pos[4];
+        dc.setColor(Palette.fg(Graphics.COLOR_GREEN, false), Graphics.COLOR_TRANSPARENT);
         for (var i = 0; i <= arrowH; i++) {
             dc.drawLine(cx - i, y + i, cx + i, y + i);
         }
-        y += arrowH + gap;
 
-        // -- START hint --
-        dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_XTINY, "START to begin",
-            Graphics.TEXT_JUSTIFY_CENTER);
+        dc.setColor(Palette.fg(Graphics.COLOR_LT_GRAY, false), Graphics.COLOR_TRANSPARENT);
+        dc.drawText(cx, pos[5], Graphics.FONT_XTINY, "START to begin", Graphics.TEXT_JUSTIFY_CENTER);
 
-        // -- Debug label (bottom edge, only in debug builds) --
         if (_debugLabel.length() > 0) {
             dc.drawText(cx, h - dc.getFontHeight(Graphics.FONT_XTINY) - 2,
                 Graphics.FONT_XTINY, _debugLabel, Graphics.TEXT_JUSTIFY_CENTER);
         }
     }
 
-    // -- Screen 1: Calibrating / Monitoring ----------------------------
+    // -- Screen 1: Calibrating / Monitoring / Awake ---------------------
 
-    private function drawMonitoring(dc as Graphics.Dc) as Void {
-        var w  = dc.getWidth();
-        var h  = dc.getHeight();
-        var cx = w / 2;
+    private function monitoringLayout(dc as Graphics.Dc) as ScreenLayout {
+        var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
+        var calibrating = (_detector.getState() == SleepDetector.STATE_CALIBRATING);
+        var awake = _detector.hasSleptAtLeastOnce();   // after a wake episode
 
-        // All gaps and widths proportional to screen size
-        var gap    = (h / 40).toNumber(); if (gap < 4) { gap = 4; }
-        var gapS   = (gap / 2).toNumber(); if (gapS < 2) { gapS = 2; }
-        var divW   = (w * 14) / 100;
-        var fMed   = dc.getFontHeight(Graphics.FONT_MEDIUM);
-        var fSmall = dc.getFontHeight(Graphics.FONT_SMALL);
-        var fTiny  = dc.getFontHeight(Graphics.FONT_TINY);
-        var fXtiny = dc.getFontHeight(Graphics.FONT_XTINY);
+        L.addText(["POWER NAP"], fontsTitle(), Graphics.COLOR_BLUE, 60);
+        L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
+        L.addText(["HR " + hrString(_detector.getCurrentHR())], fontsBody(), Graphics.COLOR_RED, 70);
 
-        // Total content block height (title + divider + HR + status + nap + state)
-        var blockH = fMed + gap + 1 + gapS + fSmall + gap + fSmall + gap + fTiny + gap + fTiny;
-        // Centre block in safe zone (below 18%, above footer)
-        var footerY = h - fXtiny - gap;
-        var safeTop = (h * 18) / 100;
-        var yPos = safeTop;
-        var avail = footerY - gap - safeTop;
-        if (blockH < avail) { yPos = safeTop + (avail - blockH) / 2; }
+        var status = calibrating ? "Calibrating..." : (awake ? "Awake" : "Monitoring");
+        L.addText([status], fontsBody(), Graphics.COLOR_WHITE, ScreenLayout.KEEP);
 
-        dc.setColor(Graphics.COLOR_BLUE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, yPos, Graphics.FONT_MEDIUM, "POWER NAP", Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fMed + gap;
-
-        dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawLine(cx - divW, yPos, cx + divW, yPos);
-        yPos += 1 + gapS;
-
-        dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, yPos, Graphics.FONT_SMALL,
-            "HR: " + _detector.getCurrentHR() + " BPM", Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fSmall + gap;
-
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        var statusText = (_detector.getState() == SleepDetector.STATE_CALIBRATING)
-            ? "Calibrating..." : "Monitoring";
-        dc.drawText(cx, yPos, Graphics.FONT_SMALL, "Status: " + statusText,
-            Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fSmall + gap;
-
-        dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, yPos, Graphics.FONT_TINY,
-            "Nap: " + _detector.getNapDurationMin() + " min", Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fTiny + gap;
-
-        if (_detector.getState() == SleepDetector.STATE_MONITORING) {
-            var immSec = _detector.getImmobileDuration();
-            var reqSec = _detector.getImmobilityRequired();
-            if (immSec > 0) {
-                var pct = (immSec * 100) / reqSec;
-                if (pct > 100) { pct = 100; }
-                dc.setColor(Graphics.COLOR_YELLOW, Graphics.COLOR_TRANSPARENT);
-                dc.drawText(cx, yPos, Graphics.FONT_TINY,
-                    "Stillness: " + pct + "%", Graphics.TEXT_JUSTIFY_CENTER);
-            } else {
-                dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-                dc.drawText(cx, yPos, Graphics.FONT_TINY,
-                    "Waiting for sleep...", Graphics.TEXT_JUSTIFY_CENTER);
-            }
+        if (awake) {
+            // The alarm time is fixed; the countdown keeps running while awake.
+            L.addText(["Alarm in " + formatCountdown(_detector.getRemainingSeconds())],
+                fontsDetail(), Graphics.COLOR_YELLOW, 95);
+        } else if (calibrating) {
+            L.addText(["Building baseline...", "Baseline..."], fontsDetail(), Graphics.COLOR_LT_GRAY, 95);
+        } else if (_detector.getStillMinutes() > 0) {
+            L.addText(["Stillness " + _detector.getOnsetProgressPct() + "%"],
+                fontsDetail(), Graphics.COLOR_YELLOW, 95);
         } else {
-            dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, yPos, Graphics.FONT_TINY,
-                "Building baseline...", Graphics.TEXT_JUSTIFY_CENTER);
+            L.addText(["Waiting for sleep...", "Waiting..."], fontsDetail(), Graphics.COLOR_LT_GRAY, 95);
         }
 
-        dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, footerY, Graphics.FONT_XTINY, "BACK to cancel",
-            Graphics.TEXT_JUSTIFY_CENTER);
+        if (!awake) {
+            // The guaranteed latest alarm time, rounded UP to the minute so
+            // the alarm is never later than the time shown.
+            // Ranked above the stillness line: on the smallest screens the
+            // alarm promise is the line that must survive.
+            var byStr = formatMoment(new Time.Moment(_detector.getDeadlineTime().value() + 59));
+            L.addText(["Alarm by " + byStr, "By " + byStr], fontsDetail(), Graphics.COLOR_LT_GRAY, 96);
+        }
+        addInactiveWarning(L);
+        L.addText(["Nap " + _detector.getNapDurationMin() + " min"], fontsDetail(), Graphics.COLOR_LT_GRAY, 30);
+        L.setFooter(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        return L;
     }
 
     // -- Screen 2: Sleep Detected / Countdown --------------------------
 
-    private function drawSleeping(dc as Graphics.Dc) as Void {
-        var w  = dc.getWidth();
-        var h  = dc.getHeight();
-        var cx = w / 2;
+    private function sleepingLayout(dc as Graphics.Dc) as ScreenLayout {
+        var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
+        var smartWake = _detector.isSmartWakeActive();
 
-        var gap    = (h / 40).toNumber(); if (gap < 4) { gap = 4; }
-        var gapS   = (gap / 2).toNumber(); if (gapS < 2) { gapS = 2; }
-        var divW   = (w * 14) / 100;
-        var fMed    = dc.getFontHeight(Graphics.FONT_MEDIUM);
-        var fNumMed = dc.getFontHeight(Graphics.FONT_NUMBER_MEDIUM);
-        var fSmall  = dc.getFontHeight(Graphics.FONT_SMALL);
-        var fTiny   = dc.getFontHeight(Graphics.FONT_TINY);
-        var fXtiny  = dc.getFontHeight(Graphics.FONT_XTINY);
-
-        // Safe zone: 20% from top keeps title in the wider part of a round display.
-        var footerY = h - fXtiny - gap;
-        var safeTop = (h * 20) / 100;
-        var avail   = footerY - gap - safeTop;
-
-        // Try full block (with optional HR line); fall back to core block without it.
-        // Trailing gap is included so the last element never kisses the footer.
-        var fullBlockH = fMed + gap + 1 + gapS + fSmall + gap + fSmall + gapS + fNumMed + gap + fTiny + gap;
-        var coreH      = fullBlockH - fTiny - gap;
-        var showHR     = (fullBlockH <= avail);
-        var blockH     = showHR ? fullBlockH : coreH;
-        var yPos = safeTop;
-        if (blockH < avail) { yPos = safeTop + (avail - blockH) / 2; }
-
-        dc.setColor(Graphics.COLOR_PURPLE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, yPos, Graphics.FONT_MEDIUM, "NAP DETECTED", Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fMed + gap;
-
-        dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawLine(cx - divW, yPos, cx + divW, yPos);
-        yPos += 1 + gapS;
-
-        dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
+        L.addText(["NAP DETECTED", "ASLEEP"], fontsTitle(), Graphics.COLOR_PURPLE, 60);
+        L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
         var sleepStart = _detector.getSleepStartTime();
         if (sleepStart != null) {
-            var info = Gregorian.info(sleepStart as Time.Moment, Time.FORMAT_SHORT);
-            dc.drawText(cx, yPos, Graphics.FONT_SMALL,
-                "Fell asleep at " + formatTime(info.hour, info.min),
-                Graphics.TEXT_JUSTIFY_CENTER);
+            // First onset of this nap (not reset by a wake episode).
+            var t = formatMoment(sleepStart as Time.Moment);
+            L.addText(["Nap from " + t, "From " + t], fontsBody(), Graphics.COLOR_LT_GRAY, 50);
         }
-        yPos += fSmall + gap;
-
-        var remaining = _detector.getRemainingSeconds();
-        var smartWakeActive = (remaining <= 300 && remaining > 0
-            && _detector.getNapDurationMin() >= 30);
-
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, yPos, Graphics.FONT_SMALL,
-            smartWakeActive ? "Smart Wake" : "Wake in:",
-            Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fSmall + gapS;
-
-        dc.setColor(smartWakeActive ? Graphics.COLOR_YELLOW : Graphics.COLOR_GREEN,
-            Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, yPos, Graphics.FONT_NUMBER_MEDIUM,
-            formatCountdown(remaining), Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fNumMed + gap;
-
-        if (showHR) {
-            dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, yPos, Graphics.FONT_TINY,
-                "HR: " + _detector.getCurrentHR() + " BPM", Graphics.TEXT_JUSTIFY_CENTER);
-        }
-
-        dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, footerY, Graphics.FONT_XTINY, "BACK to cancel",
-            Graphics.TEXT_JUSTIFY_CENTER);
+        var label = L.addText([smartWake ? "Smart Wake" : "Wake in"], fontsBody(), Graphics.COLOR_WHITE, 80);
+        label.gapAfter = 2;
+        L.addText([formatCountdown(_detector.getRemainingSeconds())],
+            [Graphics.FONT_NUMBER_MEDIUM, Graphics.FONT_NUMBER_MILD, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL]
+                as Array<Graphics.FontDefinition>,
+            smartWake ? Graphics.COLOR_YELLOW : Graphics.COLOR_GREEN, ScreenLayout.KEEP);
+        addInactiveWarning(L);
+        L.addText(["HR " + hrString(_detector.getCurrentHR())], fontsDetail(), Graphics.COLOR_RED, 40);
+        L.setFooter(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        return L;
     }
 
     // -- Screen 3: Alarm / Wake Up -------------------------------------
 
-    private function drawAlarm(dc as Graphics.Dc) as Void {
-        var w  = dc.getWidth();
-        var h  = dc.getHeight();
-        var cx = w / 2;
+    private function alarmLayout(dc as Graphics.Dc) as ScreenLayout {
+        var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
+        var reason = _detector.getAlarmReason();
+        var deadline = (reason == SleepDetector.ALARM_DEADLINE);
 
-        var gap    = (h / 40).toNumber(); if (gap < 4) { gap = 4; }
-        var gapS   = (gap / 2).toNumber(); if (gapS < 2) { gapS = 2; }
-        var divW   = (w * 14) / 100;
-        var fLarge = dc.getFontHeight(Graphics.FONT_LARGE);
-        var fSmall = dc.getFontHeight(Graphics.FONT_SMALL);
-
-        // Flashing red background on even seconds
-        var now = Time.now().value();
-        if (now % 2 == 0) {
-            dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_RED);
-            dc.fillRectangle(0, 0, w, h);
+        L.addText([deadline ? "TIME'S UP" : "WAKE UP!"],
+            [Graphics.FONT_LARGE, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL] as Array<Graphics.FontDefinition>,
+            Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+        L.addDivider(14, Graphics.COLOR_WHITE, 10);
+        if (deadline) {
+            L.addText(["No sleep detected", "No sleep"], fontsBody(), Graphics.COLOR_WHITE, 85);
+        } else if (reason == SleepDetector.ALARM_SMART_WAKE) {
+            L.addText(["Smart wake"], fontsBody(), Graphics.COLOR_WHITE, 85);
         }
 
-        // Block: title + divider + nap-duration + avg-HR + vibrating label
-        var blockH = fLarge + gap + 1 + gap + fSmall + gapS + fSmall + gap + fSmall;
-        // Footer raised to 85 % of height so it sits in the wider part of the ring.
-        // At y≈h the circular bezel narrows to ~100 px half-width which clips the text;
-        // at 85 % the half-width is ~150 px  - enough for "BACK to dismiss".
-        var footerY = (h * 85) / 100;
-        var safeTop = (h * 18) / 100;
-        var yPos = safeTop;
-        var avail = footerY - gap - safeTop;
-        if (blockH < avail) { yPos = safeTop + (avail - blockH) / 2; }
-
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, yPos, Graphics.FONT_LARGE, "WAKE UP!", Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fLarge + gap;
-
-        dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawLine(cx - divW, yPos, cx + divW, yPos);
-        yPos += 1 + gap;
-
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        var napMin = _detector.getActualNapDurationSec() / 60;
-        dc.drawText(cx, yPos, Graphics.FONT_SMALL,
-            "Nap: " + napMin + " min", Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fSmall + gapS;
-
-        dc.drawText(cx, yPos, Graphics.FONT_SMALL,
-            "Avg HR: " + _detector.getAvgSleepHR() + " BPM", Graphics.TEXT_JUSTIFY_CENTER);
-        yPos += fSmall + gap;
-
-        dc.setColor(Graphics.COLOR_YELLOW, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, yPos, Graphics.FONT_SMALL, "VIBRATING", Graphics.TEXT_JUSTIFY_CENTER);
-
-        dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, footerY, Graphics.FONT_XTINY, "BACK to dismiss",
-            Graphics.TEXT_JUSTIFY_CENTER);
+        if (deadline) {
+            L.addText(["Waited " + (sessionSeconds() / 60) + " min"], fontsBody(), Graphics.COLOR_WHITE, 80);
+        } else {
+            L.addText(["Slept " + formatCountdown(_detector.getActualNapDurationSec())],
+                fontsBody(), Graphics.COLOR_WHITE, 80);
+        }
+        var avgHR = _detector.getAvgSleepHR();
+        if (avgHR > 0) {
+            L.addText(["Avg HR " + avgHR + " BPM", "Avg " + avgHR], fontsBody(), Graphics.COLOR_WHITE, 30);
+        }
+        L.addText(["ALARM " + (_alarm.getCurrentPhase() + 1) + "/4"], fontsBody(), Graphics.COLOR_YELLOW, 40);
+        L.setFooter(stopHint(ConfirmPress.CONTEXT_ALARM), Graphics.COLOR_WHITE);
+        return L;
     }
 
-    // -- Screen 4: Summary (compact layout, guaranteed to fit any device) --
+    // -- Screen 4: Summary ---------------------------------------------
 
-    private function drawSummary(dc as Graphics.Dc) as Void {
-        var w  = dc.getWidth();
-        var h  = dc.getHeight();
-        var cx = w / 2;
-        var cy = h / 2;
-
-        // -- Completion metrics -----------------------------------------
-        var napSec = _detector.getActualNapDurationSec();
-
-        // Sleep efficiency = actual sleep time / planned nap duration.
-        // Using the planned duration (not wall-clock) as denominator ensures
-        // the percentage reflects "how much of your planned nap did you sleep",
-        // regardless of the 1-2 mechanical tick gaps at wake/re-sleep boundaries
-        // that would otherwise inflate the wall-clock and deflate the percentage.
-        // Example: 110 s actual sleep out of 120 s planned -> 91.6 % (correct),
-        // vs 110/140 s wall-clock -> 78 % (misleading due to gap ticks).
-        var sleepStart = _detector.getSleepStartTime();
-        var napEnd     = _detector.getNapEndTime();
-        var targetSec  = _detector.getNapDurationMin() * 60;
-        var pct = 0;
-        if (targetSec > 0) { pct = napSec * 100 / targetSec; }
-        if (pct > 100) { pct = 100; }
-
-        // -- 5-step quality scale ---------------------------------------
-        // 95–100 %  Perfect      bright green   uninterrupted full nap
-        //  80– 94 %  Excellent    green          minor interruption
-        //  65– 79 %  Good         yellow         moderate interruption
-        //  50– 64 %  Fair         orange         significant interruption
-        //   0– 49 %  Interrupted  red            heavily fragmented
-        var accentColor = 0x00FF55;       // bright green   - Perfect
-        var qualityLabel = "Perfect";
-        if (pct < 95) { accentColor = Graphics.COLOR_GREEN;  qualityLabel = "Excellent";   }
-        if (pct < 80) { accentColor = Graphics.COLOR_YELLOW; qualityLabel = "Good";        }
-        if (pct < 65) { accentColor = Graphics.COLOR_ORANGE; qualityLabel = "Fair";        }
-        if (pct < 50) { accentColor = Graphics.COLOR_RED;    qualityLabel = "Interrupted"; }
-
-        // -- Progress ring ----------------------------------------------
-        var ringR = (w / 2) - 6;
-        dc.setPenWidth(5);
-        dc.setColor(0x222222, Graphics.COLOR_TRANSPARENT);
-        dc.drawArc(cx, cy, ringR, Graphics.ARC_CLOCKWISE, 90, -270);
-        if (pct > 0) {
-            var endAngle = 90 - (pct * 360 / 100);
-            dc.setColor(accentColor, Graphics.COLOR_TRANSPARENT);
-            dc.drawArc(cx, cy, ringR, Graphics.ARC_CLOCKWISE, 90, endAngle);
+    private function summaryLayout(dc as Graphics.Dc) as ScreenLayout {
+        var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 18);
+        if (isRoundScreen()) {
+            // Text stays inside the progress ring: ring at r = w/2 - 6, pen 5.
+            L.setClipRadius(dc.getWidth() / 2 - 6 - 3 - 2);
+            L.setEdgeMargin(2);
         }
-        dc.setPenWidth(1);
 
-        // -- Fonts: deliberately smaller than other screens so content fits
-        //    FONT_NUMBER_MILD is roughly half the height of FONT_NUMBER_MEDIUM,
-        //    which is critical on devices where NUMBER_MEDIUM is 120–150 px tall.
-        var fSmall  = dc.getFontHeight(Graphics.FONT_SMALL);
-        var fNumMil = dc.getFontHeight(Graphics.FONT_NUMBER_MILD);
-        var fXtiny  = dc.getFontHeight(Graphics.FONT_XTINY);
+        var sleptSec   = _detector.getActualNapDurationSec();
+        var completion = RingMath.clampPct(_detector.getPlannedCompletionPct());
+        var efficiency = RingMath.clampPct(_detector.getSleepEfficiencyPct());
+        var wakes      = _detector.getWakeEpisodes();
+        var cancelled  = _detector.isCancelled();
+        var accent     = summaryAccent(completion);
 
-        var gap  = (h / 50).toNumber(); if (gap < 3) { gap = 3; }
-        var gapS = (gap / 2).toNumber(); if (gapS < 2) { gapS = 2; }
+        L.addText(cancelled ? ["NAP STOPPED", "STOPPED", "STOP"] : ["NAP COMPLETE", "COMPLETE", "DONE"],
+            fontsBody(), accent, ScreenLayout.KEEP);
+        L.addText([(sleptSec > 0) ? formatCountdown(sleptSec) : "--:--"],
+            [Graphics.FONT_NUMBER_MILD, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL] as Array<Graphics.FontDefinition>,
+            Graphics.COLOR_WHITE, ScreenLayout.KEEP);
 
-        // -- Layout ----------------------------------------------------
-        // Safe zone: 22 % from top to stay in the wide part of the ring.
-        // Footer pinned near the bottom inside the ring.
-        // Footer raised to 88 % so it sits in the wider part of the ring;
-        // near the very bottom the circular bezel narrows enough to clip text.
-        var footerY = (h * 88) / 100;
-        var safeTop = (h * 22) / 100;
-        var avail   = footerY - gap - safeTop;
+        // What actually happened, never a threshold on a ratio.
+        var quality;
+        if (cancelled) {
+            quality = ["Stopped early"];
+        } else if (wakes > 0) {
+            var w = wakes + ((wakes == 1) ? " wake" : " wakes");
+            quality = [w + ", " + efficiency + "% asleep", w];
+        } else if (_detector.getAlarmReason() == SleepDetector.ALARM_SMART_WAKE) {
+            quality = ["Smart wake"];
+        } else {
+            quality = ["Uninterrupted"];
+        }
+        L.addText([completion + "% of " + _detector.getNapDurationMin() + " min", completion + "%"],
+            [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, accent, 85);
+        L.addText(quality as Array<String>, [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, accent, 90);
+        L.addDivider(20, Graphics.COLOR_DK_GRAY, 20);
 
-        // Core block (always shown).  One trailing gap keeps the last
-        // element from kissing the footer.
-        // Elements: title / duration / sub-line / divider / avg HR / min HR
-        var coreH = fSmall  + gapS     // title
-                  + fNumMil + gapS     // duration
-                  + fXtiny  + gap      // "X% · Quality"
-                  + 1       + gap      // divider
-                  + fXtiny  + gapS     // "Avg HR  XX BPM"
-                  + fXtiny  + gap;     // "Min HR  XX BPM" + trailing gap
-
-        // Time range only if there is room left
-        var showTimeRange = (coreH + fXtiny + gap <= avail);
-        var blockH = showTimeRange ? (coreH + fXtiny + gap) : coreH;
-        var y = safeTop;
-        if (blockH < avail) { y = safeTop + (avail - blockH) / 2; }
-
-        // -- Title ------------------------------------------------------
-        dc.setColor(accentColor, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_SMALL, "NAP COMPLETE",
-            Graphics.TEXT_JUSTIFY_CENTER);
-        y += fSmall + gapS;
-
-        // -- Duration ---------------------------------------------------
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        var durationStr = (napSec > 0)
-            ? (napSec / 60).toString() + ":" + formatTwoDigits(napSec % 60)
-            : "--:--";
-        dc.drawText(cx, y, Graphics.FONT_NUMBER_MILD, durationStr,
-            Graphics.TEXT_JUSTIFY_CENTER);
-        y += fNumMil + gapS;
-
-        // -- Sub-line: completion % and quality -------------------------
-        dc.setColor(accentColor, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_XTINY,
-            pct.toString() + "%  \u2022  " + qualityLabel,
-            Graphics.TEXT_JUSTIFY_CENTER);
-        y += fXtiny + gap;
-
-        // -- Divider ----------------------------------------------------
-        var divW = (w * 22) / 100;
-        dc.setColor(0x444444, Graphics.COLOR_TRANSPARENT);
-        dc.drawLine(cx - divW, y, cx + divW, y);
-        y += 1 + gap;
-
-        // -- HR: two stacked lines -------------------------------------
         var avgHR = _detector.getAvgSleepHR();
         var minHR = _detector.getMinSleepHR();
-        var avgStr = (avgHR > 0) ? avgHR.toString() + " BPM" : "--";
-        var minStr = (minHR > 0) ? minHR.toString() + " BPM" : "--";
-
-        dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_XTINY,
-            "Avg HR  " + avgStr,
-            Graphics.TEXT_JUSTIFY_CENTER);
-        y += fXtiny + gapS;
-
-        dc.setColor(0x4488FF, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_XTINY,
-            "Min HR  " + minStr,
-            Graphics.TEXT_JUSTIFY_CENTER);
-        y += fXtiny + gap;
-
-        // -- Time range (optional, FONT_XTINY to stay narrow at bottom) -
-        // sleepStart and napEnd are already fetched above for the pct calculation.
-        if (showTimeRange) {
-            if (sleepStart != null && napEnd != null) {
-                var s = Gregorian.info(sleepStart as Time.Moment, Time.FORMAT_SHORT);
-                var e = Gregorian.info(napEnd     as Time.Moment, Time.FORMAT_SHORT);
-                dc.setColor(0x666666, Graphics.COLOR_TRANSPARENT);
-                dc.drawText(cx, y, Graphics.FONT_XTINY,
-                    formatTime(s.hour, s.min) + "  -  " + formatTime(e.hour, e.min),
-                    Graphics.TEXT_JUSTIFY_CENTER);
-            }
+        if (avgHR > 0) {
+            L.addText(["Avg " + avgHR + "  Min " + minHR + " BPM", "HR " + avgHR + "/" + minHR],
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_RED, 50);
         }
-
-        // -- Footer (pinned) --------------------------------------------
-        dc.setColor(0x555555, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, footerY, Graphics.FONT_XTINY, "BACK to exit",
-            Graphics.TEXT_JUSTIFY_CENTER);
+        var sleepStart = _detector.getSleepStartTime();
+        var napEnd = _detector.getNapEndTime();
+        if (sleepStart != null && napEnd != null) {
+            L.addText([formatMoment(sleepStart as Time.Moment) + " - " + formatMoment(napEnd as Time.Moment)],
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 40);
+        }
+        L.setFooter("BACK to exit", Graphics.COLOR_LT_GRAY);
+        return L;
     }
 
-    // -- Screen 5: Timeout ---------------------------------------------
-
-    private function drawTimeout(dc as Graphics.Dc) as Void {
-        var w  = dc.getWidth();
-        var h  = dc.getHeight();
-        var cx = w / 2;
-
-        var fSmall = dc.getFontHeight(Graphics.FONT_SMALL);
-        var fTiny  = dc.getFontHeight(Graphics.FONT_TINY);
-        var gap    = (h / 40).toNumber(); if (gap < 4) { gap = 4; }
-
-        // Two lines centred vertically
-        var blockH = fSmall + gap + fTiny;
-        var y = (h - blockH) / 2;
-
-        dc.setColor(Graphics.COLOR_YELLOW, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_SMALL, "No sleep detected.",
-            Graphics.TEXT_JUSTIFY_CENTER);
-        y += fSmall + gap;
-
-        dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_TINY, "Press BACK to exit.",
-            Graphics.TEXT_JUSTIFY_CENTER);
+    //! Summary when the nap ended without any detected sleep.
+    private function noSleepLayout(dc as Graphics.Dc) as ScreenLayout {
+        var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 18);
+        L.addText(["No sleep detected", "No sleep"], fontsBody(), Graphics.COLOR_YELLOW, ScreenLayout.KEEP);
+        L.addText(_detector.isCancelled() ? ["Stopped early", "Stopped"] : ["Timer alarm rang", "Timer alarm"],
+            fontsDetail(), Graphics.COLOR_WHITE, 90);
+        L.addText(["Waited " + (sessionSeconds() / 60) + " min"], fontsDetail(), Graphics.COLOR_LT_GRAY, 80);
+        var napEnd = _detector.getNapEndTime();
+        var endStr = (napEnd != null) ? formatMoment(napEnd as Time.Moment) : "--:--";
+        L.addText([formatMoment(_detector.getStartTime()) + " - " + endStr],
+            fontsDetail(), Graphics.COLOR_LT_GRAY, 50);
+        L.setFooter("BACK to exit", Graphics.COLOR_LT_GRAY);
+        return L;
     }
 
-    // -- Helpers -------------------------------------------------------
+    // -- Drawing helpers -----------------------------------------------
+
+    //! Progress ring: full track underneath, accent arc on top.
+    //! 100 % is drawn as a circle because drawArc with start == end (mod
+    //! 360) is undefined and renders nothing on real devices. On the 1-bit
+    //! Instinct the track is a thin line so the thick arc stays readable.
+    private function drawRing(dc as Graphics.Dc, pct as Number, color as Graphics.ColorType) as Void {
+        var cx = dc.getWidth() / 2;
+        var cy = dc.getHeight() / 2;
+        var r = (dc.getWidth() / 2) - 6;
+        var mono = Palette.isMono();
+        dc.setPenWidth(mono ? 1 : 5);
+        dc.setColor(Palette.fg(Graphics.COLOR_DK_GRAY, false), Graphics.COLOR_TRANSPARENT);
+        dc.drawCircle(cx, cy, r);
+        dc.setPenWidth(5);
+        dc.setColor(Palette.fg(color, false), Graphics.COLOR_TRANSPARENT);
+        if (RingMath.isFullRing(pct)) {
+            dc.drawCircle(cx, cy, r);
+        } else if (pct > 0) {
+            dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, 90, RingMath.endAngle(pct));
+        }
+        dc.setPenWidth(1);
+    }
+
+    //! Colour follows how much of the planned nap was completed.
+    private function summaryAccent(completion as Number) as Graphics.ColorType {
+        if (completion < 50) { return Graphics.COLOR_RED; }
+        if (completion < 65) { return Graphics.COLOR_ORANGE; }
+        if (completion < 80) { return Graphics.COLOR_YELLOW; }
+        if (completion < 95) { return Graphics.COLOR_GREEN; }
+        return 0x00FF55;
+    }
+
+    //! Shown for the rest of the nap once the app has left the foreground:
+    //! while inactive the watch blocks vibration, so the alarm cannot wake
+    //! the user unless the app stays open.
+    private function addInactiveWarning(L as ScreenLayout) as Void {
+        if (_detector.wasInactiveDuringNap()) {
+            L.addText(["Keep app open for alarm", "Keep app open"],
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_ORANGE, 97);
+        }
+    }
+
+    private function stopHint(context as Number) as String {
+        if (_confirm.isArmed(nowMs(), context)) {
+            return "Press again to stop";
+        }
+        return "BACK x2 to stop";
+    }
+
+    private function footerColor(context as Number) as Graphics.ColorType {
+        return _confirm.isArmed(nowMs(), context) ? Graphics.COLOR_RED : Graphics.COLOR_LT_GRAY;
+    }
+
+    private function isRoundScreen() as Boolean {
+        try {
+            return System.getDeviceSettings().screenShape == System.SCREEN_SHAPE_ROUND;
+        } catch (e instanceof Lang.Exception) {
+            return true;
+        }
+    }
+
+    private function hasSubscreen() as Boolean {
+        return subscreenBox() != null;
+    }
+
+    //! [x, y, width, height] of the subscreen (Instinct lens), or null.
+    private function subscreenBox() as Array<Number>? {
+        if (!(WatchUi has :getSubscreen)) {
+            return null;
+        }
+        try {
+            var sub = WatchUi.getSubscreen();
+            if (sub != null && sub.x != null && sub.y != null && sub.width != null && sub.height != null
+                && (sub.width as Number) > 0) {
+                return [sub.x as Number, sub.y as Number, sub.width as Number, sub.height as Number] as Array<Number>;
+            }
+        } catch (e instanceof Lang.Exception) {
+        }
+        return null;
+    }
+
+    private function fontsTitle() as Array<Graphics.FontDefinition> {
+        return [Graphics.FONT_MEDIUM, Graphics.FONT_SMALL, Graphics.FONT_TINY] as Array<Graphics.FontDefinition>;
+    }
+
+    private function fontsBody() as Array<Graphics.FontDefinition> {
+        return [Graphics.FONT_SMALL, Graphics.FONT_TINY, Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>;
+    }
+
+    private function fontsDetail() as Array<Graphics.FontDefinition> {
+        return [Graphics.FONT_TINY, Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>;
+    }
+
+    //! Seconds from start to the end of the nap (frozen once it ended).
+    private function sessionSeconds() as Number {
+        var napEnd = _detector.getNapEndTime();
+        var end = (napEnd != null) ? (napEnd as Time.Moment).value() : Time.now().value();
+        var d = end - _detector.getStartTime().value();
+        return (d < 0) ? 0 : d;
+    }
+
+    private function readStoredDuration() as Number {
+        var d = _pendingDuration;
+        try {
+            var saved = Application.Properties.getValue("napDuration");
+            if (saved != null && saved instanceof Number) {
+                d = saved as Number;
+            }
+        } catch (e instanceof Lang.Exception) {
+            // Storage corrupt -- keep the current value.
+        }
+        if (d < DURATION_MIN) { d = DURATION_MIN; }
+        if (d > DURATION_MAX) { d = DURATION_MAX; }
+        return d;
+    }
+
+    //! Millisecond clock for the two-press window (not rounded to seconds).
+    private function nowMs() as Number {
+        return System.getTimer();
+    }
+
+    private function hrString(hr as Number) as String {
+        return (hr > 0) ? (hr.toString() + " BPM") : "--";
+    }
 
     private function formatCountdown(totalSeconds as Number) as String {
         if (totalSeconds < 0) { totalSeconds = 0; }
@@ -584,23 +569,47 @@ class PowerNapView extends WatchUi.View {
         return (n < 10) ? "0" + n.toString() : n.toString();
     }
 
-    private function formatTime(hour as Number, min as Number) as String {
-        return formatTwoDigits(hour) + ":" + formatTwoDigits(min);
+    private function formatMoment(moment as Time.Moment) as String {
+        var info = Gregorian.info(moment, Time.FORMAT_SHORT);
+        return formatTwoDigits(info.hour as Number) + ":" + formatTwoDigits(info.min as Number);
     }
 
-    // Debug builds: show "dev HH:MM" (app start time) on start screen.
-    // Release builds: return empty string, nothing is displayed.
-    // Increment this number each time you build for testing on the watch.
-    // It confirms you are running the latest build, not a cached version.
-    private const DEBUG_BUILD = "12:23";
-
+    // Debug builds: show "dev #<build>" on the start screen so you can tell
+    // a fresh sideload from a cached one. Bump the string when building for
+    // the watch. Release builds show nothing.
     (:debug)
     private function buildDebugLabel() as String {
-        return "dev #" + DEBUG_BUILD;
+        return "dev #0919b";
     }
 
     (:release)
     private function buildDebugLabel() as String {
         return "";
+    }
+
+    // -- Test hooks (debug builds only) -----------------------------------
+
+    //! Build and solve the layout for the current detector state against the
+    //! given Dc (tests pass a screen-sized buffered bitmap).
+    (:debug)
+    function testBuildLayout(dc as Graphics.Dc) as ScreenLayout? {
+        return buildLayout(dc);
+    }
+
+    (:debug)
+    function testSetStarted(started as Boolean) as Void {
+        _started = started;
+    }
+
+    (:debug)
+    function testGetPendingDuration() as Number {
+        return _pendingDuration;
+    }
+
+    //! Measure the start screen on dc and return [plusMaxY, minusMinY].
+    (:debug)
+    function testMeasureTapZones(dc as Graphics.Dc) as Array<Number> {
+        measureStartScreen(dc);
+        return [_tapPlusMaxY, _tapMinusMinY] as Array<Number>;
     }
 }

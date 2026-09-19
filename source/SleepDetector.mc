@@ -6,77 +6,162 @@ import Toybox.Application;
 import Toybox.Lang;
 import Toybox.WatchUi;
 
-//! Core sleep-detection engine. Reads HR and accelerometer data, computes a
-//! rolling baseline, and determines when the user has fallen asleep based on
-//! simultaneous HR drop and sustained immobility.
+//! Core sleep-detection engine.
+//!
+//! Timing model
+//! ------------
+//! Everything is wall-clock based (seconds since epoch via nowSec()). One
+//! 1-second tick timer drives the alarm-due check, the UI refresh and, every
+//! 60 ticks, the per-minute detection logic. Sensor callbacks (HR at 1 Hz,
+//! accelerometer in 1-second batches) feed per-minute accumulators; the
+//! minute logic only ever looks at aggregates, never at single samples.
+//!
+//! Wake-up guarantee
+//! -----------------
+//! The deadline is start + fallAsleepAllowance + napDuration, fixed when the
+//! nap starts and shown on screen as "Alarm by HH:MM". It is a hard upper
+//! bound on the alarm time:
+//! * Sleep detected  -> alarm at min(onset + napDuration, deadline).
+//!                      Falling asleep late shortens the nap instead of
+//!                      pushing the alarm past the promised time.
+//! * Never detected  -> alarm at the deadline (ALARM_DEADLINE).
+//! Both are checked every second against the wall clock, so the alarm is
+//! never more than one second late and never depends on detection working.
+//!
+//! Sleep onset (MONITORING -> SLEEPING)
+//! ------------------------------------
+//! A minute is "still" when its mean motion is below the motion threshold AND
+//! at most STILL_MAX_ACTIVE_SEC seconds of that minute had motion above the
+//! threshold (a 2-second roll-over does not break stillness).
+//! * still >= 2 min AND HR dropped >= threshold below the calibration baseline
+//! * OR still >= 5 min (HR is an accelerator, never a requirement)
+//! * Re-entry after a wake episode: still >= 2 min, no HR condition.
+//! The first onset is NOT back-dated: the alarm is never earlier than
+//! detection + napDuration. A re-entry segment is back-dated by the two still
+//! minutes that confirmed it (this only affects the time-asleep statistics).
+//!
+//! Wake episode (SLEEPING -> MONITORING, countdown keeps running)
+//! --------------------------------------------------------------
+//! * >= WAKE_ACTIVE_SEC seconds of motion in the minute, or minute mean
+//!   motion above WAKE_MOTION_MEAN, or
+//! * minute-mean HR >= WAKE_HR_RISE above the sleep-phase mean for two
+//!   consecutive minutes. The sleep-phase mean is rebuilt after every
+//!   re-entry, so a steady (but higher) HR cannot trigger a wake every few
+//!   minutes.
+//!
+//! Smart wake (effective nap >= 15 min, last min(5 min, 20 % of it))
+//! ------------------------------------------------------------------
+//! The effective nap is plannedEnd - onset (shorter than napDuration when the
+//! deadline cap applied). Inside the window a restless minute (>= 6 active
+//! seconds, i.e. more than a still minute tolerates, or mean motion >= 1.5 x
+//! threshold) or a >= LIGHT_HR_RISE BPM rise fires the alarm early.
+//!
+//! Settings
+//! --------
+//! Settings are read when a nap starts and frozen for that nap. A change made
+//! from the phone during a nap applies to the next one.
 class SleepDetector {
 
     // ── Application states ──────────────────────────────────────────────
     enum {
         STATE_CALIBRATING = 0,  // First 2 minutes: building HR baseline
-        STATE_MONITORING  = 1,  // Actively watching for sleep onset
+        STATE_MONITORING  = 1,  // Watching for sleep onset (or awake after a wake episode)
         STATE_SLEEPING    = 2,  // Sleep detected, countdown running
-        STATE_ALARM       = 3,  // Countdown expired, alarm firing
-        STATE_SUMMARY     = 4,  // Nap finished, showing summary
-        STATE_TIMEOUT     = 5   // 60 min with no sleep detected
+        STATE_ALARM       = 3,  // Alarm firing
+        STATE_SUMMARY     = 4   // Nap finished, showing summary
     }
 
-    // ── Public observable state ─────────────────────────────────────────
+    // ── Why the alarm fired ─────────────────────────────────────────────
+    enum {
+        ALARM_NONE         = 0,
+        ALARM_NAP_COMPLETE = 1,  // planned end reached: min(sleepStart + napDuration, deadline)
+        ALARM_SMART_WAKE   = 2,  // light-sleep signal inside the smart wake window
+        ALARM_DEADLINE     = 3   // sleep never detected: safety-net timer
+    }
+
+    // ── Tunables ────────────────────────────────────────────────────────
+    private const CALIBRATION_SEC          = 120;
+    private const ONSET_STILL_MIN_WITH_HR  = 2;     // still minutes needed when HR dropped
+    private const ONSET_STILL_MIN_NO_HR    = 5;     // still minutes needed without HR drop
+    private const REENTRY_STILL_MIN        = 2;     // still minutes to resume sleep after a wake
+    private const REENTRY_BACKDATE_MAX_SEC = 120;   // re-entry segment back-dated by its still minutes
+    private const STILL_MAX_ACTIVE_SEC     = 5;     // seconds of motion tolerated in a "still" minute
+    private const WAKE_ACTIVE_SEC          = 10;    // seconds of motion in a minute that mean "awake"
+    private const WAKE_MOTION_MEAN         = 100.0f;// minute-mean motion (millig) that means "awake"
+    private const WAKE_HR_RISE             = 10.0f; // BPM above sleep mean ...
+    private const WAKE_HR_MINUTES          = 2;     // ... for this many consecutive minutes
+    private const SMART_WAKE_MIN_NAP_MIN   = 15;
+    private const SMART_WAKE_MAX_WINDOW_SEC= 300;
+    private const SMART_WAKE_FRACTION      = 5;     // window = napDuration / 5 (20 %), capped above
+    private const LIGHT_ACTIVE_SEC         = 6;     // = STILL_MAX_ACTIVE_SEC + 1: "not a still minute"
+    private const LIGHT_HR_RISE            = 5.0f;
+    private const HR_WINDOW_MINUTES        = 3;
+
+    // ── State ───────────────────────────────────────────────────────────
     private var _state as Number = STATE_CALIBRATING;
+    private var _alarmReason as Number = ALARM_NONE;
+    private var _cancelled as Boolean = false;
+    private var _running as Boolean = false;
+    private var _wasInactive as Boolean = false;     // app left the foreground during this nap
 
-    // Current sensor readings (updated in callbacks)
+    // Live sensor reading
     private var _currentHR as Number = 0;
-    private var _motionMagnitude as Float = 0.0f;
 
-    // Calibration data
-    private var _calibrationSamples as Array<Number> = [] as Array<Number>;
-    private var _hrBaseline as Float = 0.0f;
+    // Per-minute accumulators (fed by sensor callbacks, consumed by onMinute)
+    private var _accHrSum as Number = 0;
+    private var _accHrCount as Number = 0;
+    private var _accMotionSum as Float = 0.0f;
+    private var _accMotionCount as Number = 0;
+    private var _accActiveSec as Number = 0;
 
-    // Rolling windows for detection
-    private var _hrWindow as Array<Number> = [] as Array<Number>;   // Last 3 min of HR
-    private var _motionWindow as Array<Float> = [] as Array<Float>; // Last 6 min of motion
+    // Last completed minute
+    private var _minuteHr as Number = 0;
+    private var _minuteMotionMean as Float = 0.0f;
+    private var _minuteActiveSec as Number = 0;
+    private var _minuteStill as Boolean = false;
+    private var _minutesCompleted as Number = 0;
 
-    // Immobility tracking
-    private var _immobilityStart as Time.Moment? = null;
-    private var _immobileDurationSec as Number = 0;
+    // Calibration
+    private var _calibHrSum as Number = 0;
+    private var _calibHrCount as Number = 0;
+    private var _hrBaseline as Float = 0.0f;         // 0 = unknown (HR path disabled)
 
-    // Sleep/nap timing
-    private var _sleepStartTime as Time.Moment? = null;
-    private var _napEndTime as Time.Moment? = null;
-    private var _remainingSeconds as Number = 0;
+    // Rolling detection state
+    private var _hrWindow as Array<Number> = [] as Array<Number>;  // per-minute HR means
+    private var _stillMinutes as Number = 0;                        // consecutive still minutes
+    private var _hrRiseMinutes as Number = 0;                       // consecutive minutes with HR rise
+    private var _sleepMinuteHrSum as Number = 0;                    // per-minute HR means during sleep
+    private var _sleepMinuteHrCount as Number = 0;
 
-    // Accumulated actual sleep seconds (pauses while user is awake between sleep phases)
-    private var _actualSleepSec as Number = 0;
+    // Timing (wall clock, seconds since epoch)
+    private var _startSec as Number = 0;
+    private var _sessionNapSec as Number = 0;        // nap duration frozen at start()
+    private var _deadlineSec as Number = 0;
+    private var _sleepStartSec as Number? = null;    // first sleep onset (detection time)
+    private var _napEndSec as Number = 0;            // min(sleepStart + napDuration, deadline)
+    private var _finishSec as Number? = null;        // alarm fired / cancelled
+    private var _segmentStartSec as Number? = null;  // current sleep segment start
+    private var _actualSleepSec as Number = 0;       // sum of closed sleep segments
+    private var _wakeEpisodes as Number = 0;
 
-    // Summary statistics
-    private var _sleepHrSamples as Array<Number> = [] as Array<Number>;
-    private var _avgSleepHR as Number = 0;
-    private var _minSleepHR as Number = 0;
+    // Summary statistics: running sum/count/min over every 1 Hz reading
+    // while SLEEPING (exact nap average, constant memory).
+    private var _sleepHrSum as Number = 0;
+    private var _sleepHrCount as Number = 0;
+    private var _sleepHrMin as Number = 0;
 
-    // Timers
-    private var _pollTimer as Timer.Timer? = null;
-    private var _calibTimer as Timer.Timer? = null;
-    private var _calibTickCount as Number = 0;
-    private var _startMoment as Time.Moment? = null;
-
-    // Tick interval in seconds — 60 s so the countdown decrements minute by minute.
-    private var _tickSec as Number = 60;
+    // Tick timer (1 s) and minute boundary
+    private var _tickTimer as Timer.Timer? = null;
+    private var _secInMinute as Number = 0;
+    private var _clockOffsetSec as Number = 0;       // only changed by debug helpers
+    private var _frozenBaseSec as Number = 0;        // > 0 only in test sessions
 
     // Settings
     private var _napDurationMin as Number = 30;
     private var _hrDropThreshold as Number = 5;
     private var _motionThreshold as Float = 50.0f;   // millig
-    private var _wakeMotionThreshold as Float = 200.0f;
+    private var _fallAsleepAllowanceMin as Number = 15;
     private var _alarm as AlarmManager? = null;
-    private var _immobilityRequiredSec as Number = 120; // 2 minutes
-
-    // Timeout: stop monitoring after 60 min with no sleep detected
-    private const MONITORING_TIMEOUT_SEC = 3600;
-
-    // Smart wake window: check for light-sleep signals in the last 5 min
-    private const SMART_WAKE_WINDOW_SEC = 300;
-
-
 
     // ────────────────────────────────────────────────────────────────────
     function initialize(alarm as AlarmManager?) {
@@ -88,21 +173,22 @@ class SleepDetector {
     //! Wrapped in try/catch because Properties can throw if storage is
     //! corrupt or the companion app sent an invalid value type.
     function loadSettings() as Void {
+        if (_running) {
+            // A nap is in progress: its settings are frozen. The new values
+            // are read again by the next start() (see PowerNapView.startNap).
+            return;
+        }
         try {
             var val;
 
             val = Application.Properties.getValue("napDuration");
             if (val != null && val instanceof Number) {
-                _napDurationMin = val as Number;
-                if (_napDurationMin < 5) { _napDurationMin = 5; }
-                if (_napDurationMin > 120) { _napDurationMin = 120; }
+                _napDurationMin = clampNumber(val as Number, 5, 120);
             }
 
             val = Application.Properties.getValue("hrDropThreshold");
             if (val != null && val instanceof Number) {
-                _hrDropThreshold = val as Number;
-                if (_hrDropThreshold < 3) { _hrDropThreshold = 3; }
-                if (_hrDropThreshold > 20) { _hrDropThreshold = 20; }
+                _hrDropThreshold = clampNumber(val as Number, 3, 20);
             }
 
             val = Application.Properties.getValue("motionSensitivity");
@@ -116,104 +202,115 @@ class SleepDetector {
                     _motionThreshold = 50.0f;
                 }
             }
+
+            val = Application.Properties.getValue("fallAsleepAllowance");
+            if (val != null && val instanceof Number) {
+                _fallAsleepAllowanceMin = clampNumber(val as Number, 5, 30);
+            }
         } catch (e instanceof Lang.Exception) {
             // Storage corrupt -- keep current/default values.
         }
     }
 
-    // ── Sensor initialization ───────────────────────────────────────────
+    // ── Session lifecycle ───────────────────────────────────────────────
 
-    //! Start sensors and begin the 10-second poll timer.
-    function start() as Void {
+    //! Reset all per-session state. Shared by start() and the test entry point.
+    private function beginSession() as Void {
+        var now = nowSec();
         _state = STATE_CALIBRATING;
-        _startMoment = Time.now();
-        _calibrationSamples = [] as Array<Number>;
-        _hrWindow = [] as Array<Number>;
-        _motionWindow = [] as Array<Float>;
-        _sleepHrSamples = [] as Array<Number>;
-        _actualSleepSec = 0;
-        _sleepStartTime = null;
-        _napEndTime = null;
-        _remainingSeconds = 0;
-        _immobilityStart = null;
-        _immobileDurationSec = 0;
-        _avgSleepHR = 0;
-        _minSleepHR = 0;
-        _tickSec = 60;
-        _calibTickCount = 0;
+        _alarmReason = ALARM_NONE;
+        _cancelled = false;
+        _running = true;
+        _wasInactive = false;
 
-        // Enable heart rate sensor events.
+        _currentHR = 0;
+        resetAccumulators();
+        _minuteHr = 0;
+        _minuteMotionMean = 0.0f;
+        _minuteActiveSec = 0;
+        _minuteStill = false;
+        _minutesCompleted = 0;
+
+        _calibHrSum = 0;
+        _calibHrCount = 0;
+        _hrBaseline = 0.0f;
+
+        _hrWindow = [] as Array<Number>;
+        _stillMinutes = 0;
+        _hrRiseMinutes = 0;
+        _sleepMinuteHrSum = 0;
+        _sleepMinuteHrCount = 0;
+
+        _startSec = now;
+        _sessionNapSec = _napDurationMin * 60;
+        _deadlineSec = now + _fallAsleepAllowanceMin * 60 + _sessionNapSec;
+        _sleepStartSec = null;
+        _napEndSec = 0;
+        _finishSec = null;
+        _segmentStartSec = null;
+        _actualSleepSec = 0;
+        _wakeEpisodes = 0;
+
+        _sleepHrSum = 0;
+        _sleepHrCount = 0;
+        _sleepHrMin = 0;
+        _secInMinute = 0;
+    }
+
+    //! Start sensors and the 1-second tick timer.
+    function start() as Void {
+        beginSession();
+
+        // Enable heart rate sensor events (1 Hz).
         // Can throw if Battery Saver is active or another activity owns the sensor.
         try {
             Sensor.setEnabledSensors([Sensor.SENSOR_HEARTRATE]);
             Sensor.enableSensorEvents(method(:onSensor));
         } catch (e instanceof Lang.Exception) {
-            // HR sensor unavailable -- app will run with _currentHR stuck at 0.
-            // Calibration will fall back to 70 BPM baseline after 2 min.
+            // HR unavailable: the stillness-only onset path and the deadline
+            // alarm keep the app fully functional without HR.
         }
 
-        // Register for accelerometer data
-        var options = {
-            :period => 1,
-            :accelerometer => {
-                :enabled => true,
-                :sampleRate => 25
-            }
-        };
-
+        // Accelerometer: 25 Hz samples delivered in 1-second batches.
         try {
-            Sensor.registerSensorDataListener(method(:onSensorData), options);
-        } catch (e instanceof Lang.Exception) {
-            // Some devices may not support all sensor options; fall back to
-            // accelerometer only.
-            var fallback = {
+            Sensor.registerSensorDataListener(method(:onSensorData), {
                 :period => 1,
                 :accelerometer => {
                     :enabled => true,
                     :sampleRate => 25
                 }
-            };
-            try {
-                Sensor.registerSensorDataListener(method(:onSensorData), fallback);
-            } catch (e2 instanceof Lang.Exception) {
-                // Unable to register sensor data listener; HR-only mode
-            }
-        }
-
-        // Calibration timer: 10-second ticks to collect 12 HR samples over 2 minutes.
-        // Stopped automatically once calibration completes.
-        // Timer creation can throw if the system timer limit is reached.
-        try {
-            _calibTimer = new Timer.Timer();
-            _calibTimer.start(method(:onCalibTick), 10000, true);
+            });
         } catch (e instanceof Lang.Exception) {
-            _calibTimer = null;
+            // No accelerometer data: stillness can never be established, so
+            // the nap ends with the deadline alarm. Still better than silence.
         }
 
-        // Production poll loop: 60-second ticks -> countdown goes minute by minute.
         try {
-            _pollTimer = new Timer.Timer();
-            _pollTimer.start(method(:onPollTick), 60000, true);
+            _tickTimer = new Timer.Timer();
+            _tickTimer.start(method(:onTick), 1000, true);
         } catch (e instanceof Lang.Exception) {
-            _pollTimer = null;
+            _tickTimer = null;
         }
-
     }
 
-    //! Stop all sensors and timers.
+    //! Stop all sensors and timers. Safe to call more than once.
     function stop() as Void {
-        if (_calibTimer != null) {
-            _calibTimer.stop();
-            _calibTimer = null;
-        }
-        if (_pollTimer != null) {
-            _pollTimer.stop();
-            _pollTimer = null;
+        _running = false;
+        if (_tickTimer != null) {
+            _tickTimer.stop();
+            _tickTimer = null;
         }
         try {
             Sensor.enableSensorEvents(null);
         } catch (e instanceof Lang.Exception) {
             // Sensor already released by system
+        }
+        try {
+            // Release the optical HR sensor requested in start(); without
+            // this it keeps running at app rate until the app exits.
+            Sensor.setEnabledSensors([] as Array<Sensor.SensorType>);
+        } catch (e instanceof Lang.Exception) {
+            // Already disabled
         }
         try {
             Sensor.unregisterSensorDataListener();
@@ -222,468 +319,541 @@ class SleepDetector {
         }
     }
 
+    // ── App lifecycle (task switcher devices) ───────────────────────────
+
+    //! The app left the foreground (AppBase.onInactive). While inactive the
+    //! system denies vibration/tones and limits sensors, so the view warns
+    //! the user to stay in the app for the rest of the nap.
+    function noteInactive() as Void {
+        if (isActiveState()) {
+            _wasInactive = true;
+        }
+    }
+
+    //! The app is back in the foreground (AppBase.onActive): check the alarm
+    //! immediately instead of waiting for the next tick.
+    function onResume() as Void {
+        if (_running && isActiveState()) {
+            checkAlarmDue();
+        }
+        WatchUi.requestUpdate();
+    }
+
+    function wasInactiveDuringNap() as Boolean {
+        return _wasInactive;
+    }
+
     // ── Sensor callbacks ────────────────────────────────────────────────
 
-    //! Callback for standard sensor info (HR, SpO2, etc.).
-    //! In the SLEEPING state every valid reading is added to _sleepHrSamples so
-    //! that AVG and MIN HR are computed from the full sensor stream (~1–5 s
-    //! resolution) rather than from one sample per 60-second poll tick.
+    //! Standard sensor info callback (1 Hz).
     function onSensor(sensorInfo as Sensor.Info) as Void {
         if (sensorInfo.heartRate != null) {
-            _currentHR = sensorInfo.heartRate as Number;
-
-            if (_state == STATE_SLEEPING && _currentHR > 0) {
-                _sleepHrSamples.add(_currentHR);
-                // Trim in chunks: keep the last 720 samples but only allocate
-                // a new array every 60 additions (every ~5 min at 5 s/sample).
-                // This avoids a GC allocation on every sample after the cap,
-                // which would cause ~720 allocations during a 120-min nap.
-                if (_sleepHrSamples.size() > 780) {
-                    _sleepHrSamples = _sleepHrSamples.slice(-720, null) as Array<Number>;
-                }
-            }
+            feedHR(sensorInfo.heartRate as Number);
         }
     }
 
-    //! Callback for high-frequency sensor data (accelerometer).
+    //! High-frequency sensor data callback (one 1-second accelerometer batch).
     function onSensorData(sensorData as Sensor.SensorData) as Void {
-        // Motion data is only needed during active nap phases.
-        // Skip the 25 sqrt() calls per second once the nap has ended.
-        if (_state == STATE_ALARM ||
-            _state == STATE_SUMMARY ||
-            _state == STATE_TIMEOUT) {
+        if (!isActiveState()) {
             return;
         }
-
-        // Process accelerometer data — compute average magnitude over the batch
-        if (sensorData.accelerometerData != null) {
-            var accel = sensorData.accelerometerData as Sensor.AccelerometerData;
-            var xArr = accel.x;
-            var yArr = accel.y;
-            var zArr = accel.z;
-            if (xArr != null && yArr != null && zArr != null) {
-                var count = xArr.size();
-                if (count > 0) {
-                    var sum = 0.0f;
-                    for (var i = 0; i < count; i++) {
-                        var xv = (xArr[i] != null) ? (xArr[i] as Number).toFloat() : 0.0f;
-                        var yv = (yArr[i] != null) ? (yArr[i] as Number).toFloat() : 0.0f;
-                        var zv = (zArr[i] != null) ? (zArr[i] as Number).toFloat() : 0.0f;
-                        // Remove gravity (~1000 millig) by using deviation from 1g
-                        var mag = Math.sqrt(xv * xv + yv * yv + zv * zv) as Float;
-                        var deviation = (mag - 1000.0f).abs();
-                        sum += deviation;
-                    }
-                    _motionMagnitude = sum / count.toFloat();
-                }
-            }
+        if (sensorData.accelerometerData == null) {
+            return;
         }
-
+        var accel = sensorData.accelerometerData as Sensor.AccelerometerData;
+        var xArr = accel.x;
+        var yArr = accel.y;
+        var zArr = accel.z;
+        if (xArr == null || yArr == null || zArr == null) {
+            return;
+        }
+        var count = xArr.size();
+        if (count <= 0) {
+            return;
+        }
+        // Mean deviation from 1 g over the batch (gravity removed).
+        var sum = 0.0f;
+        for (var i = 0; i < count; i++) {
+            var xv = (xArr[i] != null) ? (xArr[i] as Number).toFloat() : 0.0f;
+            var yv = (yArr[i] != null) ? (yArr[i] as Number).toFloat() : 0.0f;
+            var zv = (zArr[i] != null) ? (zArr[i] as Number).toFloat() : 0.0f;
+            var mag = Math.sqrt(xv * xv + yv * yv + zv * zv) as Float;
+            sum += (mag - 1000.0f).abs();
+        }
+        feedMotionSecond(sum / count.toFloat());
     }
 
-    // ── Main poll logic ─────────────────────────────────────────────────
-
-    //! Called every 60 s by the poll timer.
-    function onPollTick() as Void {
-        if (_state == STATE_SUMMARY || _state == STATE_TIMEOUT) {
+    //! One HR reading (1 Hz).
+    private function feedHR(hr as Number) as Void {
+        if (hr <= 0) {
             return;
         }
-
-        // Push current HR into the rolling window (keep last 3 minutes = 3 samples)
-        if (_currentHR > 0) {
-            _hrWindow.add(_currentHR);
-            if (_hrWindow.size() > 3) {
-                _hrWindow = _hrWindow.slice(-3, null) as Array<Number>;
+        _currentHR = hr;
+        if (!isActiveState()) {
+            return;
+        }
+        _accHrSum += hr;
+        _accHrCount += 1;
+        if (_state == STATE_CALIBRATING) {
+            _calibHrSum += hr;
+            _calibHrCount += 1;
+        } else if (_state == STATE_SLEEPING) {
+            _sleepHrSum += hr;
+            _sleepHrCount += 1;
+            if (_sleepHrMin == 0 || hr < _sleepHrMin) {
+                _sleepHrMin = hr;
             }
         }
+    }
 
-        // Push motion magnitude into the rolling window (keep last ~60s = 6 samples)
-        _motionWindow.add(_motionMagnitude);
-        if (_motionWindow.size() > 6) {
-            _motionWindow = _motionWindow.slice(-6, null) as Array<Float>;
+    //! One second of accelerometer data, summarised as mean |a| - 1 g (millig).
+    private function feedMotionSecond(magnitude as Float) as Void {
+        if (!isActiveState()) {
+            return;
         }
+        _accMotionSum += magnitude;
+        _accMotionCount += 1;
+        if (magnitude > _motionThreshold) {
+            _accActiveSec += 1;
+        }
+    }
 
+    private function resetAccumulators() as Void {
+        _accHrSum = 0;
+        _accHrCount = 0;
+        _accMotionSum = 0.0f;
+        _accMotionCount = 0;
+        _accActiveSec = 0;
+    }
+
+    // ── Tick (1 s) and minute logic ─────────────────────────────────────
+
+    //! Called every second by the tick timer.
+    function onTick() as Void {
+        if (!_running) {
+            return;
+        }
+        if (isActiveState()) {
+            checkAlarmDue();
+        }
+        if (isActiveState()) {
+            _secInMinute += 1;
+            if (_secInMinute >= 60) {
+                _secInMinute = 0;
+                onMinute();
+            }
+        }
+        WatchUi.requestUpdate();
+    }
+
+    //! Wall-clock alarm check. Runs every second so the alarm is never more
+    //! than one second late, and never depends on the detector.
+    private function checkAlarmDue() as Void {
+        var now = nowSec();
+        if (_sleepStartSec != null) {
+            if (now >= _napEndSec) {
+                transitionToAlarm(ALARM_NAP_COMPLETE);
+            }
+        } else if (now >= _deadlineSec) {
+            transitionToAlarm(ALARM_DEADLINE);
+        }
+    }
+
+    //! Consume the per-minute accumulators and run the detection logic.
+    private function onMinute() as Void {
+        _minuteHr = (_accHrCount > 0) ? (_accHrSum / _accHrCount) : 0;
+        if (_accMotionCount > 0) {
+            _minuteMotionMean = _accMotionSum / _accMotionCount.toFloat();
+            _minuteActiveSec = _accActiveSec;
+            _minuteStill = (_minuteMotionMean < _motionThreshold)
+                        && (_minuteActiveSec <= STILL_MAX_ACTIVE_SEC);
+        } else {
+            // No accelerometer data at all this minute: we cannot claim
+            // stillness. (The deadline alarm covers a dead accelerometer.)
+            _minuteMotionMean = 0.0f;
+            _minuteActiveSec = 0;
+            _minuteStill = false;
+        }
+        resetAccumulators();
+        _minutesCompleted += 1;
+
+        if (_minuteHr > 0) {
+            _hrWindow.add(_minuteHr);
+            if (_hrWindow.size() > HR_WINDOW_MINUTES) {
+                _hrWindow = _hrWindow.slice(-HR_WINDOW_MINUTES, null) as Array<Number>;
+            }
+        }
+        _stillMinutes = _minuteStill ? (_stillMinutes + 1) : 0;
+
+        if (_state == STATE_CALIBRATING) {
+            if (nowSec() - _startSec >= CALIBRATION_SEC) {
+                completeCalibration();
+            }
+        }
         if (_state == STATE_MONITORING) {
             handleMonitoring();
         } else if (_state == STATE_SLEEPING) {
             handleSleeping();
-        } else if (_state == STATE_CALIBRATING) {
-            // Pre-track motion immobility during calibration so the clock
-            // starts earlier. Only motion is checked (no HR baseline yet).
-            // When monitoring begins, handleMonitoring() validates both HR
-            // and motion before making any detection decision.
-            var motionLow;
-            if (_motionWindow.size() >= 2) {
-                var recentMotion = arrayMeanFloatArr(
-                    _motionWindow.slice(-2, null) as Array<Float>
-                );
-                motionLow = (recentMotion < _motionThreshold);
-            } else {
-                motionLow = (_motionMagnitude < _motionThreshold);
-            }
-            if (motionLow) {
-                if (_immobilityStart == null) {
-                    _immobilityStart = Time.now();
-                }
-            } else {
-                _immobilityStart = null;
-                _immobileDurationSec = 0;
-            }
-        } else if (_state == STATE_ALARM) {
-            // Alarm state is handled by AlarmManager; nothing to do here.
-        }
-
-        WatchUi.requestUpdate();
-    }
-
-    // ── Calibration phase (first 2 minutes, 10-second ticks) ──────────
-
-    //! Called every 10 s by _calibTimer. Collects 12 HR samples (= 2 minutes),
-    //! computes the baseline, then stops itself and hands control to _pollTimer.
-    function onCalibTick() as Void {
-        if (_currentHR > 0) {
-            _calibrationSamples.add(_currentHR);
-        }
-        _calibTickCount += 1;
-
-        // 12 ticks × 10 s = 120 s = 2 minutes.
-        // Transition regardless of whether HR data arrived — if the sensor never
-        // delivered a valid reading, fall back to 70 BPM so the app keeps running.
-        if (_calibTickCount >= 12) {
-            _hrBaseline = (_calibrationSamples.size() > 0)
-                ? arrayMeanFloat(_calibrationSamples)
-                : 70.0f;
-            _state = STATE_MONITORING;
-            if (_calibTimer != null) {
-                _calibTimer.stop();
-                _calibTimer = null;
-            }
-            WatchUi.requestUpdate();
         }
     }
 
-    // ── Monitoring phase: looking for sleep onset ──────────────────────
+    private function completeCalibration() as Void {
+        // Baseline = mean of every HR reading during calibration. Unknown (0)
+        // if the sensor never delivered anything: the HR onset path is then
+        // simply disabled and the stillness-only path carries the nap.
+        _hrBaseline = (_calibHrCount > 0)
+            ? (_calibHrSum.toFloat() / _calibHrCount.toFloat())
+            : 0.0f;
+        _state = STATE_MONITORING;
+    }
+
+    // ── Monitoring: looking for sleep onset ─────────────────────────────
 
     private function handleMonitoring() as Void {
-        // Timeout: if the user never fell asleep after 60 min, give up.
-        // Do NOT apply once sleep has been detected at least once —
-        // a 120-min nap with a spontaneous wake would otherwise be cut
-        // short when the elapsed time crosses 60 min during re-monitoring.
-        if (_sleepStartTime == null && _startMoment != null) {
-            var elapsed = Time.now().subtract(_startMoment as Time.Moment);
-            if (elapsed.value() > MONITORING_TIMEOUT_SEC) {
-                _state = STATE_TIMEOUT;
+        if (_stillMinutes >= requiredStillMinutes()) {
+            enterSleep();
+        }
+    }
+
+    //! Still minutes needed before declaring sleep in the current situation.
+    private function requiredStillMinutes() as Number {
+        if (_sleepStartSec != null) {
+            return REENTRY_STILL_MIN;
+        }
+        if (hrDropMet()) {
+            return ONSET_STILL_MIN_WITH_HR;
+        }
+        return ONSET_STILL_MIN_NO_HR;
+    }
+
+    //! HR (mean of the last minutes) has dropped >= threshold below baseline.
+    private function hrDropMet() as Boolean {
+        if (_hrBaseline <= 0.0f || _hrWindow.size() < 2) {
+            return false;
+        }
+        var drop = _hrBaseline - arrayMeanFloat(_hrWindow);
+        return drop >= _hrDropThreshold.toFloat();
+    }
+
+    //! MONITORING -> SLEEPING.
+    //! First onset: sleep starts now (no back-dating) and fixes the alarm at
+    //! min(now + napDuration, deadline).
+    //! Re-entry after a wake episode: opens a new sleep segment back-dated by
+    //! the still minutes that confirmed it, and restarts the sleep-phase HR
+    //! mean so the new segment is judged against its own HR.
+    private function enterSleep() as Void {
+        var now = nowSec();
+        if (_sleepStartSec == null) {
+            _sleepStartSec = now;
+            _napEndSec = now + _sessionNapSec;
+            if (_napEndSec > _deadlineSec) {
+                _napEndSec = _deadlineSec;
+            }
+            _segmentStartSec = now;
+        } else {
+            var backdate = _stillMinutes * 60;
+            if (backdate > REENTRY_BACKDATE_MAX_SEC) {
+                backdate = REENTRY_BACKDATE_MAX_SEC;
+            }
+            _segmentStartSec = now - backdate;
+            _sleepMinuteHrSum = 0;
+            _sleepMinuteHrCount = 0;
+        }
+        _hrRiseMinutes = 0;
+        _state = STATE_SLEEPING;
+    }
+
+    // ── Sleeping: wake episodes and smart wake ──────────────────────────
+
+    private function handleSleeping() as Void {
+        var hrRise = sleepHrRise();
+        if (hrRise >= WAKE_HR_RISE) {
+            _hrRiseMinutes += 1;
+        } else {
+            _hrRiseMinutes = 0;
+        }
+        var motionWake = (_minuteActiveSec >= WAKE_ACTIVE_SEC)
+                      || (_minuteMotionMean > WAKE_MOTION_MEAN);
+        var hrWake = (_hrRiseMinutes >= WAKE_HR_MINUTES);
+
+        if (isSmartWakeActive()) {
+            // Inside the window any minute that is not still (more active
+            // seconds than a still minute tolerates, or clearly raised mean
+            // motion), a slight HR rise, or of course a full wake, ends the
+            // nap at a natural moment.
+            var stir = (_minuteActiveSec >= LIGHT_ACTIVE_SEC)
+                    || (_minuteMotionMean >= _motionThreshold * 1.5f);
+            if (motionWake || hrWake || stir || hrRise >= LIGHT_HR_RISE) {
+                transitionToAlarm(ALARM_SMART_WAKE);
                 return;
             }
-        }
-
-        // Require at least 2 HR samples before making sleep-detection decisions.
-        // This avoids false positives in the first poll tick after calibration,
-        // when the rolling window may still contain only one reading.
-        // However, the countdown must still tick down even without HR data, so
-        // we handle that case separately before returning.
-        if (_hrWindow.size() < 2) {
-            if (_sleepStartTime != null) {
-                _remainingSeconds -= _tickSec;
-                if (_remainingSeconds < 0) { _remainingSeconds = 0; }
-                if (_remainingSeconds <= 0) {
-                    transitionToAlarm();
-                }
-            }
+        } else if (motionWake || hrWake) {
+            leaveSleep();
             return;
         }
 
-        // HR: smooth over the rolling window to filter single-sample sensor noise.
-        var hrAvg = arrayMeanFloat(_hrWindow);
-
-        // Condition 1: HR has dropped enough from baseline
-        var hrDrop = _hrBaseline - hrAvg;
-        var hrDropMet = (hrDrop >= _hrDropThreshold.toFloat());
-
-        // Condition 2: Motion is below threshold (near immobility).
-        // Use the average of the last 2 motion window entries rather than the
-        // instantaneous reading. A single brief movement at poll time would
-        // otherwise reset the entire immobility counter, making detection
-        // unreliable in practice (any micro-shift during a 60s poll resets
-        // 2+ minutes of accumulated stillness).
-        var motionMet;
-        if (_motionWindow.size() >= 2) {
-            var recentMotion = arrayMeanFloatArr(
-                _motionWindow.slice(-2, null) as Array<Float>
-            );
-            motionMet = (recentMotion < _motionThreshold);
-        } else {
-            motionMet = (_motionMagnitude < _motionThreshold);
-        }
-
-        // Track immobility duration
-        if (hrDropMet && motionMet) {
-            if (_immobilityStart == null) {
-                _immobilityStart = Time.now();
-            }
-            var immDuration = Time.now().subtract(_immobilityStart as Time.Moment);
-            _immobileDurationSec = immDuration.value().toNumber();
-        } else {
-            // Reset immobility counter when conditions break
-            _immobilityStart = null;
-            _immobileDurationSec = 0;
-        }
-
-        // Condition 3: All conditions sustained for required duration
-        if (_immobileDurationSec >= _immobilityRequiredSec) {
-            transitionToSleep();
-            return;
-        }
-
-        // ── Countdown continues during a spontaneous wake ───────────────
-        // If the user has already fallen asleep at least once (_sleepStartTime
-        // is set), the nap timer keeps running in the background even during
-        // brief awake periods.  This ensures the alarm fires at the correct
-        // wall-clock time regardless of short interruptions.
-        if (_sleepStartTime != null) {
-            _remainingSeconds -= _tickSec;
-            if (_remainingSeconds < 0) { _remainingSeconds = 0; }
-            if (_remainingSeconds <= 0) {
-                transitionToAlarm();
-            }
+        // Still asleep: fold this minute's HR into the sleep-phase mean,
+        // unless it is an elevated minute (a candidate wake). Folding those
+        // in would drag the mean up and dampen the second-minute check.
+        if (_minuteHr > 0 && hrRise < WAKE_HR_RISE) {
+            _sleepMinuteHrSum += _minuteHr;
+            _sleepMinuteHrCount += 1;
         }
     }
 
-    //! Transition from monitoring to the sleeping (countdown) state.
-    //! On the first call (initial sleep detection) the start time and countdown
-    //! are initialised.  On re-entry after a spontaneous wake they are preserved
-    //! so the countdown resumes from where it paused.
-    private function transitionToSleep() as Void {
-        _state = STATE_SLEEPING;
-        if (_sleepStartTime == null) {
-            // First sleep detection: initialise everything
-            _sleepStartTime = Time.now();
-            _remainingSeconds = _napDurationMin * 60;
-            _sleepHrSamples = [] as Array<Number>;
+    //! Minute-mean HR minus the sleep-phase mean so far (0 if unknown).
+    private function sleepHrRise() as Float {
+        if (_sleepMinuteHrCount < 2 || _minuteHr <= 0) {
+            return 0.0f;
         }
-        // Re-entry after a wake: _sleepStartTime, _remainingSeconds, and
-        // _sleepHrSamples are preserved — the countdown resumes from the
-        // paused position and HR samples continue accumulating.
+        var sleepMean = _sleepMinuteHrSum.toFloat() / _sleepMinuteHrCount.toFloat();
+        return _minuteHr.toFloat() - sleepMean;
     }
 
-    //! Transition to alarm state and start the alarm immediately from the
-    //! timer callback. This ensures the alarm fires even when the display
-    //! is off (onUpdate is not called with display off on AMOLED devices).
-    private function transitionToAlarm() as Void {
-        computeSleepStats();
+    //! SLEEPING -> MONITORING after a wake episode. The alarm time is
+    //! unchanged; the sleep segment closes at the START of the minute that
+    //! showed the wake, so that minute counts as awake.
+    private function leaveSleep() as Void {
+        closeSleepSegmentAt(nowSec() - 60);
+        _wakeEpisodes += 1;
+        _stillMinutes = 0;
+        _hrRiseMinutes = 0;
+        _state = STATE_MONITORING;
+    }
+
+    private function closeSleepSegment() as Void {
+        closeSleepSegmentAt(nowSec());
+    }
+
+    //! Close the open sleep segment at endSec (never before its start).
+    private function closeSleepSegmentAt(endSec as Number) as Void {
+        if (_segmentStartSec != null) {
+            var d = endSec - (_segmentStartSec as Number);
+            if (d > 0) {
+                _actualSleepSec += d;
+            }
+            _segmentStartSec = null;
+        }
+    }
+
+    //! Smart wake window length: 20 % of the effective nap (capped at 5 min),
+    //! none for naps under 15 min. Once asleep the effective nap is the real
+    //! countdown, which the deadline cap may have shortened.
+    function getSmartWakeWindowSec() as Number {
+        var napSec = (_sessionNapSec > 0) ? _sessionNapSec : (_napDurationMin * 60);
+        if (_sleepStartSec != null) {
+            napSec = _napEndSec - (_sleepStartSec as Number);
+        }
+        if (napSec < SMART_WAKE_MIN_NAP_MIN * 60) {
+            return 0;
+        }
+        var w = napSec / SMART_WAKE_FRACTION;
+        if (w > SMART_WAKE_MAX_WINDOW_SEC) {
+            w = SMART_WAKE_MAX_WINDOW_SEC;
+        }
+        return w;
+    }
+
+    //! True while asleep inside the smart wake window.
+    function isSmartWakeActive() as Boolean {
+        if (_state != STATE_SLEEPING || _sleepStartSec == null) {
+            return false;
+        }
+        var window = getSmartWakeWindowSec();
+        if (window <= 0) {
+            return false;
+        }
+        var remaining = _napEndSec - nowSec();
+        return remaining > 0 && remaining <= window;
+    }
+
+    // ── Alarm / finish ──────────────────────────────────────────────────
+
+    //! Fire the alarm from the tick timer so it works with the display off.
+    private function transitionToAlarm(reason as Number) as Void {
+        closeSleepSegment();
+        _alarmReason = reason;
+        _finishSec = nowSec();
         _state = STATE_ALARM;
         try {
             if (_alarm != null) {
                 (_alarm as AlarmManager).startAlarm();
             }
         } catch (e instanceof Lang.Exception) {
-            // Alarm start failed -- state is already ALARM so the WAKE UP
-            // screen will still display on the next onUpdate().
+            // Alarm start failed -- state is ALARM so the WAKE UP screen
+            // still displays on the next onUpdate().
         }
     }
 
-    // ── Sleeping phase: countdown active ───────────────────────────────
-
-    private function handleSleeping() as Void {
-        // HR samples are now collected in onSensor() at full sensor resolution
-        // (~1–5 s), not here at the coarse 60-second poll tick.
-
-        // Check for spontaneous wake-up before counting this tick as sleep time.
-        // On wake: go back to monitoring so the app keeps running.  The countdown
-        // continues running in handleMonitoring() so the alarm fires at the
-        // correct wall-clock time.  _actualSleepSec is NOT incremented during
-        // the awake period, but resumes accumulating as soon as the user falls
-        // back to sleep (next call to handleSleeping() with no wake detected).
-        if (detectSpontaneousWake()) {
-            _state = STATE_MONITORING;
-            _immobilityStart = null;
-            _immobileDurationSec = 0;
+    //! Alarm dismissed: move to SUMMARY and release sensors/timers.
+    //! From an active state this is a manual stop, so it routes to cancel().
+    function finishNap() as Void {
+        if (isActiveState()) {
+            cancel();
             return;
         }
-
-        // Smart wake window: in the last 5 minutes, fire the alarm early if
-        // light-sleep signals appear (gentle motion or slight HR rise).
-        // Only active for naps >= 30 min. For shorter naps the window covers
-        // too large a fraction of the total sleep (e.g. 50% of a 10-min nap)
-        // and could wake the user far earlier than intended.
-        if (_napDurationMin >= 30 &&
-            _remainingSeconds <= SMART_WAKE_WINDOW_SEC &&
-            _remainingSeconds > 0) {
-            if (detectLightSleep()) {
-                _actualSleepSec += _tickSec; // this tick counts as sleep
-                transitionToAlarm();
-                return;
-            }
+        closeSleepSegment();
+        if (_finishSec == null) {
+            _finishSec = nowSec();
         }
-
-        // User is still asleep — accumulate actual sleep time and tick countdown.
-        _actualSleepSec += _tickSec;
-        _remainingSeconds -= _tickSec;
-        if (_remainingSeconds < 0) { _remainingSeconds = 0; }
-
-        if (_remainingSeconds <= 0) {
-            transitionToAlarm();
-        }
-    }
-
-    //! Returns true if the user appears to have woken up on their own.
-    private function detectSpontaneousWake() as Boolean {
-        // ── Signal 1: Motion ────────────────────────────────────────────
-        // Require motion sustained across at least 2 consecutive poll ticks so
-        // that a single brief roll-over doesn't end the nap.
-        // In production (60 s ticks) that is 2 minutes; in debug (1 s ticks)
-        // it is 2 seconds — proportional to the tick rate either way.
-        if (_motionWindow.size() >= 2) {
-            var recentMotion = arrayMeanFloatArr(
-                _motionWindow.slice(-2, null) as Array<Float>
-            );
-            if (recentMotion > _wakeMotionThreshold) {
-                return true;
-            }
-        }
-
-        // ── Signal 2: HR spike ──────────────────────────────────────────
-        // Compare the LIVE current HR (updated every 1–5 s by onSensor) against
-        // the mean of the last 3 sleep-phase samples.  Using _currentHR here is
-        // critical: _hrWindow only gets one sample per 60-second poll tick, so
-        // using it would introduce up to a 60-second lag before a waking HR spike
-        // is detected — long enough for the user to fall back to sleep unnoticed.
-        // Threshold 10 BPM: low enough to catch gentle awakenings (HR barely
-        // rises), but high enough to ignore normal sleep-phase fluctuations (~3–5
-        // BPM noise).
-        if (_sleepHrSamples.size() >= 3 && _currentHR > 0) {
-            var recentSleepHR = arrayMeanFloat(
-                _sleepHrSamples.slice(-3, null) as Array<Number>
-            );
-            if (_currentHR.toFloat() - recentSleepHR > 10.0f) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    //! Returns true when gentle light-sleep signals appear inside the smart
-    //! wake window.  Uses softer thresholds than detectSpontaneousWake():
-    //!   Motion: mean of last 2 ticks > 1.5× motion threshold (stirring,
-    //!           not yet a full roll-over)
-    //!   HR:     current HR > recent sleep average + 5 BPM (vs 10 BPM for
-    //!           a confirmed wake)
-    private function detectLightSleep() as Boolean {
-        if (_motionWindow.size() >= 2) {
-            var recentMotion = arrayMeanFloatArr(
-                _motionWindow.slice(-2, null) as Array<Float>
-            );
-            if (recentMotion > _motionThreshold * 1.5f) {
-                return true;
-            }
-        }
-
-        // Baseline excludes _currentHR (which is always _sleepHrSamples[-1]).
-        // Comparing current against a mean that includes itself damps the
-        // threshold: a 8 BPM spike reads as only ~5.3 BPM difference.
-        // Using slice(-4, -1) gives a truly independent 3-sample baseline,
-        // so the 5 BPM threshold applies cleanly to the actual HR delta.
-        if (_sleepHrSamples.size() >= 4 && _currentHR > 0) {
-            var baseline = arrayMeanFloat(
-                _sleepHrSamples.slice(-4, -1) as Array<Number>
-            );
-            if (_currentHR.toFloat() - baseline > 5.0f) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    // ── Finish / Summary ───────────────────────────────────────────────
-
-    //! Snapshot end-time and HR stats. Safe to call multiple times —
-    //! subsequent calls simply refresh the values with any new samples.
-    private function computeSleepStats() as Void {
-        _napEndTime = Time.now();
-        if (_sleepHrSamples.size() > 0) {
-            _avgSleepHR = arrayMeanFloat(_sleepHrSamples).toNumber();
-            _minSleepHR = arrayMin(_sleepHrSamples);
-        }
-    }
-
-    //! Compute summary stats and move to the SUMMARY state.
-    function finishNap() as Void {
-        computeSleepStats();
         _state = STATE_SUMMARY;
+        stop();
     }
 
-    //! Manually cancel the nap from any active state.
+    //! Manually stop the nap from any state.
     function cancel() as Void {
-        if (_state == STATE_SLEEPING || _state == STATE_ALARM) {
+        if (_state == STATE_ALARM || _state == STATE_SUMMARY) {
             finishNap();
-        } else {
-            // Even when cancelled from MONITORING or CALIBRATING, snapshot stats
-            // if any sleep has occurred (_sleepStartTime is set).  This ensures
-            // _napEndTime is always non-null in the SUMMARY screen when the user
-            // did sleep at some point, preventing null-dereference in the view.
-            if (_sleepStartTime != null) {
-                computeSleepStats();
-            }
-            _state = STATE_SUMMARY;
+            return;
         }
+        _cancelled = true;
+        closeSleepSegment();
+        _finishSec = nowSec();
+        _state = STATE_SUMMARY;
+        stop();
     }
 
     // ── Getters for the view layer ─────────────────────────────────────
 
-    function getState() as Number {
-        return _state;
+    function getState() as Number { return _state; }
+    function getAlarmReason() as Number { return _alarmReason; }
+    function isCancelled() as Boolean { return _cancelled; }
+    function getCurrentHR() as Number { return _currentHR; }
+    //! Nap length of the running session in minutes (frozen at start so a
+    //! settings change from the phone cannot skew a nap in progress).
+    function getNapDurationMin() as Number {
+        return (_sessionNapSec > 0) ? (_sessionNapSec / 60) : _napDurationMin;
+    }
+    function getFallAsleepAllowanceMin() as Number { return _fallAsleepAllowanceMin; }
+    function getWakeEpisodes() as Number { return _wakeEpisodes; }
+    function getStillMinutes() as Number { return _stillMinutes; }
+    function getAvgSleepHR() as Number {
+        return (_sleepHrCount > 0) ? (_sleepHrSum / _sleepHrCount) : 0;
+    }
+    function getMinSleepHR() as Number { return _sleepHrMin; }
+    function hasSleptAtLeastOnce() as Boolean { return _sleepStartSec != null; }
+
+    //! True in CALIBRATING / MONITORING / SLEEPING.
+    function isActiveState() as Boolean {
+        return _state == STATE_CALIBRATING
+            || _state == STATE_MONITORING
+            || _state == STATE_SLEEPING;
     }
 
-    function getCurrentHR() as Number {
-        return _currentHR;
-    }
-
+    //! Seconds until the planned alarm (0 if sleep not yet detected or due).
     function getRemainingSeconds() as Number {
-        return _remainingSeconds;
+        if (_sleepStartSec == null) {
+            return 0;
+        }
+        var r = _napEndSec - nowSec();
+        return (r < 0) ? 0 : r;
+    }
+
+    //! Seconds until the deadline alarm (only meaningful before sleep onset).
+    function getSecondsUntilDeadline() as Number {
+        var r = _deadlineSec - nowSec();
+        return (r < 0) ? 0 : r;
+    }
+
+    function getStartTime() as Time.Moment {
+        return new Time.Moment(_startSec);
+    }
+
+    function getDeadlineTime() as Time.Moment {
+        return new Time.Moment(_deadlineSec);
     }
 
     function getSleepStartTime() as Time.Moment? {
-        return _sleepStartTime;
+        if (_sleepStartSec == null) {
+            return null;
+        }
+        return new Time.Moment(_sleepStartSec as Number);
     }
 
+    //! Planned alarm time (null before sleep onset).
+    function getPlannedEndTime() as Time.Moment? {
+        if (_sleepStartSec == null) {
+            return null;
+        }
+        return new Time.Moment(_napEndSec);
+    }
+
+    //! When the nap actually ended (alarm fired or cancelled); null while active.
     function getNapEndTime() as Time.Moment? {
-        return _napEndTime;
+        if (_finishSec == null) {
+            return null;
+        }
+        return new Time.Moment(_finishSec as Number);
     }
 
-    function getAvgSleepHR() as Number {
-        return _avgSleepHR;
-    }
-
-    function getMinSleepHR() as Number {
-        return _minSleepHR;
-    }
-
-    function getNapDurationMin() as Number {
-        return _napDurationMin;
-    }
-
-    function getImmobileDuration() as Number {
-        return _immobileDurationSec;
-    }
-
-    function getImmobilityRequired() as Number {
-        return _immobilityRequiredSec;
-    }
-
-    //! Returns the total seconds the user was actually asleep (excludes any
-    //! awake periods between sleep phases within the same nap session).
+    //! Total seconds actually asleep, including the open segment.
     function getActualNapDurationSec() as Number {
-        return _actualSleepSec;
+        var total = _actualSleepSec;
+        if (_segmentStartSec != null) {
+            var d = nowSec() - (_segmentStartSec as Number);
+            if (d > 0) {
+                total += d;
+            }
+        }
+        return total;
     }
 
-    function getTickSec() as Number {
-        return _tickSec;
+    //! Progress towards sleep onset, 0-100 (still minutes vs required).
+    function getOnsetProgressPct() as Number {
+        var required = requiredStillMinutes();
+        if (required <= 0) {
+            return 100;
+        }
+        var pct = _stillMinutes * 100 / required;
+        return (pct > 100) ? 100 : pct;
     }
 
-    // ── Utility: array math ────────────────────────────────────────────
+    //! How much of the configured nap elapsed between onset and the end, 0-100.
+    //! 100 when the whole nap fitted before the deadline; lower after a cancel,
+    //! a smart wake, or a late onset capped by the deadline.
+    function getPlannedCompletionPct() as Number {
+        if (_sleepStartSec == null) {
+            return 0;
+        }
+        var endSec = (_finishSec != null) ? (_finishSec as Number) : nowSec();
+        var planned = _sessionNapSec;
+        if (planned <= 0) {
+            return 0;
+        }
+        var pct = (endSec - (_sleepStartSec as Number)) * 100 / planned;
+        return clampNumber(pct, 0, 100);
+    }
 
-    //! Mean of an Array<Number>, returned as Float.
+    //! Share of the time between onset and the end that was spent asleep.
+    function getSleepEfficiencyPct() as Number {
+        if (_sleepStartSec == null) {
+            return 0;
+        }
+        var endSec = (_finishSec != null) ? (_finishSec as Number) : nowSec();
+        var span = endSec - (_sleepStartSec as Number);
+        if (span <= 0) {
+            return 0;
+        }
+        return clampNumber(getActualNapDurationSec() * 100 / span, 0, 100);
+    }
+
+    // ── Utilities ──────────────────────────────────────────────────────
+
+    //! Wall clock in seconds. Test sessions freeze the base so that only
+    //! the fake offset moves time (fully deterministic tests).
+    private function nowSec() as Number {
+        if (_frozenBaseSec > 0) {
+            return _frozenBaseSec + _clockOffsetSec;
+        }
+        return Time.now().value() + _clockOffsetSec;
+    }
+
+    private function clampNumber(v as Number, lo as Number, hi as Number) as Number {
+        if (v < lo) { return lo; }
+        if (v > hi) { return hi; }
+        return v;
+    }
+
     private function arrayMeanFloat(arr as Array<Number>) as Float {
         if (arr.size() == 0) { return 0.0f; }
         var sum = 0;
@@ -693,136 +863,152 @@ class SleepDetector {
         return sum.toFloat() / arr.size().toFloat();
     }
 
-    //! Mean of an Array<Float>.
-    private function arrayMeanFloatArr(arr as Array<Float>) as Float {
-        if (arr.size() == 0) { return 0.0f; }
-        var sum = 0.0f;
-        for (var i = 0; i < arr.size(); i++) {
-            sum += arr[i];
-        }
-        return sum / arr.size().toFloat();
-    }
+    // ── Test helpers (debug builds only) ───────────────────────────────
 
-    //! Minimum of an Array<Number>.
-    private function arrayMin(arr as Array<Number>) as Number {
-        if (arr.size() == 0) { return 0; }
-        var minVal = arr[0];
-        for (var i = 1; i < arr.size(); i++) {
-            if (arr[i] < minVal) {
-                minVal = arr[i];
-            }
-        }
-        return minVal;
-    }
-
-    // ── Test helpers ────────────────────────────────────────────────────
-
-    //! Expose HR baseline for test assertions.
+    //! Begin a session without sensors or timers. Tests drive time with
+    //! testRunSeconds()/testAdvanceClock().
+    //! Begin a deterministic test session: documented default settings
+    //! (30 min nap, 15 min allowance, 5 BPM, 50 mg), frozen clock, no
+    //! sensors or timers. Independent of the simulator's stored properties.
     (:debug)
-    function getHRBaseline() as Float {
-        return _hrBaseline;
+    function testStart() as Void {
+        _napDurationMin = 30;
+        _fallAsleepAllowanceMin = 15;
+        _hrDropThreshold = 5;
+        _motionThreshold = 50.0f;
+        testStartKeepSettings();
     }
 
-    //! Inject an HR value directly into the current reading and rolling window.
+    //! Like testStart() but keeps whatever loadSettings() last read.
     (:debug)
-    function testInjectHR(hr as Number) as Void {
-        _currentHR = hr;
-        _hrWindow.add(hr);
-        if (_hrWindow.size() > 3) {
-            _hrWindow = _hrWindow.slice(-3, null) as Array<Number>;
+    function testStartKeepSettings() as Void {
+        _frozenBaseSec = Time.now().value();
+        _clockOffsetSec = 0;
+        beginSession();
+    }
+
+    (:debug)
+    function testGetHrDropThreshold() as Number { return _hrDropThreshold; }
+
+    (:debug)
+    function testGetMotionThreshold() as Float { return _motionThreshold; }
+
+    //! Advance the fake clock without ticking.
+    (:debug)
+    function testAdvanceClock(seconds as Number) as Void {
+        _clockOffsetSec += seconds;
+    }
+
+    //! Simulate one second: an HR reading, one accelerometer batch with the
+    //! given mean magnitude (millig), then the 1-second tick.
+    (:debug)
+    function testFeedSecond(hr as Number, motion as Float) as Void {
+        if (hr > 0) {
+            feedHR(hr);
+        }
+        feedMotionSecond(motion);
+        _clockOffsetSec += 1;
+        onTick();
+    }
+
+    //! Simulate n seconds of constant HR and motion.
+    (:debug)
+    function testRunSeconds(n as Number, hr as Number, motion as Float) as Void {
+        for (var i = 0; i < n; i++) {
+            testFeedSecond(hr, motion);
         }
     }
 
-    //! Inject a motion magnitude value into the current reading and rolling window.
+    //! Simulate n minutes of constant HR and motion.
     (:debug)
-    function testInjectMotion(motion as Float) as Void {
-        _motionMagnitude = motion;
-        _motionWindow.add(motion);
-        if (_motionWindow.size() > 6) {
-            _motionWindow = _motionWindow.slice(-6, null) as Array<Float>;
-        }
+    function testRunMinutes(n as Number, hr as Number, motion as Float) as Void {
+        testRunSeconds(n * 60, hr, motion);
     }
 
-    //! Set the HR baseline and jump directly to MONITORING state.
+    //! Feed one accelerometer second without ticking (build a mixed minute).
+    (:debug)
+    function testFeedMotionSecond(motion as Float) as Void {
+        feedMotionSecond(motion);
+    }
+
+    //! Feed one HR reading without ticking.
+    (:debug)
+    function testFeedHR(hr as Number) as Void {
+        feedHR(hr);
+    }
+
+    //! Advance the clock one second and run the tick, without sensor input.
+    (:debug)
+    function testTick() as Void {
+        _clockOffsetSec += 1;
+        onTick();
+    }
+
+    //! Skip calibration: set the HR baseline and jump to MONITORING.
     (:debug)
     function testSetBaseline(baseline as Float) as Void {
         _hrBaseline = baseline;
-        _state = STATE_MONITORING;
-    }
-
-    //! Simulate that immobility has been sustained for the given number of seconds.
-    //! Sets _immobilityStart far enough in the past so handleMonitoring() sees it.
-    (:debug)
-    function testSetImmobilityStart(secondsAgo as Number) as Void {
-        _immobilityStart = Time.now().subtract(new Time.Duration(secondsAgo)) as Time.Moment;
-    }
-
-    //! Directly transition to SLEEPING state for countdown/alarm testing.
-    (:debug)
-    function testTransitionToSleep() as Void {
-        transitionToSleep();
-    }
-
-    //! Set _motionMagnitude without touching _motionWindow.
-    //! Use this when you want to simulate a sensor reading for the NEXT tick
-    //! only, without pre-populating the rolling window.
-    (:debug)
-    function testSetMotionMagnitude(magnitude as Float) as Void {
-        _motionMagnitude = magnitude;
-    }
-
-    //! Run one tick manually. Routes to the calibration or poll handler
-    //! depending on the current state, mirroring real timer behaviour.
-    (:debug)
-    function testTick() as Void {
         if (_state == STATE_CALIBRATING) {
-            onCalibTick();
-        } else {
-            onPollTick();
+            _state = STATE_MONITORING;
         }
     }
 
-    //! Override _remainingSeconds directly so tests can set an arbitrary countdown
-    //! without having to drive the full number of ticks to drain it.
+    //! Force sleep onset now (as if stillness had just been satisfied).
     (:debug)
-    function testSetRemainingSeconds(seconds as Number) as Void {
-        _remainingSeconds = seconds;
+    function testForceSleep() as Void {
+        if (_state == STATE_CALIBRATING) {
+            _state = STATE_MONITORING;
+        }
+        enterSleep();
     }
 
-    //! Inject a single HR sample directly into _sleepHrSamples so that the
-    //! HR-spike branch of detectSpontaneousWake() can be exercised without
-    //! requiring a real onSensor() callback.
-    (:debug)
-    function testAddSleepHrSample(hr as Number) as Void {
-        _sleepHrSamples.add(hr);
-    }
-
-    //! Returns true if the immobility clock is currently running (i.e.
-    //! _immobilityStart has been set by either pre-tracking or monitoring).
-    (:debug)
-    function testIsImmobilityTracking() as Boolean {
-        return _immobilityStart != null;
-    }
-
-    //! Run one poll tick manually, regardless of state. Needed to simulate
-    //! the poll timer firing during calibration (testTick only calls onCalibTick
-    //! during CALIBRATING, but in production both timers run in parallel).
-    (:debug)
-    function testPollTick() as Void {
-        onPollTick();
-    }
-
-    //! Override _napDurationMin so tests can exercise duration-dependent guards
-    //! (e.g. Smart Wake Window disabled for naps <= 5 min).
     (:debug)
     function testSetNapDurationMin(min as Number) as Void {
         _napDurationMin = min;
+        _sessionNapSec = min * 60;
+        _deadlineSec = _startSec + _fallAsleepAllowanceMin * 60 + _sessionNapSec;
     }
 
-    //! Set _startMoment to a given number of seconds in the past so timeout
-    //! logic can be tested without waiting 60 real minutes.
     (:debug)
-    function testSetStartMoment(secondsAgo as Number) as Void {
-        _startMoment = Time.now().subtract(new Time.Duration(secondsAgo)) as Time.Moment;
+    function testSetFallAsleepAllowanceMin(min as Number) as Void {
+        _fallAsleepAllowanceMin = min;
+        _deadlineSec = _startSec + _fallAsleepAllowanceMin * 60 + _sessionNapSec;
     }
+
+    (:debug)
+    function testSetHrDropThreshold(bpm as Number) as Void {
+        _hrDropThreshold = bpm;
+    }
+
+    (:debug)
+    function testSetMotionThreshold(millig as Float) as Void {
+        _motionThreshold = millig;
+    }
+
+    (:debug)
+    function getHRBaseline() as Float { return _hrBaseline; }
+
+    (:debug)
+    function testGetMinuteMotionMean() as Float { return _minuteMotionMean; }
+
+    (:debug)
+    function testGetMinuteActiveSec() as Number { return _minuteActiveSec; }
+
+    (:debug)
+    function testGetMinutesCompleted() as Number { return _minutesCompleted; }
+
+    (:debug)
+    function testNowSec() as Number { return nowSec(); }
+
+    (:debug)
+    function testGetDeadlineSec() as Number { return _deadlineSec; }
+
+    (:debug)
+    function testGetNapEndSec() as Number { return _napEndSec; }
+
+    (:debug)
+    function testGetStartSec() as Number { return _startSec; }
+
+    (:debug)
+    function testIsRunning() as Boolean { return _running; }
 }

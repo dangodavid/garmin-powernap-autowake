@@ -28,7 +28,9 @@ $CIQ_HOME/bin/monkeydo bin/PowerNap.prg fenix847mm
 Ctrl+Shift+P -> Monkey C: Run Tests
 ```
 
-Tests live in `test/SleepDetectorTest.mc` and use the `Toybox.Test` framework (`:test` annotation). All test helpers in `SleepDetector.mc` carry the `(:debug)` annotation and are excluded from production builds.
+Tests live under `test/` (one file per area, each with its own name prefix because test functions are global) and use the `Toybox.Test` framework (`:test` annotation). All test helpers in the source files carry the `(:debug)` annotation and are excluded from production builds. Tests drive a fake clock second by second (`testFeedSecond`, `testRunMinutes`, `testAdvanceClock`) so every timing rule is exercised without waiting.
+
+Command line: build with `-t` and run `monkeydo <prg> fenix847mm -t` with the simulator open.
 
 ## Architecture
 
@@ -37,52 +39,58 @@ Tests live in `test/SleepDetectorTest.mc` and use the `Toybox.Test` framework (`
 | File | Responsibility |
 |------|----------------|
 | `PowerNapApp.mc` | `AppBase` lifecycle: creates `SleepDetector` and `AlarmManager`, hands them to the view stack, cleans up on exit |
-| `PowerNapView.mc` | Renders 6 screens by polling `SleepDetector.getState()`; triggers `AlarmManager.startAlarm()` on first entry into `STATE_ALARM` |
+| `PowerNapView.mc` | Start screen + 4 nap screens built as prioritised line lists; live 1 Hz refresh; owns the two-press `ConfirmPress` |
 | `PowerNapDelegate.mc` | `InputDelegate` (not `BehaviorDelegate`): routes physical button presses and tap coordinates to view actions |
-| `SleepDetector.mc` | Core sleep-detection engine: 6-state machine driven by two timers and two sensor callbacks |
-| `AlarmManager.mc` | 4-phase escalating alarm: restarts its own timer on each phase boundary |
+| `SleepDetector.mc` | Core engine: wall-clock timing, per-minute sensor aggregation, onset / wake / smart-wake logic, deadline alarm |
+| `AlarmManager.mc` | 4-phase escalating alarm: restarts its own timer on each phase boundary; AMOLED-safe backlight handling |
+| `ScreenLayout.mc` | Line layout that fits any screen (drops/shrinks by priority, round chord, Instinct subscreen) + `Palette` |
+| `ConfirmPress.mc` | Two-press confirmation for stopping a nap or the alarm |
+| `RingMath.mc` | Angle math for the summary ring |
 
 ### State machine (SleepDetector)
 
 ```
 STATE_CALIBRATING (0)
-  -> STATE_MONITORING (1)    after 12 x 10s calibration ticks (2 min)
-  -> STATE_TIMEOUT (5)       if 60 min pass with no sleep detected
+  -> STATE_MONITORING (1)    at the first minute boundary after 120 s
+  -> STATE_ALARM (3)         deadline alarm (never in practice: allowance >= 5 min)
 
 STATE_MONITORING (1)
-  -> STATE_SLEEPING (2)      when HR drop + immobility conditions hold for >= 3 min
-  -> STATE_TIMEOUT (5)       60-min monitoring timeout (only if sleep never started)
+  -> STATE_SLEEPING (2)      2 still minutes with HR drop, or 5 still minutes,
+                             or 2 still minutes when re-entering after a wake
+  -> STATE_ALARM (3)         deadline alarm (sleep never detected), or planned
+                             alarm time reached while awake after a wake episode
 
 STATE_SLEEPING (2)
-  -> STATE_MONITORING (1)    on spontaneous wake (motion or HR spike)
-  -> STATE_ALARM (3)         on countdown expiry or Smart Wake trigger
+  -> STATE_MONITORING (1)    wake episode (sustained motion or 2-minute HR rise)
+  -> STATE_ALARM (3)         planned alarm time, or smart wake inside the window
 
 STATE_ALARM (3)
   -> STATE_SUMMARY (4)       when user dismisses alarm
 
-STATE_SUMMARY (4) / STATE_TIMEOUT (5)
-  Terminal states; user presses BACK to exit
+STATE_SUMMARY (4)
+  Terminal state; user presses BACK to exit
 ```
 
-### Timer architecture
+### Timing architecture
 
-Two independent timers run concurrently once `start()` is called:
+A single `Timer.Timer` ticks every second once `start()` is called:
 
-- **`_calibTimer`** (10s): collects 12 HR samples for the resting baseline; auto-stops when `_calibTickCount >= 12`.
-- **`_pollTimer`** (60s): drives monitoring logic, countdown decrement, and state transitions for the entire nap lifecycle. Also ticks during `STATE_CALIBRATING` to pre-populate the HR and motion rolling windows.
+- **every tick:** `checkAlarmDue()` compares the wall clock with `_napEndSec` (after onset; capped at `_deadlineSec`) or `_deadlineSec` (before onset), then `WatchUi.requestUpdate()`.
+- **every 60th tick:** `onMinute()` snapshots the per-minute HR/motion accumulators fed by the sensor callbacks and runs the onset / wake / smart-wake logic.
+
+`AlarmManager` owns the only other timer (the ring repeat timer).
 
 ### Sleep detection
 
-Detection requires all of the following, sustained for `_immobilityRequiredSec` (180 s):
-
-1. `mean(_hrWindow[-3:]) <= _hrBaseline - _hrDropThreshold`
-2. `_motionMagnitude < _motionThreshold` (live accelerometer reading, no windowing)
+See the class comment at the top of `SleepDetector.mc`; it is the single source of truth for thresholds. In short: a still minute has mean motion below the threshold and at most 5 active seconds; onset needs 2 still minutes with an HR drop or 5 without; a wake needs 10 active seconds, a 100 mg minute mean, or a 10 BPM rise for 2 minutes.
 
 ### Smart Wake Window
 
-In the last 5 minutes before alarm time, `detectLightSleep()` checks for light-sleep
-signals and fires the alarm early if found. Guard: skipped entirely for naps of 5 min
-or less, where the window would cover the entire nap.
+Effective naps (planned end minus onset, possibly shortened by the deadline cap) of 15 min or more; window = min(5 min, 20 % of the effective nap) before the planned end. Inside it a restless minute (6 or more active seconds, or mean >= 1.5 x threshold) or a 5 BPM rise fires `ALARM_SMART_WAKE`.
+
+### Deadline cap and frozen settings
+
+The deadline (start + allowance + nap) is shown as "Alarm by HH:MM" (rounded up to the minute) and is a hard cap: a late onset shortens the nap instead of pushing the alarm past it. Detector settings are frozen for the running nap; changes from the phone apply to the next one. Alarm Type applies immediately.
 
 ### Alarm escalation (AlarmManager)
 
@@ -96,6 +104,8 @@ Four phases, each running for 4 rings before the timer interval tightens:
 | 3 - full    | 12+  | 5 s | 100 % |
 
 On each phase transition the current timer is stopped and restarted with the new interval.
+
+**AMOLED rule:** vibration and tone run first, each in its own try block; `Attention.backlight(true)` runs last, in its own try block, and only on rings 0, 1 and every 6th ring. Burn-in protected displays throw after the display has been held on for about a minute; a backlight call placed before the vibration in a shared try block silences the alarm.
 
 ## Coding Conventions
 

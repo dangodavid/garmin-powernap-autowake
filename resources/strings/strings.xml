@@ -4,6 +4,8 @@
 
     <!-- Companion app settings titles -->
     <string id="NapDurationTitle">Nap Duration (min)</string>
+    <string id="FallAsleepAllowanceTitle">Max time to fall asleep (min)</string>
+    <string id="FallAsleepAllowancePrompt">The alarm rings at the latest this many minutes plus the nap duration after start, even if sleep is not detected. Falling asleep later shortens the nap.</string>
     <string id="AlarmTypeTitle">Alarm Type</string>
     <string id="HRDropTitle">HR Drop Threshold (BPM)</string>
     <string id="MotionSensTitle">Motion Sensitivity</string>

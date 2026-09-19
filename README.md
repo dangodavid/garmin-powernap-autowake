@@ -9,13 +9,16 @@ Put on the watch, start the app, lie down.
 ## How It Works
 
 1. **Start the app** from your watch menu. Use UP/DOWN or tap to set the nap duration (5–120 min), then press START or tap the centre to begin.
-2. **Calibrating (2 min):** The app silently measures your resting heart rate to build a personal baseline.
-3. **Monitoring:** It watches for sleep onset: a combination of HR drop and sustained immobility for at least 2 minutes.
-4. **Sleep detected:** A countdown starts. The screen shows when you fell asleep and how much time remains.
-5. **Smart Wake Window:** In the final 5 minutes, the app checks for light-sleep signals (gentle movement or a slight HR rise). If detected, the alarm fires early at a natural waking moment instead of abruptly mid-cycle.
-6. **Wake-up alarm:** An escalating haptic pattern brings you out of sleep gradually, starting with a barely-perceptible feather tap, progressing to gentle pulses, then firm buzzes, and finally a full alarm. Full intensity is reached after approximately 90 seconds.
-7. **Dismiss:** Press BACK or tap the screen to stop the alarm and view your nap summary.
-8. **Summary screen:** Shows actual sleep duration, efficiency rating, average and minimum HR, and the time window you slept.
+2. **Calibrating (2 min):** The app measures your resting heart rate to build a personal baseline. Stillness already counts from the first second.
+3. **Monitoring:** It watches for sleep onset: two still minutes once your heart rate has dropped at least the HR Drop Threshold below the baseline, or five still minutes on stillness alone. Heart rate speeds detection up but is never required.
+4. **Sleep detected:** The alarm time is fixed at detection + nap duration, or at the "Alarm by" time if that is earlier. The screen shows when the nap started and a live countdown.
+5. **Guaranteed alarm time:** From the start, the screen shows "Alarm by HH:MM" = start + "max time to fall asleep" + nap duration. The alarm never rings later than that: if sleep is never detected it rings exactly then, and if you fall asleep late the nap is shortened to end by then. You can never sleep through a nap because detection failed.
+6. **Smart Wake Window (naps of 15 min or more):** In the last 20 % of the nap before the alarm (at most 5 minutes) a restless minute or a slight HR rise fires the alarm early at a natural waking moment. If the "Alarm by" cap shortened the nap below 15 minutes, there is no smart wake.
+7. **Wake-up alarm:** An escalating haptic pattern brings you out of sleep gradually, from a barely-perceptible feather tap to full intensity after 84 seconds. It keeps ringing until you stop it. If your alarm type cannot be heard on the watch (for example Tone Only on a vívoactive, which has no speaker tones, or vibration switched off in the watch settings) the other channel is used.
+8. **Stop:** Press BACK (or START) twice within 4 seconds to stop the alarm. Screen taps and swipes are ignored during a nap and during the alarm, and stopping a running nap also needs two BACK presses, so a wrist or sleeve on the pillow cannot silence anything.
+9. **Summary screen:** Shows time asleep, how much of the planned nap was completed (ring), the number of wake episodes, average and minimum HR, and the time window you slept.
+
+**Keep the app open while napping.** On watches with a task switcher (fēnix 8, Venu 3/4, vívoactive 6, ...) an app sent to the background is not allowed to vibrate or play tones. The alarm rings the moment you return to the app, and the nap screens then show "Keep app open for alarm".
 
 ---
 
@@ -25,10 +28,10 @@ The wake-up alarm is designed to ease you out of sleep rather than startle you. 
 
 | Phase       | Duration | Intensity | Feel                          |
 |-------------|----------|-----------|-------------------------------|
-| Feather     | 0–36 s   | 15 %      | Barely perceptible taps       |
-| Gentle      | 36–64 s  | 30 %      | Soft, clearly felt pulses     |
-| Medium      | 64–88 s  | 65 %      | Firm, unmistakable buzzes     |
-| Full        | 88 s+    | 100 %     | Standard alarm, stays at max   |
+| Feather     | 0–34 s   | 15 %      | Barely perceptible taps       |
+| Gentle      | 34–61 s  | 30 %      | Soft, clearly felt pulses     |
+| Medium      | 61–84 s  | 65 %      | Firm, unmistakable buzzes     |
+| Full        | 84 s+    | 100 %     | Standard alarm, stays at max   |
 
 ---
 
@@ -59,8 +62,9 @@ These appear in the **Garmin Connect companion app** on your phone under the app
 | Setting              | Default          | Range / Options                             | Description                                   |
 |----------------------|------------------|---------------------------------------------|-----------------------------------------------|
 | Nap Duration         | 30 min           | 5–120 min                                   | Target nap length                             |
+| Max time to fall asleep | 15 min        | 5–30 min                                    | The alarm rings at the latest this long plus the nap duration after start |
 | Alarm Type           | Vibration Only   | Vibration / Tone / Vibration + Tone         | How the alarm wakes you                       |
-| HR Drop Threshold    | 5 BPM            | 3-20 BPM                                     | HR drop required to detect sleep              |
+| HR Drop Threshold    | 5 BPM            | 3-20 BPM                                     | HR drop below the baseline that shortens onset to 2 still minutes (otherwise 5) |
 | Motion Sensitivity   | Medium           | Low / Medium / High                         | Lower = more movement allowed before reset    |
 
 You can also adjust the nap duration directly on the watch start screen without opening the companion app.
@@ -69,19 +73,27 @@ You can also adjust the nap duration directly on the watch start screen without 
 
 ## Sleep Detection Algorithm
 
-The algorithm is intentionally conservative to minimise false positives.
+Everything runs on the wall clock and on per-minute aggregates of the sensors, never on single samples.
 
-**Calibration (2 min):** Collects 12 heart-rate samples at 10-second intervals to compute a personal resting HR baseline.
+**Calibration (2 min):** Averages every 1 Hz heart-rate reading into a personal resting baseline.
 
-**Sleep onset requires ALL of the following, sustained for >= 2 minutes:**
-- Heart rate has dropped >= threshold BPM below your baseline (default: 5 BPM)
-- Accelerometer motion average is below the sensitivity threshold (default: 50 millig)
+**Still minute:** mean accelerometer deviation from 1 g below the sensitivity threshold (default 50 millig) and at most 5 seconds of the minute above it. A short roll-over does not break stillness; a restless minute resets it.
 
-**Spontaneous wake detection (returns to monitoring if either is true):**
-- Sustained motion above 200 millig across two consecutive 60-second poll intervals
-- Heart rate spike > 10 BPM above the recent sleep-phase average
+**Sleep onset (either):**
+- 2 consecutive still minutes while the heart rate is at least the threshold (default 5 BPM) below the baseline
+- 5 consecutive still minutes regardless of heart rate
 
-**Monitoring timeout:** If no sleep is detected within 60 minutes, the app shows a "No sleep detected" screen and stops.
+The first onset is not back-dated: the alarm is fixed at detection + nap duration, capped at the "Alarm by" time.
+
+**Wake episode (returns to monitoring, countdown keeps running):**
+- 10 or more seconds of motion in a minute, or a minute mean above 100 millig
+- or a heart rate at least 10 BPM above the sleep-phase average for two consecutive minutes
+
+Going back to sleep needs 2 still minutes, no heart-rate condition, and restarts the sleep-phase heart-rate average (so a steady, slightly higher heart rate is not reported as a wake every few minutes). Time awake, including the minute that showed the wake, is excluded from the time asleep.
+
+**Deadline alarm:** If sleep is never detected, the alarm rings at start + max time to fall asleep + nap duration. The summary then says "No sleep detected".
+
+**Settings:** nap duration, max time to fall asleep, HR drop threshold and motion sensitivity are read when a nap starts; a change made from the phone during a nap applies to the next nap. A change of Alarm Type applies immediately, also to a nap or alarm in progress.
 
 ---
 
@@ -125,7 +137,7 @@ $CIQ_HOME/bin/monkeydo bin/PowerNap.prg fenix847mm
 Ctrl+Shift+P -> Monkey C: Run Tests
 ```
 
-49 automated test cases cover state machine transitions, threshold boundary conditions, spontaneous wake detection, Smart Wake Window logic, and multi-cycle sleep accumulation.
+The suite under `test/` (123 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation and channel fallback (including the AMOLED backlight regression), the summary statistics, and the layout of every nap screen (the start screen's tap zones only). Tests simulate sensor input second by second against a frozen fake clock. The layout tests measure the real device fonts, so run the suite on a few screen sizes (e.g. `fenix847mm`, `venu3s`, `fenix7s`, `fr255s`, `instinct3solar45mm`).
 
 ---
 
@@ -154,13 +166,22 @@ resources/
   strings/
     strings.xml                 Localized strings (English)
 source/
-  PowerNapApp.mc                AppBase: lifecycle, sensor init/teardown
-  PowerNapView.mc               UI: 6 screens via state machine
-  PowerNapDelegate.mc           Input handler: physical buttons and touch zones
-  SleepDetector.mc              Sleep-detection algorithm (6-state machine)
-  AlarmManager.mc               4-phase escalating vibration/tone alarm
+  PowerNapApp.mc                AppBase: lifecycle (incl. task-switcher active/inactive)
+  PowerNapView.mc               UI: start screen + 4 nap screens described as line lists
+  PowerNapDelegate.mc           Input handler: buttons, start-screen touch zones
+  SleepDetector.mc              Sleep-detection engine (wall clock, per-minute aggregates)
+  AlarmManager.mc               4-phase escalating vibration/tone alarm with channel fallback
+  ScreenLayout.mc               Fit-any-screen line layout + monochrome palette
+  ConfirmPress.mc               Two-press confirmation for stopping a nap or the alarm
+  RingMath.mc                   Progress-ring angle math
 test/
-  SleepDetectorTest.mc          23 unit tests (Toybox.Test framework)
+  OnsetTest.mc                  Calibration, stillness, onset paths
+  WakeTest.mc                   Wake episodes, re-entry, sleep accumulation
+  TimingTest.mc                 Wall-clock alarm, deadline cap, smart wake
+  AlarmManagerTest.mc           Escalation phases, backlight regression
+  SummaryTest.mc                Finish/cancel paths, statistics, RingMath
+  RegressionTest.mc             HR wake rules, frozen settings, lifecycle, channel fallback
+  LayoutTest.mc                 Every screen fits the running device
 ```
 
 ---
@@ -169,7 +190,8 @@ test/
 
 - Connect IQ does **not** expose Garmin's native sleep-stage data (REM, light, deep). This app builds its own detection algorithm from raw HR and accelerometer signals.
 - Battery usage is higher than normal while the app is active due to continuous accelerometer sampling at 25 Hz. For a typical 30-minute nap the impact is minimal.
-- Detection accuracy varies by individual. Users with a naturally low resting HR or those who lie very still while awake may benefit from adjusting the HR Drop Threshold and Motion Sensitivity settings.
+- Detection accuracy varies by individual. Lying perfectly still while awake for five minutes counts as sleep onset, and a heart rate that is still settling after activity can meet the HR-drop rule early; restless sleepers may see wake episodes. The Motion Sensitivity, HR Drop Threshold and Max time to fall asleep settings tune this. The alarm rings in every case, never later than the "Alarm by" time.
+- On task-switcher watches the app must stay in the foreground to vibrate (see above).
 
 ---
 
