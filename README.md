@@ -15,9 +15,9 @@ Put on the watch, start the app, lie down.
 5. **Guaranteed alarm time:** From the start, the screen shows "Latest alarm HH:MM" = start + "max time to fall asleep" + nap duration. The alarm never rings later than that: if sleep is never detected it rings exactly then, and if you fall asleep late the nap is shortened to end by then. You can never sleep through a nap because detection failed.
 6. **Smart Wake Window (naps of 15 min or more):** In the last 20 % of the nap before the alarm (at most 5 minutes) a restless minute or a slight HR rise fires the alarm early at a natural waking moment. If the "Latest alarm" cap shortened the nap below 15 minutes, there is no smart wake.
 7. **Wake-up alarm:** A slow crescendo brings you out of sleep gradually. It starts with taps so fine you barely feel them (22 % for 120 ms) and grows in nine steps to full strength about two minutes after the first tap (118 s), then keeps ringing at full strength every 5 seconds for three minutes and every 30 seconds after that until you stop it. The screen is gentle too: it stays dark until the taps are clearly felt (the 50 % step) and then shows a calm "Time to wake up"; it only flashes once the alarm is at full strength. By default a soft nature-inspired melody joins the vibration from the 40 % step on watches with a beeper or speaker (see Alarm Escalation). If your alarm type cannot be heard on the watch (for example Nature sound only on a vívoactive, which has no speaker tones, or vibration switched off in the watch settings) the other channel is used. Works with Do Not Disturb on (verified on a fēnix 8 Pro: DND does not mute the vibration).
-8. **Woke up early?** Nothing to do: lie still for two minutes and the nap continues, the alarm time stays the same. Every nap screen shows the time of day. Press UP, DOWN or START to peek at the nap so far (time asleep, wakes, alarm time) for a few seconds; this never stops anything.
-9. **Stop:** Press BACK (or START) twice within 4 seconds to stop the alarm. Screen taps and swipes are ignored during a nap and during the alarm, and stopping a running nap also needs two BACK presses, so a wrist or sleeve on the pillow cannot silence anything. After the first BACK press the screen says what the second one does ("Again: stop + stats" once sleep was recorded; before that it returns to the start screen). For 2.5 seconds after a stop every press is ignored (each further press extends the pause), so extra presses of a half-asleep hand cannot skip the summary or start a new nap.
-10. **Summary screen:** Shows time asleep, how long it took you to fall asleep ("Fell asleep in 10 min"), how much of the planned nap was completed (ring), the number of wake episodes, average and minimum HR, and the time window you slept. START sets up a new nap, BACK exits.
+8. **Woke up early?** Nothing to do: lie still for two minutes and the nap continues, the alarm time stays the same. Every nap screen shows the time of day. Press UP or DOWN (or START once) to peek at the nap so far (time asleep, wakes, alarm time) for a few seconds; this never stops anything.
+9. **Buttons during the nap and the alarm:** nothing stops a nap or the alarm by accident. Press **BACK twice** within 4 seconds to leave the app (the nap or the alarm ends, no summary); press **START twice** within 4 seconds to stop the nap or the alarm and see your stats. The first press of either key shows a popup ("Press BACK again to exit" / "Press START again to stop") and the footer repeats it in red; a BACK and a START never combine into a pair. Screen taps and swipes are ignored during a nap and during the alarm, so a wrist or sleeve on the pillow cannot silence anything. For 1.5 seconds after a stop every press is ignored (never extended by further presses), so extra presses of a half-asleep hand cannot skip the summary or start a new nap, and you can never be trapped in a screen.
+10. **Summary screen:** Shows time asleep, how long it took you to fall asleep ("Fell asleep in 10 min"), how much of the planned nap was completed (ring), the number of wake episodes, average and minimum HR, and the time window you slept. START sets up a new nap, BACK exits with one press.
 
 **Warning before you nap:** "Low battery N%" below 10 % (not charging).
 
@@ -54,8 +54,8 @@ Press DOWN below 5 min on the start screen ("0 stay awake"). The watch then keep
 
 - after 3 still minutes it gives one gentle buzz and shows **"Stay alert! Move a bit"**; moving for a few seconds or pressing any button answers it and the watch starts counting again;
 - if you doze off anyway (the same detection as a nap: 2 still minutes with a heart-rate drop, or 5 still minutes) the **doze alarm** rings right away, starting part-way up the ramp (the 63 % step) and shows "You dozed off";
-- stopping the doze alarm (two presses) puts the watch back on guard, so one session catches every doze;
-- BACK twice ends the session; the summary shows how long you stayed awake and how many dozes were caught.
+- stopping the doze alarm (START twice) puts the watch back on guard, so one session catches every doze;
+- START twice on the guard screen ends the session with its summary (how long you stayed awake and how many dozes were caught); BACK twice leaves the app.
 
 The heart-rate drop is measured against your own recent heart rate (the 10 minutes before the last three), so sitting calmly for an hour after walking in is not mistaken for dozing. Stay Awake is never remembered: the next start defaults to a nap again. **Not for driving**: detection needs minutes of stillness and cannot catch a microsleep.
 
@@ -207,8 +207,8 @@ source/
   SleepDetector.mc              Sleep-detection engine (wall clock, per-minute aggregates, Stay Awake)
   AlarmManager.mc               Ramp-table vibration/melody alarm with channel fallback, quiet onset gate, nudge
   MotionMath.mc                 Offset-free motion measure for one accelerometer batch
-  ScreenLayout.mc               Fit-any-screen line layout + monochrome palette
-  ConfirmPress.mc               Two-press confirmation for stopping a nap or the alarm
+  ScreenLayout.mc               Fit-any-screen line layout, popup banner + monochrome palette
+  ConfirmPress.mc               Two-press confirmation: BACK x2 exits, START x2 stops; the keys never pair
   RingMath.mc                   Progress-ring angle math
 test/
   OnsetTest.mc                  Calibration, stillness, onset paths

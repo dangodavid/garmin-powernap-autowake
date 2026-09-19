@@ -97,6 +97,9 @@ class LayoutLine {
 //! * A divider belongs to the line above it and is clipped to its row.
 //! * Each text line then picks the largest font/text variant whose ink fits
 //!   the visible width at its own rows (round chord, Instinct subscreen).
+//! * A banner (the "Press BACK again to exit" popup) is a filled rounded box
+//!   centred on the screen, drawn over the lines, with the longest text
+//!   variant at the largest font that fits the box at its rows.
 class ScreenLayout {
 
     static const KEEP = 100;
@@ -131,6 +134,17 @@ class ScreenLayout {
     private var _footerX as Number = 0;
     private var _footerY as Number = 0;
     private var _footerFits as Boolean = true;
+
+    // Banner (popup hint) drawn over the lines, see setBanner().
+    private var _bannerTexts as Array<String>? = null;
+    private var _bannerFonts as Array<Graphics.FontDefinition>? = null;
+    private var _bannerText as String = "";
+    private var _bannerFont as Graphics.FontDefinition = Graphics.FONT_XTINY;
+    private var _bannerX as Number = 0;
+    private var _bannerY as Number = 0;
+    private var _bannerW as Number = 0;
+    private var _bannerH as Number = 0;
+    private var _bannerFits as Boolean = true;
 
     private var _bandTop as Number = 0;
     private var _bandBottom as Number = 0;
@@ -229,6 +243,14 @@ class ScreenLayout {
         _footerPreferBottom = true;
     }
 
+    //! A popup box centred on the screen, drawn over everything else: the
+    //! longest of `texts` at the largest of `fonts` whose box fits the
+    //! visible width at the box's rows (round chord, octagon corners, lens).
+    function setBanner(texts as Array<String>, fonts as Array<Graphics.FontDefinition>) as Void {
+        _bannerTexts = texts;
+        _bannerFonts = fonts;
+    }
+
     //! Extra clearance from the display edge.
     function setEdgeMargin(px as Number) as Void {
         _edgeMargin = px;
@@ -286,7 +308,70 @@ class ScreenLayout {
             if (!anyHidden) { break; }
         }
         restoreHidden(dc);
+        solveBanner(dc);
         _inkCache = null;
+    }
+
+    //! Place the banner: padding of a third of the font height above and
+    //! below and half of it left and right; the box must fit the visible
+    //! width at all of its rows. Full text first, at the largest font that
+    //! fits, shorter variants only when even the smallest font is too wide.
+    //! The box is centred on the screen; next to the Instinct lens (which
+    //! reaches down to the middle rows) it moves down, 4 px at a time, to
+    //! the first position above the footer where the text fits.
+    private function solveBanner(dc as Graphics.Dc) as Void {
+        if (_bannerTexts == null || _bannerFonts == null) {
+            return;
+        }
+        _fitCalls += 1;
+        var texts = _bannerTexts as Array<String>;
+        var fonts = _bannerFonts as Array<Graphics.FontDefinition>;
+        for (var ti = 0; ti < texts.size(); ti++) {
+            for (var fi = 0; fi < fonts.size(); fi++) {
+                var fh = dc.getFontHeight(fonts[fi]);
+                var h = fh + (fh * 2) / 3;
+                var y = _cy - h / 2;
+                var lowest = ((_footerText != null) ? _footerY - 2 : _h - _gap) - h;
+                while (y <= lowest) {
+                    if (placeBanner(dc, texts[ti], fonts[fi], y)) {
+                        return;
+                    }
+                    if (!_hasSub) {
+                        break;
+                    }
+                    y += 4;
+                }
+            }
+        }
+        // Nothing fits: smallest font, shortest text, the box clipped to the
+        // visible width (flagged, so the tests catch it).
+        var last = fonts[fonts.size() - 1];
+        var lh = dc.getFontHeight(last);
+        placeBanner(dc, texts[texts.size() - 1], last, _cy - (lh + (lh * 2) / 3) / 2);
+        _bannerFits = false;
+    }
+
+    //! Try one text/font for the banner with its box starting at row y;
+    //! stores the box and returns whether it fits (a box that does not fit
+    //! is stored clipped to the width).
+    private function placeBanner(dc as Graphics.Dc, text as String, font as Graphics.FontDefinition,
+                                 y as Number) as Boolean {
+        var fh = dc.getFontHeight(font);
+        var h = fh + (fh * 2) / 3;
+        var b = boundsAtRows(y, y + h);
+        var w = dc.getTextWidthInPixels(text, font) + fh;
+        var fits = (w <= b[1] - b[0]);
+        if (!fits) {
+            w = b[1] - b[0];
+        }
+        _bannerText = text;
+        _bannerFont = font;
+        _bannerX = (b[0] + b[1]) / 2 - w / 2;
+        _bannerY = y;
+        _bannerW = w;
+        _bannerH = h;
+        _bannerFits = fits;
+        return fits;
     }
 
     //! A line hidden because it did not fit its row at an intermediate block
@@ -749,8 +834,16 @@ class ScreenLayout {
                 return hit;
             }
         }
-        var y0 = y + fh * 15 / 100;
-        var y1 = y + fh * 85 / 100;
+        var result = boundsAtRows(y + fh * 15 / 100, y + fh * 85 / 100);
+        if (cache != null) {
+            cache.put(key, result);
+        }
+        return result;
+    }
+
+    //! Horizontal [left, right] available on every row from y0 to y1
+    //! (display outline, clip circle, the Instinct lens).
+    private function boundsAtRows(y0 as Number, y1 as Number) as Array<Number> {
         var hw0 = halfWidthAt(y0);
         var hw1 = halfWidthAt(y1);
         var hw = (hw0 < hw1) ? hw0 : hw1;
@@ -776,11 +869,7 @@ class ScreenLayout {
             }
         }
         if (right < left) { right = left; }
-        var result = [left, right] as Array<Number>;
-        if (cache != null) {
-            cache.put(key, result);
-        }
-        return result;
+        return [left, right] as Array<Number>;
     }
 
     //! Half of the usable display width at row y (display outline, and the
@@ -841,6 +930,19 @@ class ScreenLayout {
             dc.drawText(_footerX, _footerY, _footerFont, _footerText as String,
                 Graphics.TEXT_JUSTIFY_CENTER);
         }
+        if (_bannerTexts != null) {
+            // The popup is the screen's negative: a light box with dark text
+            // on the dark screens, dark on light when the alarm flashes (and
+            // on the 1-bit Instinct these are the only two colours anyway).
+            var fill = invert ? Graphics.COLOR_BLACK : Graphics.COLOR_WHITE;
+            var ink = invert ? Graphics.COLOR_WHITE : Graphics.COLOR_BLACK;
+            dc.setColor(fill, fill);
+            dc.fillRoundedRectangle(_bannerX, _bannerY, _bannerW, _bannerH, _bannerH / 3);
+            dc.setColor(ink, Graphics.COLOR_TRANSPARENT);
+            var fh = dc.getFontHeight(_bannerFont);
+            dc.drawText(_bannerX + _bannerW / 2, _bannerY + (_bannerH - fh) / 2, _bannerFont, _bannerText,
+                Graphics.TEXT_JUSTIFY_CENTER);
+        }
     }
 
     // -- Inspection (tests) ---------------------------------------------
@@ -848,9 +950,10 @@ class ScreenLayout {
     //! Content did not fit even after dropping and shrinking.
     function hasOverflow() as Boolean { return _overflow; }
 
-    //! Every visible text line and the footer fit the visible width.
+    //! Every visible text line, the footer and the banner fit the visible width.
     function allTextFits() as Boolean {
         if (!_footerFits) { return false; }
+        if (_bannerTexts != null && !_bannerFits) { return false; }
         for (var i = 0; i < _lines.size(); i++) {
             var line = _lines[i];
             if (line.visible && !line.isDivider && !line.fits) { return false; }
@@ -887,9 +990,10 @@ class ScreenLayout {
         return false;
     }
 
-    //! Text of the first visible line (or the footer) that does not fit, or null.
+    //! Text of the first visible line (or the footer / banner) that does not fit, or null.
     function firstMisfit() as String? {
         if (!_footerFits) { return "footer: " + _footerText; }
+        if (_bannerTexts != null && !_bannerFits) { return "banner: " + _bannerText; }
         for (var i = 0; i < _lines.size(); i++) {
             var line = _lines[i];
             if (line.visible && !line.isDivider && !line.fits) { return line.drawText; }
@@ -898,6 +1002,16 @@ class ScreenLayout {
     }
 
     function getFooterText() as String? { return _footerText; }
+
+    //! The banner's text, or null when no banner is set.
+    function getBannerText() as String? {
+        return (_bannerTexts == null) ? null : _bannerText;
+    }
+
+    //! The banner box [x, y, w, h] (tests), or null when no banner is set.
+    function getBannerBox() as Array<Number>? {
+        return (_bannerTexts == null) ? null : [_bannerX, _bannerY, _bannerW, _bannerH] as Array<Number>;
+    }
 
     //! Work done by the last solve(): [solveOnce passes, fitLine calls].
     //! Screens redraw every second, so this is what the watchdog sees.

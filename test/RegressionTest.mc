@@ -395,24 +395,25 @@ function testReg_ringNow(logger as Test.Logger) as Boolean {
 // ── Two-press guard ─────────────────────────────────────────────────────────
 
 //! One press only arms; a second press in the same context within the window
-//! confirms; a late press re-arms; a press in another context re-arms.
+//! confirms; a late press re-arms; a press in another context (BACK after
+//! START or the other way round) re-arms instead of confirming.
 (:test)
 function testReg_confirmPressRules(logger as Test.Logger) as Boolean {
     var c = new ConfirmPress(4);
     var ok = true;
-    if (c.press(100, ConfirmPress.CONTEXT_ALARM)) { logger.debug("first press confirmed"); ok = false; }
-    if (!c.isArmed(103, ConfirmPress.CONTEXT_ALARM)) { logger.debug("must be armed within window"); ok = false; }
-    if (!c.press(103, ConfirmPress.CONTEXT_ALARM)) { logger.debug("second press must confirm"); ok = false; }
-    if (c.isArmed(103, ConfirmPress.CONTEXT_ALARM)) { logger.debug("confirm must disarm"); ok = false; }
+    if (c.press(100, ConfirmPress.CONTEXT_STOP)) { logger.debug("first press confirmed"); ok = false; }
+    if (!c.isArmed(103, ConfirmPress.CONTEXT_STOP)) { logger.debug("must be armed within window"); ok = false; }
+    if (!c.press(103, ConfirmPress.CONTEXT_STOP)) { logger.debug("second press must confirm"); ok = false; }
+    if (c.isArmed(103, ConfirmPress.CONTEXT_STOP)) { logger.debug("confirm must disarm"); ok = false; }
 
-    c.press(200, ConfirmPress.CONTEXT_NAP);
-    if (c.press(204, ConfirmPress.CONTEXT_NAP)) { logger.debug("press after window must not confirm"); ok = false; }
-    if (!c.press(205, ConfirmPress.CONTEXT_NAP)) { logger.debug("re-armed press must confirm"); ok = false; }
+    c.press(200, ConfirmPress.CONTEXT_EXIT);
+    if (c.press(204, ConfirmPress.CONTEXT_EXIT)) { logger.debug("press after window must not confirm"); ok = false; }
+    if (!c.press(205, ConfirmPress.CONTEXT_EXIT)) { logger.debug("re-armed press must confirm"); ok = false; }
 
-    c.press(300, ConfirmPress.CONTEXT_NAP);
-    if (c.press(301, ConfirmPress.CONTEXT_ALARM)) { logger.debug("other context must not confirm"); ok = false; }
+    c.press(300, ConfirmPress.CONTEXT_EXIT);
+    if (c.press(301, ConfirmPress.CONTEXT_STOP)) { logger.debug("other context must not confirm"); ok = false; }
     c.reset();
-    if (c.isArmed(301, ConfirmPress.CONTEXT_ALARM)) { logger.debug("reset must disarm"); ok = false; }
+    if (c.isArmed(301, ConfirmPress.CONTEXT_STOP)) { logger.debug("reset must disarm"); ok = false; }
     return ok;
 }
 
@@ -584,16 +585,16 @@ function testReg_confirmPressAcrossTimerWrap(logger as Test.Logger) as Boolean {
     var beforeWrap = 2147483000;             // 647 ms before the 32-bit maximum
     var plus3s = -2147481296;                // beforeWrap + 3000 after the wrap
     var plus10s = -2147474296;               // beforeWrap + 10000 after the wrap
-    c.press(beforeWrap, ConfirmPress.CONTEXT_NAP);
-    if (!c.isArmed(plus3s, ConfirmPress.CONTEXT_NAP)) {
+    c.press(beforeWrap, ConfirmPress.CONTEXT_EXIT);
+    if (!c.isArmed(plus3s, ConfirmPress.CONTEXT_EXIT)) {
         logger.debug("3 s after the wrap the first press must still be armed");
         return false;
     }
-    if (c.isArmed(plus10s, ConfirmPress.CONTEXT_NAP)) {
+    if (c.isArmed(plus10s, ConfirmPress.CONTEXT_EXIT)) {
         logger.debug("10 s after the wrap the first press must have expired");
         return false;
     }
-    if (c.press(plus10s, ConfirmPress.CONTEXT_NAP)) {
+    if (c.press(plus10s, ConfirmPress.CONTEXT_EXIT)) {
         logger.debug("a stale arm across the wrap must not confirm");
         return false;
     }

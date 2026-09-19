@@ -36,16 +36,27 @@ class PowerNapView extends WatchUi.View {
     private var _tapStartMinY as Number = -1;   // y >= this       -> ... start ("TAP to begin")
     private var _uiTimer as Timer.Timer? = null;     // start screen: refresh at each minute for "Latest alarm"
 
-    // Two-press confirmation for stopping a nap or the alarm (4 s, in ms).
+    // Two-press confirmation (4 s, in ms): BACK x2 exits, START x2 stops.
     private var _confirm as ConfirmPress;
     private const CONFIRM_WINDOW_MS = 4000;
 
+    // Popup hint after the first press of a pair, drawn as a banner over
+    // the screen (and repeated by the footer in red) while that press is
+    // armed. WatchUi.showToast is not used: its look and timing differ per
+    // device and the layout tests could not check it.
+    static const HINT_EXIT = ["Press BACK again to exit", "BACK again to exit", "BACK again: exit"] as Array<String>;
+    static const HINT_STOP = ["Press START again to stop", "START again to stop", "START again: stop"] as Array<String>;
+    private var _hintTexts as Array<String>? = null;
+    private var _hintContext as Number = ConfirmPress.CONTEXT_NONE;
+    private var _lastPressContext as Number = ConfirmPress.CONTEXT_NONE;
+
     // After a confirmed stop or a screen change, input is ignored for a
     // moment: a groggy user who keeps pressing START must not skip the
-    // summary and start a new nap, nor end Stay Awake with extra BACKs.
+    // summary and start a new nap. Presses never extend the lock, so a
+    // user who keeps pressing is never trapped.
     private var _locked as Boolean = false;
     private var _lockStartMs as Number = 0;
-    private const INPUT_LOCK_MS = 2500;
+    private const INPUT_LOCK_MS = 1500;
 
     // Peek: any button during a nap shows the "so far" card for a moment.
     private var _peeking as Boolean = false;
@@ -142,6 +153,7 @@ class PowerNapView extends WatchUi.View {
         _started = true;
         _peeking = false;
         _confirm.reset();
+        _hintTexts = null;
         WatchUi.requestUpdate();
     }
 
@@ -156,6 +168,7 @@ class PowerNapView extends WatchUi.View {
         _started = false;
         _peeking = false;
         _confirm.reset();
+        _hintTexts = null;
         // Pick up a duration changed from the phone during the nap. Stay
         // Awake is never remembered: the next session defaults to a nap.
         _pendingDuration = readStoredDuration();
@@ -179,12 +192,30 @@ class PowerNapView extends WatchUi.View {
         return elapsed >= 0 && elapsed < INPUT_LOCK_MS;
     }
 
-    //! Register a stop press in the given ConfirmPress context. Returns true
-    //! when it is the confirming second press.
-    function pressStop(context as Number) as Boolean {
+    //! Register a press in the given ConfirmPress context (CONTEXT_EXIT for
+    //! BACK, CONTEXT_STOP for START). Returns true when it is the confirming
+    //! second press; the hint of a confirmed pair disappears.
+    function pressConfirm(context as Number) as Boolean {
         var confirmed = _confirm.press(nowMs(), context);
+        _lastPressContext = context;
+        if (confirmed) {
+            _hintTexts = null;
+        }
         WatchUi.requestUpdate();
         return confirmed;
+    }
+
+    //! Show a popup hint (HINT_EXIT / HINT_STOP) for as long as the press
+    //! just registered stays armed: a banner over the current screen.
+    function showHint(texts as Array<String>) as Void {
+        _hintTexts = texts;
+        _hintContext = _lastPressContext;
+        WatchUi.requestUpdate();
+    }
+
+    //! The popup hint is showing (its press is still armed).
+    function isHintShowing() as Boolean {
+        return _hintTexts != null && _started && _confirm.isArmed(nowMs(), _hintContext);
     }
 
     //! Show the "so far" card for a few seconds (the nap keeps running).
@@ -296,6 +327,11 @@ class PowerNapView extends WatchUi.View {
             layout = stayAwakeSummaryLayout(dc);
         } else {
             layout = _detector.hasSleptAtLeastOnce() ? summaryLayout(dc) : noSleepLayout(dc);
+        }
+        if (isHintShowing() && state != SleepDetector.STATE_SUMMARY) {
+            layout.setBanner(_hintTexts as Array<String>,
+                [Graphics.FONT_MEDIUM, Graphics.FONT_SMALL, Graphics.FONT_TINY, Graphics.FONT_XTINY]
+                    as Array<Graphics.FontDefinition>);
         }
         layout.solve(dc);
         return layout;
@@ -438,7 +474,7 @@ class PowerNapView extends WatchUi.View {
             L.addText(["Alarm " + n + " min after sleep", n + " min after sleep", "Nap " + n + " min"],
                 fontsDetail(), Graphics.COLOR_LT_GRAY, 75);
         }
-        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        setNapFooter(L, false, Graphics.COLOR_LT_GRAY);
         return L;
     }
 
@@ -469,7 +505,7 @@ class PowerNapView extends WatchUi.View {
             smartWake ? Graphics.COLOR_YELLOW : Graphics.COLOR_GREEN, ScreenLayout.KEEP);
         addInactiveWarning(L);
         L.addText(hrTexts(), fontsDetail(), Graphics.COLOR_RED, 40);
-        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        setNapFooter(L, false, Graphics.COLOR_LT_GRAY);
         return L;
     }
 
@@ -521,7 +557,7 @@ class PowerNapView extends WatchUi.View {
         // The phase of the ring the user just felt (the style above follows it too).
         L.addText(["ALARM " + (_alarm.getLastRingPhase() + 1) + "/4"], fontsBody(),
             loud ? Graphics.COLOR_YELLOW : Graphics.COLOR_LT_GRAY, 40);
-        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_ALARM), text);
+        setNapFooter(L, true, text);
         return L;
     }
 
@@ -645,7 +681,7 @@ class PowerNapView extends WatchUi.View {
         addWarnings(L, 97);
         addInactiveWarning(L);
         L.addText(hrTexts(), fontsDetail(), Graphics.COLOR_RED, 40);
-        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        setNapFooter(L, false, Graphics.COLOR_LT_GRAY);
         return L;
     }
 
@@ -700,7 +736,7 @@ class PowerNapView extends WatchUi.View {
             }
             L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_YELLOW, 95);
         }
-        L.setFooterTexts(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        setNapFooter(L, false, Graphics.COLOR_LT_GRAY);
         return L;
     }
 
@@ -758,33 +794,33 @@ class PowerNapView extends WatchUi.View {
         }
     }
 
-    //! Footer of the nap screens (longest first, shorter variants for narrow
-    //! screens and wide fonts). Once armed it says what the second press
-    //! does: with sleep recorded (or in Stay Awake mode) it ends the nap and
-    //! shows the results, otherwise it goes back to the start screen.
-    private function stopHint(context as Number) as Array<String> {
-        if (_confirm.isArmed(nowMs(), context)) {
-            if (context == ConfirmPress.CONTEXT_NAP
-                && (_detector.hasSleptAtLeastOnce() || _detector.isStayAwake())) {
-                return ["Again: stop + stats", "Again: stop", "Again"] as Array<String>;
-            }
-            return ["Press again to stop", "Again to stop", "Again"] as Array<String>;
+    //! Footer of the nap, Stay Awake, peek and alarm screens (longest first,
+    //! shorter variants for narrow screens and wide fonts). Unarmed it
+    //! teaches both pairs (BACK x2 exits, START x2 stops); once a first
+    //! press is armed it repeats the popup hint in red: what the second
+    //! press of that key does.
+    private function setNapFooter(L as ScreenLayout, alarm as Boolean, color as Graphics.ColorType) as Void {
+        var now = nowMs();
+        if (_confirm.isArmed(now, ConfirmPress.CONTEXT_EXIT)) {
+            L.setFooterTexts(HINT_EXIT, Graphics.COLOR_RED);
+        } else if (_confirm.isArmed(now, ConfirmPress.CONTEXT_STOP)) {
+            L.setFooterTexts(alarm ? HINT_STOP
+                : (["START again: stop + stats", "START again: stop", "Again: stop"] as Array<String>),
+                Graphics.COLOR_RED);
+        } else if (alarm) {
+            L.setFooterTexts(["BACK x2: exit, START x2: stop", "BACK x2 exit · START x2 stop", "BACK x2 to exit"]
+                as Array<String>, color);
+        } else {
+            L.setFooterTexts(["BACK x2: exit, START x2: stats", "BACK x2 exit · START x2 stats", "BACK x2 to exit"]
+                as Array<String>, color);
         }
-        return ["BACK x2 to stop", "BACK x2"] as Array<String>;
-    }
-
-    private function footerColor(context as Number) as Graphics.ColorType {
-        return _confirm.isArmed(nowMs(), context) ? Graphics.COLOR_RED : Graphics.COLOR_LT_GRAY;
     }
 
     //! START sets up a new nap, BACK exits. Where the bottom is too narrow
     //! for both (inside the summary ring it always is) the START hint wins:
     //! BACK exiting is what every Garmin app does, a new nap is not obvious.
     private function summaryFooter() as Array<String> {
-        // The Instinct's summary needs every row: its hint must fit the
-        // bottom row. Inside the round ring the shortest variant is used.
-        return (isRoundScreen() ? ["START new, BACK exit", "START: new nap"]
-                                : ["START new, BACK exit", "START: new"]) as Array<String>;
+        return ["START: new nap, BACK: exit", "START: new nap", "START: new"] as Array<String>;
     }
 
     //! The alarm promise. Before sleep: the latest possible alarm (the
@@ -1083,6 +1119,11 @@ class PowerNapView extends WatchUi.View {
     (:debug)
     function testExpireInputLock() as Void {
         _locked = false;
+    }
+
+    (:debug)
+    function testIsHintShowing() as Boolean {
+        return isHintShowing();
     }
 
     //! Lay out the start screen on dc and return [plusMaxY, minusMinY,

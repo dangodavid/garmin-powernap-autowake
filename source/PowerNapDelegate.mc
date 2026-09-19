@@ -22,18 +22,32 @@ import Toybox.System;
 //! Physical positions differ between product lines (on a 5-button fenix,
 //! START is top-right and BACK bottom-right), so no code here depends on them.
 //!
+//! Key model (owner decision, v1.1.0):
+//!
+//!   Screen                         BACK               START              UP/DOWN
+//!   Start                          exit               start nap          +/- 5 min
+//!   Nap / Stay Awake guard / peek  x2: exit (no       x2: stop, summary  peek card
+//!                                  summary); 1st:     1st: peek card
+//!                                  "Press BACK again"
+//!   Alarm (nap)                    x2: alarm off,     x2: alarm off,     nothing
+//!                                  exit; 1st: popup   summary; 1st: popup
+//!   Doze alarm (Stay Awake)        x2: exit           x2: alarm off,     nothing
+//!                                                     back on guard
+//!   Summary                        exit (1 press)     new nap            nothing
+//!
 //! Safety: once a nap is running, nothing stops it or its alarm by accident.
 //! A wrist on a pillow can press a button and a sleeve can touch the screen:
-//! * stopping the nap or the alarm needs two presses within 4 seconds
-//!   (BACK, or START on the alarm screen);
-//! * UP, DOWN and START during a nap only "peek": a few seconds of the
-//!   so-far card (time asleep, wakes, alarm time), nothing stops;
+//! * two presses of the same key within 4 seconds (ConfirmPress: BACK arms
+//!   the exit, START arms the stop; the other key re-arms instead of
+//!   confirming);
+//! * UP and DOWN (and a single START) during a nap only "peek": a few seconds
+//!   of the so-far card, nothing stops;
 //! * taps, swipes, holds, flicks and drags are consumed on every nap screen,
 //!   including the alarm, so no gesture reaches system navigation;
 //! * every other key is consumed too;
-//! * for 2.5 s after a confirmed stop or a screen change every press is
-//!   ignored (each ignored press extends it), so a burst of presses cannot
-//!   run on into the next screen;
+//! * for 1.5 s after a confirmed stop or a screen change every press is
+//!   swallowed, and never extends the lock, so a burst of presses cannot run
+//!   on into the next screen but can never trap the user either;
 //! * in Stay Awake mode a button press counts as proof of being awake.
 //!
 //! The logic lives in handleKey()/handleTap() so tests can drive it without
@@ -44,6 +58,7 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     private var _detector as SleepDetector;
     private var _alarm    as AlarmManager;
     private var _exitEnabled as Boolean = true;   // tests switch System.exit() off
+    private var _exitRequested as Boolean = false;
 
     function initialize(view as PowerNapView, detector as SleepDetector, alarm as AlarmManager) {
         InputDelegate.initialize();
@@ -115,9 +130,8 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     //! One button press (a WatchUi.KEY_* value).
     function handleKey(key as Number) as Boolean {
         if (_view.isInputLocked()) {
-            // Presses that keep coming right after a stop or a screen change:
-            // ignored, and the lock lasts until they stop for a moment.
-            _view.lockInput();
+            // Presses that keep coming right after a stop or a screen change
+            // are swallowed; the lock ends on its own, whatever is pressed.
             return true;
         }
         var state = _detector.getState();
@@ -143,16 +157,6 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
             return false;
         }
 
-        // -- Alarm: BACK or START twice stops it --------------------------
-        if (state == SleepDetector.STATE_ALARM) {
-            if (key == WatchUi.KEY_ESC || key == WatchUi.KEY_ENTER) {
-                if (_view.pressStop(ConfirmPress.CONTEXT_ALARM)) {
-                    dismissAlarm();
-                }
-            }
-            return true;
-        }
-
         // -- Summary: BACK exits, START sets up a new nap ------------------
         if (state == SleepDetector.STATE_SUMMARY) {
             if (key == WatchUi.KEY_ESC) {
@@ -167,7 +171,7 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
             return false;
         }
 
-        // -- Active nap (CALIBRATING / MONITORING / SLEEPING) ------------
+        // -- Nap, Stay Awake guard, peek card, alarm ------------------------
         if (_detector.isStayAwake()
             && (key == WatchUi.KEY_ESC || key == WatchUi.KEY_UP || key == WatchUi.KEY_DOWN || key == WatchUi.KEY_ENTER)) {
             // Stay Awake: a press is proof of being awake (it also answers
@@ -175,20 +179,36 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
             _detector.noteUserAwake();
         }
         if (key == WatchUi.KEY_ESC) {
-            if (_view.pressStop(ConfirmPress.CONTEXT_NAP)) {
-                if (_detector.hasSleptAtLeastOnce() || _detector.isStayAwake()) {
-                    // Something to report: stop and show the summary.
-                    _detector.cancel();
-                    _alarm.stop();
-                    WatchUi.requestUpdate();
-                } else {
-                    // Nothing recorded yet: back to the start screen so the
-                    // user can adjust the duration and try again.
-                    _view.resetToStart();
-                }
-                _view.lockInput();
+            // BACK twice leaves the app from every nap and alarm screen: the
+            // nap (or the alarm) ends, no summary.
+            if (_view.pressConfirm(ConfirmPress.CONTEXT_EXIT)) {
+                exitApp();
+            } else {
+                _view.showHint(PowerNapView.HINT_EXIT);
             }
-        } else if (key == WatchUi.KEY_UP || key == WatchUi.KEY_DOWN || key == WatchUi.KEY_ENTER) {
+            return true;
+        }
+        if (key == WatchUi.KEY_ENTER) {
+            if (state == SleepDetector.STATE_ALARM) {
+                // START twice stops the alarm: a nap shows its summary, the
+                // Stay Awake doze alarm goes back on guard.
+                if (_view.pressConfirm(ConfirmPress.CONTEXT_STOP)) {
+                    dismissAlarm();
+                } else {
+                    _view.showHint(PowerNapView.HINT_STOP);
+                }
+            } else {
+                // START twice stops the nap and shows the summary; the first
+                // press shows the peek card, whose footer says so.
+                if (_view.pressConfirm(ConfirmPress.CONTEXT_STOP)) {
+                    stopNap();
+                } else {
+                    _view.showPeek();
+                }
+            }
+            return true;
+        }
+        if ((key == WatchUi.KEY_UP || key == WatchUi.KEY_DOWN) && state != SleepDetector.STATE_ALARM) {
             _view.showPeek();
         }
         return true;
@@ -205,9 +225,19 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         WatchUi.requestUpdate();
     }
 
+    //! Stop the running nap (or Stay Awake session) and show its summary.
+    private function stopNap() as Void {
+        _detector.cancel();
+        _alarm.stop();
+        _view.lockInput();
+        WatchUi.requestUpdate();
+    }
+
+    //! Leave the app: the nap and the alarm end here, no summary.
     private function exitApp() as Void {
         _detector.stop();
         _alarm.stop();
+        _exitRequested = true;
         if (_exitEnabled) {
             System.exit();
         }
@@ -219,5 +249,11 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     (:debug)
     function testDisableExit() as Void {
         _exitEnabled = false;
+    }
+
+    //! Whether exitApp() ran (with System.exit() switched off by tests).
+    (:debug)
+    function testExitRequested() as Boolean {
+        return _exitRequested;
     }
 }

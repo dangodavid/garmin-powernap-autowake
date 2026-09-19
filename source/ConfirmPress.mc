@@ -1,19 +1,20 @@
 import Toybox.Lang;
 
 //! Two-press confirmation for actions that must never happen by accident
-//! (stopping a nap, stopping the alarm). The first press arms, a second
-//! press in the same context within the window confirms. Pressing in a
-//! different context (e.g. the alarm started right after a nap press)
-//! re-arms instead of confirming. Time is passed in (any unit, the window in
-//! the same unit; the view uses System.getTimer() milliseconds) so the guard
+//! (leaving the app, stopping a nap or the alarm). The first press arms, a
+//! second press in the same context within the window confirms. The two
+//! keys never combine into a pair: BACK arms CONTEXT_EXIT and START arms
+//! CONTEXT_STOP, and a press of the other key re-arms for its own context
+//! instead of confirming. Time is passed in (any unit, the window in the
+//! same unit; the view uses System.getTimer() milliseconds) so the guard
 //! can be tested and is not rounded to whole seconds. Only the difference
 //! of two times is used, which stays correct when System.getTimer() wraps.
 class ConfirmPress {
 
     enum {
-        CONTEXT_NONE  = 0,
-        CONTEXT_NAP   = 1,
-        CONTEXT_ALARM = 2
+        CONTEXT_NONE = 0,
+        CONTEXT_EXIT = 1,    // BACK: leave the app (nap ended, no summary)
+        CONTEXT_STOP = 2     // START: stop the nap or the alarm (summary)
     }
 
     private var _window as Number;
@@ -39,6 +40,11 @@ class ConfirmPress {
     function isArmed(now as Number, context as Number) as Boolean {
         var elapsed = now - _armedAt;
         return _armedContext == context && elapsed >= 0 && elapsed < _window;
+    }
+
+    //! The context waiting for confirmation right now, or CONTEXT_NONE.
+    function armedContext(now as Number) as Number {
+        return isArmed(now, _armedContext) ? _armedContext : CONTEXT_NONE;
     }
 
     function reset() as Void {
