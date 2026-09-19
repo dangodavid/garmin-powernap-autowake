@@ -14,7 +14,7 @@
     <string id="VibrationOnly">Vibration Only</string>
     <string id="ToneOnly">Tone Only</string>
     <string id="VibrationAndTone">Vibration + Tone</string>
-    <string id="Low">Low</string>
-    <string id="Medium">Medium</string>
-    <string id="High">High</string>
+    <string id="Low">Low (restless sleepers)</string>
+    <string id="Medium">Medium (default)</string>
+    <string id="High">High (strict stillness)</string>
 </strings>

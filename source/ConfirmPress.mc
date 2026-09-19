@@ -6,7 +6,8 @@ import Toybox.Lang;
 //! different context (e.g. the alarm started right after a nap press)
 //! re-arms instead of confirming. Time is passed in (any unit, the window in
 //! the same unit; the view uses System.getTimer() milliseconds) so the guard
-//! can be tested and is not rounded to whole seconds.
+//! can be tested and is not rounded to whole seconds. Only the difference
+//! of two times is used, which stays correct when System.getTimer() wraps.
 class ConfirmPress {
 
     enum {
@@ -16,7 +17,7 @@ class ConfirmPress {
     }
 
     private var _window as Number;
-    private var _armedUntil as Number = 0;
+    private var _armedAt as Number = 0;
     private var _armedContext as Number = CONTEXT_NONE;
 
     function initialize(window as Number) {
@@ -29,18 +30,19 @@ class ConfirmPress {
             reset();
             return true;
         }
-        _armedUntil = now + _window;
+        _armedAt = now;
         _armedContext = context;
         return false;
     }
 
     //! True while a first press in this context is waiting for confirmation.
     function isArmed(now as Number, context as Number) as Boolean {
-        return _armedContext == context && now < _armedUntil;
+        var elapsed = now - _armedAt;
+        return _armedContext == context && elapsed >= 0 && elapsed < _window;
     }
 
     function reset() as Void {
-        _armedUntil = 0;
+        _armedAt = 0;
         _armedContext = CONTEXT_NONE;
     }
 }

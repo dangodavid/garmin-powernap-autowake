@@ -58,11 +58,8 @@ class PowerNapApp extends Application.AppBase {
     //! Back in the foreground: check the alarm immediately and, if it is
     //! already ringing (silently, while we were hidden), ring right now.
     function onActive(state as Dictionary?) as Void {
-        if (_sleepDetector != null) {
-            (_sleepDetector as SleepDetector).onResume();
-        }
-        if (_alarmManager != null && (_alarmManager as AlarmManager).isAlarming()) {
-            (_alarmManager as AlarmManager).ringNow();
+        if (_sleepDetector != null && _alarmManager != null) {
+            Lifecycle.resume(_sleepDetector as SleepDetector, _alarmManager as AlarmManager);
         }
     }
 
@@ -80,5 +77,21 @@ class PowerNapApp extends Application.AppBase {
             (_view as PowerNapView).onSettingsChanged();
         }
         WatchUi.requestUpdate();
+    }
+}
+
+//! App lifecycle steps that tests can drive without an AppBase.
+module Lifecycle {
+
+    //! Back in the foreground. An alarm that was already ringing while the
+    //! app was hidden (the system denied it) rings again at once. An alarm
+    //! that only becomes due now is started by onResume() itself, so it must
+    //! not get a second, immediate ring on top of its first one.
+    function resume(detector as SleepDetector, alarm as AlarmManager) as Void {
+        var wasAlarming = alarm.isAlarming();
+        detector.onResume();
+        if (wasAlarming) {
+            alarm.ringNow();
+        }
     }
 }

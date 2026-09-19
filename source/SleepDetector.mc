@@ -4,6 +4,7 @@ import Toybox.Time;
 import Toybox.Math;
 import Toybox.Application;
 import Toybox.Lang;
+import Toybox.System;
 import Toybox.WatchUi;
 
 //! Core sleep-detection engine.
@@ -15,11 +16,13 @@ import Toybox.WatchUi;
 //! 60 ticks, the per-minute detection logic. Sensor callbacks (HR at 1 Hz,
 //! accelerometer in 1-second batches) feed per-minute accumulators; the
 //! minute logic only ever looks at aggregates, never at single samples.
+//! One accelerometer batch becomes one motion value (MotionMath.batchMotion:
+//! the spread of |a| within that second, independent of the sensor offset).
 //!
 //! Wake-up guarantee
 //! -----------------
 //! The deadline is start + fallAsleepAllowance + napDuration, fixed when the
-//! nap starts and shown on screen as "Alarm by HH:MM". It is a hard upper
+//! nap starts and shown on screen as "Latest alarm HH:MM". It is a hard upper
 //! bound on the alarm time:
 //! * Sleep detected  -> alarm at min(onset + napDuration, deadline).
 //!                      Falling asleep late shortens the nap instead of
@@ -56,6 +59,16 @@ import Toybox.WatchUi;
 //! seconds, i.e. more than a still minute tolerates, or mean motion >= 1.5 x
 //! threshold) or a >= LIGHT_HR_RISE BPM rise fires the alarm early.
 //!
+//! Stay Awake mode (nap duration 0)
+//! --------------------------------
+//! The same onset rules detect dozing off, but the HR drop is measured
+//! against a rolling reference (the mean of the per-minute HR 4-13 minutes
+//! ago) because a session can last hours and HR drifts. At 3 still minutes
+//! a single gentle nudge vibrates ("Stay alert"); at onset the doze alarm
+//! (ALARM_DOZE) rings, starting at the medium phase. Dismissing it goes back
+//! on guard, so one session can catch several dozes. There is no deadline
+//! and no sleep state; the session ends when the user stops it.
+//!
 //! Settings
 //! --------
 //! Settings are read when a nap starts and frozen for that nap. A change made
@@ -76,7 +89,8 @@ class SleepDetector {
         ALARM_NONE         = 0,
         ALARM_NAP_COMPLETE = 1,  // planned end reached: min(sleepStart + napDuration, deadline)
         ALARM_SMART_WAKE   = 2,  // light-sleep signal inside the smart wake window
-        ALARM_DEADLINE     = 3   // sleep never detected: safety-net timer
+        ALARM_DEADLINE     = 3,  // sleep never detected: safety-net timer
+        ALARM_DOZE         = 4   // Stay Awake mode: the user dozed off
     }
 
     // ── Tunables ────────────────────────────────────────────────────────
@@ -96,6 +110,11 @@ class SleepDetector {
     private const LIGHT_ACTIVE_SEC         = 6;     // = STILL_MAX_ACTIVE_SEC + 1: "not a still minute"
     private const LIGHT_HR_RISE            = 5.0f;
     private const HR_WINDOW_MINUTES        = 3;
+    // Stay Awake mode
+    private const NUDGE_STILL_MIN          = 3;     // one gentle nudge after this many still minutes
+    private const HR_REF_MINUTES           = 10;    // rolling HR reference: minutes before the window
+    private const HR_REF_MIN_MINUTES       = 5;     // ... used once at least this many exist
+    private const DOZE_ALARM_PHASE         = 2;     // the doze alarm starts at the medium phase
 
     // ── State ───────────────────────────────────────────────────────────
     private var _state as Number = STATE_CALIBRATING;
@@ -103,6 +122,8 @@ class SleepDetector {
     private var _cancelled as Boolean = false;
     private var _running as Boolean = false;
     private var _wasInactive as Boolean = false;     // app left the foreground during this nap
+    private var _stayAwake as Boolean = false;       // Stay Awake mode (frozen per session)
+    private var _dozeCount as Number = 0;
 
     // Live sensor reading
     private var _currentHR as Number = 0;
@@ -128,6 +149,7 @@ class SleepDetector {
 
     // Rolling detection state
     private var _hrWindow as Array<Number> = [] as Array<Number>;  // per-minute HR means
+    private var _hrHistory as Array<Number> = [] as Array<Number>; // Stay Awake: last 13 minute means
     private var _stillMinutes as Number = 0;                        // consecutive still minutes
     private var _hrRiseMinutes as Number = 0;                       // consecutive minutes with HR rise
     private var _sleepMinuteHrSum as Number = 0;                    // per-minute HR means during sleep
@@ -155,6 +177,7 @@ class SleepDetector {
     private var _secInMinute as Number = 0;
     private var _clockOffsetSec as Number = 0;       // only changed by debug helpers
     private var _frozenBaseSec as Number = 0;        // > 0 only in test sessions
+    private var _fakeRuntime as Boolean = false;     // tests: start() without sensors/timers
 
     // Settings
     private var _napDurationMin as Number = 30;
@@ -173,9 +196,10 @@ class SleepDetector {
     //! Wrapped in try/catch because Properties can throw if storage is
     //! corrupt or the companion app sent an invalid value type.
     function loadSettings() as Void {
-        if (_running) {
+        if (_running || _fakeRuntime) {
             // A nap is in progress: its settings are frozen. The new values
             // are read again by the next start() (see PowerNapView.startNap).
+            // (Fake-runtime test sessions keep their documented defaults.)
             return;
         }
         try {
@@ -222,6 +246,8 @@ class SleepDetector {
         _cancelled = false;
         _running = true;
         _wasInactive = false;
+        _stayAwake = (_napDurationMin == 0);
+        _dozeCount = 0;
 
         _currentHR = 0;
         resetAccumulators();
@@ -236,6 +262,7 @@ class SleepDetector {
         _hrBaseline = 0.0f;
 
         _hrWindow = [] as Array<Number>;
+        _hrHistory = [] as Array<Number>;
         _stillMinutes = 0;
         _hrRiseMinutes = 0;
         _sleepMinuteHrSum = 0;
@@ -243,7 +270,8 @@ class SleepDetector {
 
         _startSec = now;
         _sessionNapSec = _napDurationMin * 60;
-        _deadlineSec = now + _fallAsleepAllowanceMin * 60 + _sessionNapSec;
+        // Stay Awake has no deadline: nothing rings unless the user dozes.
+        _deadlineSec = _stayAwake ? 0 : (now + _fallAsleepAllowanceMin * 60 + _sessionNapSec);
         _sleepStartSec = null;
         _napEndSec = 0;
         _finishSec = null;
@@ -255,10 +283,20 @@ class SleepDetector {
         _sleepHrCount = 0;
         _sleepHrMin = 0;
         _secInMinute = 0;
+        trace("start," + _napDurationMin + "," + _fallAsleepAllowanceMin + ","
+            + _hrDropThreshold + "," + _motionThreshold.toNumber());
     }
 
-    //! Start sensors and the 1-second tick timer.
-    function start() as Void {
+    //! Start a session of napMin minutes (0 = Stay Awake mode): sensors and
+    //! the 1-second tick timer. The other settings come from loadSettings().
+    function start(napMin as Number) as Void {
+        _napDurationMin = (napMin <= 0) ? 0 : clampNumber(napMin, 5, 120);
+        if (_fakeRuntime) {
+            _frozenBaseSec = Time.now().value();
+            _clockOffsetSec = 0;
+            beginSession();
+            return;
+        }
         beginSession();
 
         // Enable heart rate sensor events (1 Hz).
@@ -299,6 +337,9 @@ class SleepDetector {
         if (_tickTimer != null) {
             _tickTimer.stop();
             _tickTimer = null;
+        }
+        if (_fakeRuntime) {
+            return;
         }
         try {
             Sensor.enableSensorEvents(null);
@@ -354,33 +395,22 @@ class SleepDetector {
 
     //! High-frequency sensor data callback (one 1-second accelerometer batch).
     function onSensorData(sensorData as Sensor.SensorData) as Void {
-        if (!isActiveState()) {
-            return;
-        }
         if (sensorData.accelerometerData == null) {
             return;
         }
         var accel = sensorData.accelerometerData as Sensor.AccelerometerData;
-        var xArr = accel.x;
-        var yArr = accel.y;
-        var zArr = accel.z;
-        if (xArr == null || yArr == null || zArr == null) {
+        feedAccelBatch(accel.x, accel.y, accel.z);
+    }
+
+    //! One accelerometer batch (millig per axis) -> one motion second.
+    private function feedAccelBatch(x as Array<Number>?, y as Array<Number>?, z as Array<Number>?) as Void {
+        if (!isActiveState()) {
             return;
         }
-        var count = xArr.size();
-        if (count <= 0) {
-            return;
+        var motion = MotionMath.batchMotion(x, y, z);
+        if (motion != null) {
+            feedMotionSecond(motion as Float);
         }
-        // Mean deviation from 1 g over the batch (gravity removed).
-        var sum = 0.0f;
-        for (var i = 0; i < count; i++) {
-            var xv = (xArr[i] != null) ? (xArr[i] as Number).toFloat() : 0.0f;
-            var yv = (yArr[i] != null) ? (yArr[i] as Number).toFloat() : 0.0f;
-            var zv = (zArr[i] != null) ? (zArr[i] as Number).toFloat() : 0.0f;
-            var mag = Math.sqrt(xv * xv + yv * yv + zv * zv) as Float;
-            sum += (mag - 1000.0f).abs();
-        }
-        feedMotionSecond(sum / count.toFloat());
     }
 
     //! One HR reading (1 Hz).
@@ -406,7 +436,7 @@ class SleepDetector {
         }
     }
 
-    //! One second of accelerometer data, summarised as mean |a| - 1 g (millig).
+    //! One second of motion (millig, see MotionMath).
     private function feedMotionSecond(magnitude as Float) as Void {
         if (!isActiveState()) {
             return;
@@ -447,8 +477,12 @@ class SleepDetector {
     }
 
     //! Wall-clock alarm check. Runs every second so the alarm is never more
-    //! than one second late, and never depends on the detector.
+    //! than one second late, and never depends on the detector. Stay Awake
+    //! mode has no timed alarm.
     private function checkAlarmDue() as Void {
+        if (_stayAwake) {
+            return;
+        }
         var now = nowSec();
         if (_sleepStartSec != null) {
             if (now >= _napEndSec) {
@@ -482,8 +516,16 @@ class SleepDetector {
             if (_hrWindow.size() > HR_WINDOW_MINUTES) {
                 _hrWindow = _hrWindow.slice(-HR_WINDOW_MINUTES, null) as Array<Number>;
             }
+            if (_stayAwake) {
+                _hrHistory.add(_minuteHr);
+                if (_hrHistory.size() > HR_REF_MINUTES + HR_WINDOW_MINUTES) {
+                    _hrHistory = _hrHistory.slice(-(HR_REF_MINUTES + HR_WINDOW_MINUTES), null) as Array<Number>;
+                }
+            }
         }
         _stillMinutes = _minuteStill ? (_stillMinutes + 1) : 0;
+        trace("m," + _state + "," + _minuteHr + "," + (_minuteMotionMean * 10.0f).toNumber()
+            + "," + _minuteActiveSec + "," + _stillMinutes + "," + _hrBaseline.toNumber());
 
         if (_state == STATE_CALIBRATING) {
             if (nowSec() - _startSec >= CALIBRATION_SEC) {
@@ -511,7 +553,23 @@ class SleepDetector {
 
     private function handleMonitoring() as Void {
         if (_stillMinutes >= requiredStillMinutes()) {
-            enterSleep();
+            if (_stayAwake) {
+                dozeDetected();
+            } else {
+                enterSleep();
+            }
+            return;
+        }
+        if (_stayAwake && _stillMinutes == NUDGE_STILL_MIN) {
+            // Drowsy but not asleep yet: one gentle reminder, once per still run.
+            trace("nudge");
+            try {
+                if (_alarm != null) {
+                    (_alarm as AlarmManager).nudge();
+                }
+            } catch (e instanceof Lang.Exception) {
+                // The on-screen warning still shows.
+            }
         }
     }
 
@@ -526,13 +584,38 @@ class SleepDetector {
         return ONSET_STILL_MIN_NO_HR;
     }
 
-    //! HR (mean of the last minutes) has dropped >= threshold below baseline.
+    //! HR (mean of the last minutes) has dropped >= threshold below the
+    //! reference: the calibration baseline, or in Stay Awake mode the rolling
+    //! reference once enough minutes exist.
     private function hrDropMet() as Boolean {
-        if (_hrBaseline <= 0.0f || _hrWindow.size() < 2) {
+        var reference = _hrBaseline;
+        if (_stayAwake) {
+            var rolling = rollingHrReference();
+            if (rolling > 0.0f) {
+                reference = rolling;
+            }
+        }
+        if (reference <= 0.0f || _hrWindow.size() < 2) {
             return false;
         }
-        var drop = _hrBaseline - arrayMeanFloat(_hrWindow);
+        var drop = reference - arrayMeanFloat(_hrWindow);
         return drop >= _hrDropThreshold.toFloat();
+    }
+
+    //! Stay Awake: mean per-minute HR of the minutes before the last three
+    //! (up to 10 of them), 0 until at least 5 exist. Long sessions drift
+    //! (walking in, then sitting for an hour), so a fixed baseline would read
+    //! a calm, awake reader as "HR dropped".
+    private function rollingHrReference() as Float {
+        var older = _hrHistory.size() - HR_WINDOW_MINUTES;
+        if (older < HR_REF_MIN_MINUTES) {
+            return 0.0f;
+        }
+        var sum = 0;
+        for (var i = 0; i < older; i++) {
+            sum += _hrHistory[i];
+        }
+        return sum.toFloat() / older.toFloat();
     }
 
     //! MONITORING -> SLEEPING.
@@ -550,6 +633,7 @@ class SleepDetector {
                 _napEndSec = _deadlineSec;
             }
             _segmentStartSec = now;
+            trace("onset");
         } else {
             var backdate = _stillMinutes * 60;
             if (backdate > REENTRY_BACKDATE_MAX_SEC) {
@@ -558,9 +642,16 @@ class SleepDetector {
             _segmentStartSec = now - backdate;
             _sleepMinuteHrSum = 0;
             _sleepMinuteHrCount = 0;
+            trace("reentry");
         }
         _hrRiseMinutes = 0;
         _state = STATE_SLEEPING;
+    }
+
+    //! Stay Awake: the user dozed off -> doze alarm.
+    private function dozeDetected() as Void {
+        _dozeCount += 1;
+        transitionToAlarm(ALARM_DOZE);
     }
 
     // ── Sleeping: wake episodes and smart wake ──────────────────────────
@@ -619,6 +710,7 @@ class SleepDetector {
         _stillMinutes = 0;
         _hrRiseMinutes = 0;
         _state = STATE_MONITORING;
+        trace("wake");
     }
 
     private function closeSleepSegment() as Void {
@@ -675,14 +767,39 @@ class SleepDetector {
         _alarmReason = reason;
         _finishSec = nowSec();
         _state = STATE_ALARM;
+        trace("alarm," + reason);
         try {
             if (_alarm != null) {
-                (_alarm as AlarmManager).startAlarm();
+                (_alarm as AlarmManager).startAlarmFromPhase(
+                    (reason == ALARM_DOZE) ? DOZE_ALARM_PHASE : 0);
             }
         } catch (e instanceof Lang.Exception) {
             // Alarm start failed -- state is ALARM so the WAKE UP screen
             // still displays on the next onUpdate().
         }
+    }
+
+    //! The user stopped the alarm (two presses). A nap moves to its summary;
+    //! Stay Awake mode goes back on guard for the next doze.
+    function dismissAlarm() as Void {
+        if (_stayAwake && _running && _state == STATE_ALARM) {
+            resumeGuard();
+            return;
+        }
+        finishNap();
+    }
+
+    //! Stay Awake: ALARM -> MONITORING. The minute restarts clean, so the
+    //! alarm's own motion is not judged, and stillness counts from zero.
+    private function resumeGuard() as Void {
+        _state = STATE_MONITORING;
+        _alarmReason = ALARM_NONE;
+        _finishSec = null;
+        _stillMinutes = 0;
+        _hrWindow = [] as Array<Number>;
+        resetAccumulators();
+        _secInMinute = 0;
+        trace("resume");
     }
 
     //! Alarm dismissed: move to SUMMARY and release sensors/timers.
@@ -693,7 +810,7 @@ class SleepDetector {
             return;
         }
         closeSleepSegment();
-        if (_finishSec == null) {
+        if (_finishSec == null || (_stayAwake && _state == STATE_ALARM)) {
             _finishSec = nowSec();
         }
         _state = STATE_SUMMARY;
@@ -710,6 +827,7 @@ class SleepDetector {
         closeSleepSegment();
         _finishSec = nowSec();
         _state = STATE_SUMMARY;
+        trace("cancel");
         stop();
     }
 
@@ -722,7 +840,7 @@ class SleepDetector {
     //! Nap length of the running session in minutes (frozen at start so a
     //! settings change from the phone cannot skew a nap in progress).
     function getNapDurationMin() as Number {
-        return (_sessionNapSec > 0) ? (_sessionNapSec / 60) : _napDurationMin;
+        return (_sessionNapSec > 0 || _stayAwake) ? (_sessionNapSec / 60) : _napDurationMin;
     }
     function getFallAsleepAllowanceMin() as Number { return _fallAsleepAllowanceMin; }
     function getWakeEpisodes() as Number { return _wakeEpisodes; }
@@ -732,6 +850,30 @@ class SleepDetector {
     }
     function getMinSleepHR() as Number { return _sleepHrMin; }
     function hasSleptAtLeastOnce() as Boolean { return _sleepStartSec != null; }
+
+    //! Seconds from pressing START to the first sleep onset, -1 if none.
+    function getFallAsleepSec() as Number {
+        return (_sleepStartSec == null) ? -1 : (_sleepStartSec as Number) - _startSec;
+    }
+
+    //! Stay Awake mode (nap duration 0) for the current session.
+    function isStayAwake() as Boolean { return _stayAwake; }
+
+    //! Stay Awake: dozes caught in this session.
+    function getDozeCount() as Number { return _dozeCount; }
+
+    //! Stay Awake: the wrist has been still long enough for the nudge, the
+    //! doze alarm follows if it stays still.
+    function isDozeWarning() as Boolean {
+        return _stayAwake && _state == STATE_MONITORING && _stillMinutes >= NUDGE_STILL_MIN;
+    }
+
+    //! Seconds from start to the end of the session (or to now while active).
+    function getSessionSec() as Number {
+        var end = (_finishSec != null) ? (_finishSec as Number) : nowSec();
+        var d = end - _startSec;
+        return (d < 0) ? 0 : d;
+    }
 
     //! True in CALIBRATING / MONITORING / SLEEPING.
     function isActiveState() as Boolean {
@@ -863,13 +1005,28 @@ class SleepDetector {
         return sum.toFloat() / arr.size().toFloat();
     }
 
+    //! Debug builds record the session to the watch log, one line per minute
+    //! plus events, as "PN,<seconds since start>,<fields>". The watch writes
+    //! it only when GARMIN/APPS/LOGS/<prg name>.TXT exists; test/TraceTest.mc
+    //! explains how to replay a recorded nap. Never in unit tests (frozen
+    //! clock) and never in release builds (no health data is stored).
+    (:debug)
+    private function trace(line as String) as Void {
+        if (_frozenBaseSec == 0) {
+            System.println("PN," + (nowSec() - _startSec) + "," + line);
+        }
+    }
+
+    (:release)
+    private function trace(line as String) as Void {
+    }
+
     // ── Test helpers (debug builds only) ───────────────────────────────
 
-    //! Begin a session without sensors or timers. Tests drive time with
-    //! testRunSeconds()/testAdvanceClock().
     //! Begin a deterministic test session: documented default settings
     //! (30 min nap, 15 min allowance, 5 BPM, 50 mg), frozen clock, no
     //! sensors or timers. Independent of the simulator's stored properties.
+    //! Tests drive time with testRunSeconds()/testAdvanceClock().
     (:debug)
     function testStart() as Void {
         _napDurationMin = 30;
@@ -879,12 +1036,31 @@ class SleepDetector {
         testStartKeepSettings();
     }
 
+    //! Like testStart() but in Stay Awake mode (nap duration 0).
+    (:debug)
+    function testStartStayAwake() as Void {
+        testStart();
+        _napDurationMin = 0;
+        beginSession();
+    }
+
     //! Like testStart() but keeps whatever loadSettings() last read.
     (:debug)
     function testStartKeepSettings() as Void {
         _frozenBaseSec = Time.now().value();
         _clockOffsetSec = 0;
         beginSession();
+    }
+
+    //! Make start() (called by the view) run without sensors or timers, on a
+    //! frozen clock, with the documented default settings. Used by tests
+    //! that drive the real delegate and view.
+    (:debug)
+    function testUseFakeRuntime() as Void {
+        _fakeRuntime = true;
+        _fallAsleepAllowanceMin = 15;
+        _hrDropThreshold = 5;
+        _motionThreshold = 50.0f;
     }
 
     (:debug)
@@ -931,6 +1107,13 @@ class SleepDetector {
         feedMotionSecond(motion);
     }
 
+    //! Feed one raw accelerometer batch through the same path as the sensor
+    //! callback (MotionMath), without ticking.
+    (:debug)
+    function testFeedAccelBatch(x as Array<Number>?, y as Array<Number>?, z as Array<Number>?) as Void {
+        feedAccelBatch(x, y, z);
+    }
+
     //! Feed one HR reading without ticking.
     (:debug)
     function testFeedHR(hr as Number) as Void {
@@ -942,6 +1125,32 @@ class SleepDetector {
     function testTick() as Void {
         _clockOffsetSec += 1;
         onTick();
+    }
+
+    //! Replay one recorded minute (a "PN,<t>,m,..." trace line): HR every
+    //! second, and on the minute's last second the motion aggregates exactly
+    //! as the watch measured them (motionMean < 0 = no accelerometer data).
+    //! Stops early if the alarm fires inside the minute.
+    (:debug)
+    function testReplayMinute(hr as Number, motionMean as Float, activeSec as Number) as Void {
+        for (var s = 0; s < 60 && isActiveState(); s++) {
+            if (hr > 0) {
+                feedHR(hr);
+            }
+            if (_secInMinute == 59) {
+                if (motionMean >= 0.0f) {
+                    _accMotionSum = motionMean * 60.0f;
+                    _accMotionCount = 60;
+                    _accActiveSec = activeSec;
+                } else {
+                    _accMotionSum = 0.0f;
+                    _accMotionCount = 0;
+                    _accActiveSec = 0;
+                }
+            }
+            _clockOffsetSec += 1;
+            onTick();
+        }
     }
 
     //! Skip calibration: set the HR baseline and jump to MONITORING.
@@ -988,6 +1197,18 @@ class SleepDetector {
     (:debug)
     function getHRBaseline() as Float { return _hrBaseline; }
 
+    //! The HR reference the onset check uses right now (Stay Awake: rolling).
+    (:debug)
+    function testGetHrReference() as Float {
+        if (_stayAwake) {
+            var rolling = rollingHrReference();
+            if (rolling > 0.0f) {
+                return rolling;
+            }
+        }
+        return _hrBaseline;
+    }
+
     (:debug)
     function testGetMinuteMotionMean() as Float { return _minuteMotionMean; }
 
@@ -996,6 +1217,14 @@ class SleepDetector {
 
     (:debug)
     function testGetMinutesCompleted() as Number { return _minutesCompleted; }
+
+    //! Motion seconds fed into the current (unfinished) minute.
+    (:debug)
+    function testGetAccMotionCount() as Number { return _accMotionCount; }
+
+    //! Motion sum of the current (unfinished) minute.
+    (:debug)
+    function testGetAccMotionSum() as Float { return _accMotionSum; }
 
     (:debug)
     function testNowSec() as Number { return nowSec(); }
@@ -1008,6 +1237,12 @@ class SleepDetector {
 
     (:debug)
     function testGetStartSec() as Number { return _startSec; }
+
+    (:debug)
+    function testGetSleepStartSec() as Number? { return _sleepStartSec; }
+
+    (:debug)
+    function testGetSecInMinute() as Number { return _secInMinute; }
 
     (:debug)
     function testIsRunning() as Boolean { return _running; }

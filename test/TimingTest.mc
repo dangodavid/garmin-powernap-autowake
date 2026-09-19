@@ -826,3 +826,72 @@ function testTiming_alarmManagerStartsOnDeadline(logger as Test.Logger) as Boole
     a.stop();
     return ok;
 }
+
+// ── The user's example ──────────────────────────────────────────────────────
+
+//! 15 min nap started at 9:00 with the default 15 min "max time to fall
+//! asleep". At the start nothing is fixed at 9:15: the screen promises
+//! "Latest alarm 9:30" (start + 15 + 15). Moving until 9:05, then still: the
+//! watch decides "asleep" at 9:10 and the alarm moves to 9:10 + 15 = 9:25.
+//! Asleep only at 9:20 would be capped at 9:30 (a 10 min nap); never asleep
+//! rings at 9:30.
+(:test)
+function testTiming_fallingAsleepLateMovesTheAlarm(logger as Test.Logger) as Boolean {
+    var ok = true;
+
+    // Asleep at 9:10 -> alarm 9:25.
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testSetNapDurationMin(15);
+    var start = d.testGetStartSec();
+    if (d.getFallAsleepSec() != -1) {
+        logger.debug("no fall-asleep time before onset");
+        ok = false;
+    }
+    if (d.testGetDeadlineSec() != start + 30 * 60) {
+        logger.debug("the promise at 9:00 must be 9:30");
+        ok = false;
+    }
+    d.testRunMinutes(5, 72, 200.0f);             // 9:00-9:05 moving
+    d.testRunMinutes(5, 70, 10.0f);              // 9:05-9:10 still -> asleep at 9:10
+    var onset = d.testGetSleepStartSec();
+    if (d.getFallAsleepSec() != 10 * 60) {
+        logger.debug("the summary must say: fell asleep in 10 min, got " + d.getFallAsleepSec() + " s");
+        ok = false;
+    }
+    if (onset == null || (onset as Number) != start + 10 * 60 || d.testGetNapEndSec() != start + 25 * 60) {
+        logger.debug("asleep at 9:10 must move the alarm to 9:25, onset "
+            + ((onset != null) ? ((onset as Number) - start) / 60 : -1) + " min, alarm "
+            + (d.testGetNapEndSec() - start) / 60 + " min");
+        ok = false;
+    }
+    ok = timingRunToAlarm(d, start + 25 * 60, 60, 10.0f, SleepDetector.STATE_SLEEPING, logger) && ok;
+    if (d.getAlarmReason() != SleepDetector.ALARM_NAP_COMPLETE) {
+        logger.debug("9:25 alarm reason " + d.getAlarmReason());
+        ok = false;
+    }
+
+    // Asleep at 9:20 -> capped at 9:30.
+    d = new SleepDetector(null);
+    d.testStart();
+    d.testSetNapDurationMin(15);
+    start = d.testGetStartSec();
+    d.testRunMinutes(15, 72, 200.0f);            // 9:00-9:15 moving
+    d.testRunMinutes(5, 70, 10.0f);              // 9:15-9:20 still -> asleep at 9:20
+    if (d.testGetNapEndSec() != start + 30 * 60) {
+        logger.debug("asleep at 9:20 must be capped at 9:30, alarm " + (d.testGetNapEndSec() - start) / 60 + " min");
+        ok = false;
+    }
+
+    // Never asleep -> 9:30.
+    d = new SleepDetector(null);
+    d.testStart();
+    d.testSetNapDurationMin(15);
+    start = d.testGetStartSec();
+    ok = timingRunToAlarm(d, start + 30 * 60, 72, 200.0f, -1, logger) && ok;
+    if (d.getAlarmReason() != SleepDetector.ALARM_DEADLINE) {
+        logger.debug("never asleep must ring at 9:30 (deadline), reason " + d.getAlarmReason());
+        ok = false;
+    }
+    return ok;
+}

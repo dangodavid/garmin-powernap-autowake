@@ -459,3 +459,130 @@ function testReg_cappedNapWindowUsesEffectiveLength(logger as Test.Logger) as Bo
     }
     return true;
 }
+
+// ── Third review round ─────────────────────────────────────────────────────
+
+//! Coming back to the app exactly when the alarm becomes due starts it with
+//! ONE ring (onResume starts it; no extra ringNow on top of the first ring).
+(:test)
+function testReg_resumeWhenDueRingsOnce(logger as Test.Logger) as Boolean {
+    var a = new AlarmManager();
+    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
+    var d = new SleepDetector(a);
+    d.testStart();
+    d.testSetNapDurationMin(10);
+    d.testSetBaseline(70.0f);
+    d.testForceSleep();
+    d.testAdvanceClock(11 * 60);
+    Lifecycle.resume(d, a);
+    var ok = d.getState() == SleepDetector.STATE_ALARM && a.isAlarming()
+        && a.testGetRingsFired() == 1 && a.testGetVibrateCount() == 1;
+    if (!ok) {
+        logger.debug("state " + d.getState() + " rings " + a.testGetRingsFired() + " vib " + a.testGetVibrateCount());
+    }
+    a.stop();
+    return ok;
+}
+
+//! An alarm that was already ringing while the app was hidden rings again
+//! at once when the app comes back.
+(:test)
+function testReg_resumeWhileRingingRingsAgain(logger as Test.Logger) as Boolean {
+    var a = new AlarmManager();
+    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
+    var d = new SleepDetector(a);
+    d.testStart();
+    d.testSetNapDurationMin(10);
+    d.testSetBaseline(70.0f);
+    d.testForceSleep();
+    d.testAdvanceClock(10 * 60);
+    d.testTick();                            // alarm starts: ring 1
+    Lifecycle.resume(d, a);                  // back from the background: ring 2
+    var ok = a.isAlarming() && a.testGetRingsFired() == 2;
+    if (!ok) {
+        logger.debug("rings " + a.testGetRingsFired());
+    }
+    a.stop();
+    return ok;
+}
+
+//! Resuming a nap that is not due changes nothing and never rings.
+(:test)
+function testReg_resumeBeforeDueIsSilent(logger as Test.Logger) as Boolean {
+    var a = new AlarmManager();
+    var d = new SleepDetector(a);
+    d.testStart();
+    d.testSetBaseline(70.0f);
+    d.testForceSleep();
+    d.testAdvanceClock(60);
+    Lifecycle.resume(d, a);
+    var ok = d.getState() == SleepDetector.STATE_SLEEPING && !a.isAlarming() && a.testGetRingsFired() == 0;
+    a.stop();
+    return ok;
+}
+
+//! start() clamps the chosen duration: 0 is Stay Awake, 1-4 become 5,
+//! anything above 120 becomes 120 (fake runtime: no sensors, frozen clock).
+(:test)
+function testReg_startClampsDuration(logger as Test.Logger) as Boolean {
+    var inputs   = [0, 3, 5, 45, 120, 500] as Array<Number>;
+    var expected = [0, 5, 5, 45, 120, 120] as Array<Number>;
+    for (var i = 0; i < inputs.size(); i++) {
+        var d = new SleepDetector(null);
+        d.testUseFakeRuntime();
+        d.start(inputs[i]);
+        var stay = d.isStayAwake();
+        if (d.getNapDurationMin() != expected[i] || stay != (expected[i] == 0)) {
+            logger.debug("start(" + inputs[i] + "): " + d.getNapDurationMin() + " min, stay awake " + stay);
+            return false;
+        }
+        if (!stay && d.testGetDeadlineSec() != d.testGetStartSec() + (15 + expected[i]) * 60) {
+            logger.debug("start(" + inputs[i] + "): deadline must use the documented 15 min allowance");
+            return false;
+        }
+        d.stop();
+    }
+    return true;
+}
+
+//! The persistent phase keeps the full-intensity pattern and trill.
+(:test)
+function testReg_persistentPhaseKeepsFullPattern(logger as Test.Logger) as Boolean {
+    var a = new AlarmManager();
+    var p3 = a.testGetVibePattern(3);
+    var p4 = a.testGetVibePattern(4);
+    if (p3.size() != p4.size()) { return false; }
+    for (var i = 0; i < p3.size(); i++) {
+        if (p3[i].dutyCycle != p4[i].dutyCycle || p3[i].length != p4[i].length) { return false; }
+    }
+    if (!(Attention has :ToneProfile)) {
+        return true;                         // vivoactive 5/6: no melodies to compare
+    }
+    return a.testGetToneProfile(4).size() == a.testGetToneProfile(3).size();
+}
+
+//! System.getTimer() wraps after ~24.8 days of uptime. A press 3 s after the
+//! wrap still confirms one made just before it, and a press 10 s later does
+//! not: the guard uses elapsed time, so a stale arm can never let a single
+//! BACK stop a nap.
+(:test)
+function testReg_confirmPressAcrossTimerWrap(logger as Test.Logger) as Boolean {
+    var c = new ConfirmPress(4000);
+    var beforeWrap = 2147483000;             // 647 ms before the 32-bit maximum
+    var plus3s = -2147481296;                // beforeWrap + 3000 after the wrap
+    var plus10s = -2147474296;               // beforeWrap + 10000 after the wrap
+    c.press(beforeWrap, ConfirmPress.CONTEXT_NAP);
+    if (!c.isArmed(plus3s, ConfirmPress.CONTEXT_NAP)) {
+        logger.debug("3 s after the wrap the first press must still be armed");
+        return false;
+    }
+    if (c.isArmed(plus10s, ConfirmPress.CONTEXT_NAP)) {
+        logger.debug("10 s after the wrap the first press must have expired");
+        return false;
+    }
+    if (c.press(plus10s, ConfirmPress.CONTEXT_NAP)) {
+        logger.debug("a stale arm across the wrap must not confirm");
+        return false;
+    }
+    return true;
+}

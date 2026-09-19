@@ -31,11 +31,21 @@ function layoutHelperDc() as Graphics.Dc {
     return (ref.get() as Graphics.BufferedBitmap).getDc();
 }
 
-//! View over the given detector, marked as started.
+//! View over the given detector, marked as started. DND off and a full
+//! battery, whatever the simulator says (tests turn warnings on explicitly).
 (:debug)
 function layoutHelperView(d as SleepDetector, a as AlarmManager) as PowerNapView {
-    var v = new PowerNapView(d, a);
+    var v = layoutHelperStartView(d, a);
     v.testSetStarted(true);
+    return v;
+}
+
+//! Start-screen view with DND off and a full battery.
+(:debug)
+function layoutHelperStartView(d as SleepDetector, a as AlarmManager) as PowerNapView {
+    var v = new PowerNapView(d, a);
+    v.testForceDnd(false);
+    v.testForceBattery(100);
     return v;
 }
 
@@ -43,12 +53,7 @@ function layoutHelperView(d as SleepDetector, a as AlarmManager) as PowerNapView
 (:debug)
 function layoutHelperCheck(name as String, v as PowerNapView, dc as Graphics.Dc,
                            mustShow as Array<String>, logger as Test.Logger) as Boolean {
-    var L = v.testBuildLayout(dc);
-    if (L == null) {
-        logger.debug(name + ": no layout");
-        return false;
-    }
-    var layout = L as ScreenLayout;
+    var layout = v.testBuildLayout(dc);
     var ok = true;
     if (layout.hasOverflow()) {
         logger.debug(name + ": content overflows the screen");
@@ -103,7 +108,7 @@ function layoutHelperAsleep() as SleepDetector {
 }
 
 //! Calibrating and monitoring screens: status and the guaranteed alarm time
-//! ("Alarm by") are always visible, also with the inactive warning and the
+//! ("Latest alarm") are always visible, also with the inactive warning and the
 //! armed (longest) footer.
 (:test)
 function testLayout_monitoringScreens(logger as Test.Logger) as Boolean {
@@ -112,16 +117,16 @@ function testLayout_monitoringScreens(logger as Test.Logger) as Boolean {
     var d = new SleepDetector(null);
     d.testStart();
     var v = layoutHelperView(d, a);
-    var ok = layoutHelperCheck("calibrating", v, dc, ["Calibrating", "Alarm by|By "] as Array<String>, logger);
+    var ok = layoutHelperCheck("calibrating", v, dc, ["Calibrating", "Latest|By "] as Array<String>, logger);
 
     d.testSetBaseline(70.0f);
     d.testRunMinutes(1, 68, 10.0f);
-    ok = layoutHelperCheck("monitoring", v, dc, ["Monitoring", "Stillness", "Alarm by|By "] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("monitoring", v, dc, ["Monitoring", "Stillness", "Latest|By "] as Array<String>, logger) && ok;
 
     d.noteInactive();
     v.pressStop(ConfirmPress.CONTEXT_NAP);
     ok = layoutHelperCheck("monitoring+warning+armed", v, dc,
-        ["Monitoring", "Alarm by|By ", "Keep app open"] as Array<String>, logger) && ok;
+        ["Monitoring", "Latest|By ", "Keep app open"] as Array<String>, logger) && ok;
     return ok;
 }
 
@@ -133,7 +138,12 @@ function testLayout_awakeAfterWake(logger as Test.Logger) as Boolean {
     d.testRunMinutes(3, 55, 10.0f);
     d.testRunMinutes(1, 60, 300.0f);
     var v = layoutHelperView(d, new AlarmManager());
-    return layoutHelperCheck("awake", v, dc, ["Awake", "Alarm in"] as Array<String>, logger);
+    var ok = layoutHelperCheck("awake", v, dc, ["Awake", "Alarm in", "Alarm at|At "] as Array<String>, logger);
+    if (v.testBuildLayout(dc).showsFragment("after sleep")) {
+        logger.debug("after a wake the alarm is fixed: no 'N min after sleep' rule");
+        ok = false;
+    }
+    return ok;
 }
 
 //! Sleeping screen with countdown, normal and inside the smart-wake window.
@@ -143,7 +153,7 @@ function testLayout_sleepingScreens(logger as Test.Logger) as Boolean {
     var d = layoutHelperAsleep();
     d.testRunMinutes(2, 55, 10.0f);
     var v = layoutHelperView(d, new AlarmManager());
-    var ok = layoutHelperCheck("sleeping", v, dc, ["Wake in", "28:00"] as Array<String>, logger);
+    var ok = layoutHelperCheck("sleeping", v, dc, ["Wake at|At |Wake in", "28:00"] as Array<String>, logger);
     d.testRunMinutes(24, 55, 10.0f);
     ok = layoutHelperCheck("smart window", v, dc, ["Smart Wake", "4:00"] as Array<String>, logger) && ok;
     d.noteInactive();
@@ -162,9 +172,45 @@ function testLayout_alarmScreens(logger as Test.Logger) as Boolean {
     var d = layoutHelperAsleep();
     d.testRunMinutes(31, 55, 10.0f);
     var v = layoutHelperView(d, new AlarmManager());
-    ok = layoutHelperCheck("alarm nap complete", v, dc, ["WAKE UP!", "Slept"] as Array<String>, logger) && ok;
+    // Gentle phase (the view's alarm manager has not rung yet): calm words.
+    ok = layoutHelperCheck("alarm nap complete", v, dc, ["wake up|Wake up", "Slept"] as Array<String>, logger) && ok;
+    if (v.testIsFlashPhase()) {
+        logger.debug("the gentle phase must not flash");
+        ok = false;
+    }
     v.pressStop(ConfirmPress.CONTEXT_ALARM);
-    ok = layoutHelperCheck("alarm armed", v, dc, ["WAKE UP!"] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("alarm armed", v, dc, ["wake up|Wake up"] as Array<String>, logger) && ok;
+
+    // After ring 11 (the last of phase 2) the next ring is full intensity,
+    // but the screen is still calm and the counter shows the phase felt: 3/4.
+    var edgeAlarm = new AlarmManager();
+    edgeAlarm.testSetAlarmType(0);
+    edgeAlarm.startAlarm();
+    while (edgeAlarm.testGetRingCount() < 12) {
+        edgeAlarm.testFireRing();
+    }
+    v = layoutHelperView(d, edgeAlarm);
+    var edge = v.testBuildLayout(dc);
+    if (v.testIsFlashPhase() || edge.showsFragment("4/4") || !edge.showsFragment("3/4")) {
+        logger.debug("before ring 12: calm screen and counter 3/4 expected");
+        ok = false;
+    }
+    edgeAlarm.stop();
+
+    // Full intensity: the loud screen, flashing.
+    var loudAlarm = new AlarmManager();
+    loudAlarm.testSetAlarmType(0);
+    loudAlarm.startAlarm();
+    while (loudAlarm.testGetRingCount() < 13) {
+        loudAlarm.testFireRing();
+    }
+    v = layoutHelperView(d, loudAlarm);
+    ok = layoutHelperCheck("alarm full intensity", v, dc, ["WAKE UP!", "Slept"] as Array<String>, logger) && ok;
+    if (!v.testIsFlashPhase()) {
+        logger.debug("full intensity must flash");
+        ok = false;
+    }
+    loudAlarm.stop();
 
     // Deadline: never still, no HR.
     d = new SleepDetector(null);
@@ -172,7 +218,7 @@ function testLayout_alarmScreens(logger as Test.Logger) as Boolean {
     d.testSetNapDurationMin(5);
     d.testRunMinutes(21, 0, 300.0f);
     v = layoutHelperView(d, new AlarmManager());
-    ok = layoutHelperCheck("alarm deadline", v, dc, ["TIME'S UP", "Waited 20 min"] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("alarm deadline", v, dc, ["Time's up", "Waited 20 min"] as Array<String>, logger) && ok;
 
     // Smart wake.
     d = layoutHelperAsleep();
@@ -180,7 +226,7 @@ function testLayout_alarmScreens(logger as Test.Logger) as Boolean {
     d.testRunSeconds(54, 55, 10.0f);
     d.testRunSeconds(6, 55, 100.0f);
     v = layoutHelperView(d, new AlarmManager());
-    ok = layoutHelperCheck("alarm smart wake", v, dc, ["WAKE UP!"] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("alarm smart wake", v, dc, ["wake up|Wake up", "Smart wake"] as Array<String>, logger) && ok;
     if (d.getAlarmReason() != SleepDetector.ALARM_SMART_WAKE) {
         logger.debug("setup: expected smart wake");
         ok = false;
@@ -199,7 +245,8 @@ function testLayout_summaryScreens(logger as Test.Logger) as Boolean {
     d.testRunMinutes(31, 55, 10.0f);
     d.finishNap();
     var v = layoutHelperView(d, new AlarmManager());
-    ok = layoutHelperCheck("summary full", v, dc, ["COMPLETE|DONE", "30:00", "Uninterrupted"] as Array<String>, logger) && ok;
+    ok = layoutHelperCheck("summary full", v, dc,
+        ["COMPLETE|DONE", "30:00", "Uninterrupted", "in 0 min|0 min to sleep"] as Array<String>, logger) && ok;
 
     d = layoutHelperAsleep();
     for (var i = 0; i < 2; i++) {
@@ -233,20 +280,44 @@ function testLayout_summaryScreens(logger as Test.Logger) as Boolean {
 (:test)
 function testLayout_startScreenTapZones(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
-    var v = new PowerNapView(new SleepDetector(null), new AlarmManager());
+    var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
     var zones = v.testMeasureTapZones(dc);
     var plusMax = zones[0];
     var minusMin = zones[1];
-    var expectedBand = dc.getFontHeight(Graphics.FONT_NUMBER_MEDIUM) + dc.getFontHeight(Graphics.FONT_SMALL);
+    // The number keeps its big font and sits right on top of its label.
+    var expectedBand = zones[2] + zones[3];
     var ok = true;
+    if (zones[2] != dc.getFontHeight(Graphics.FONT_NUMBER_MEDIUM)) {
+        logger.debug("the duration must keep FONT_NUMBER_MEDIUM");
+        ok = false;
+    }
     if (minusMin - plusMax != expectedBand) {
         logger.debug("start band " + (minusMin - plusMax) + " px, expected number + label " + expectedBand);
+        ok = false;
+    }
+    if (plusMax <= 0 || minusMin >= dc.getHeight()) {
+        logger.debug("start band " + plusMax + ".." + minusMin + " leaves no room for the +/- zones");
         ok = false;
     }
     if (v.tapActionAt(plusMax - 1) != 1 || v.tapActionAt(plusMax) != 0
         || v.tapActionAt((plusMax + minusMin) / 2) != 0
         || v.tapActionAt(minusMin) != 0 || v.tapActionAt(minusMin + 1) != -1) {
         logger.debug("tap zone mapping wrong around " + plusMax + ".." + minusMin);
+        ok = false;
+    }
+    // The hint at the bottom ("TAP to begin") starts; just above it removes.
+    var hintY = zones[4];
+    if (hintY <= minusMin + 1 || v.tapActionAt(hintY) != 0 || v.tapActionAt(hintY + 5) != 0
+        || v.tapActionAt(hintY - 1) != -1) {
+        logger.debug("hint zone wrong: hint at " + hintY + ", label ends at " + minusMin);
+        ok = false;
+    }
+    // Touch watches say TAP, the others (FR255, Instinct 3) say START.
+    var touch = System.getDeviceSettings().isTouchScreen;
+    var footer = v.testBuildLayout(dc).getFooterText();
+    var expected = touch ? "TAP to begin" : "START to begin";
+    if (footer == null || !(footer as String).equals(expected)) {
+        logger.debug("hint '" + footer + "', expected '" + expected + "' (touch " + touch + ")");
         ok = false;
     }
     return ok;
@@ -280,6 +351,241 @@ function testLayout_startScreenFollowsPhoneSetting(logger as Test.Logger) as Boo
     try {
         Application.Properties.setValue("napDuration", (nap0 != null) ? nap0 as Number : 30);
     } catch (e instanceof Lang.Exception) {
+    }
+    return ok;
+}
+
+//! Start screen for short, long and Stay Awake durations, also with the DND
+//! warning: everything fits, the duration, its label and the promise (Alarm
+//! by / what Stay Awake does) are shown.
+(:test)
+function testLayout_startScreens(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    var ok = true;
+    var durations = [5, 30, 120] as Array<Number>;
+    for (var i = 0; i < durations.size(); i++) {
+        v.testSetPendingDuration(durations[i]);
+        ok = layoutHelperCheck("start " + durations[i], v, dc,
+            [durations[i].toString(), "min", "Latest|By "] as Array<String>, logger) && ok;
+    }
+    v.testSetPendingDuration(0);
+    ok = layoutHelperCheck("start stay awake", v, dc, ["0", "stay awake", "doze"] as Array<String>, logger) && ok;
+    v.testForceDnd(true);
+    ok = layoutHelperCheck("start stay awake + DND", v, dc, ["0", "stay awake", "DND"] as Array<String>, logger) && ok;
+    v.testSetPendingDuration(120);
+    ok = layoutHelperCheck("start 120 + DND", v, dc, ["120", "min", "DND"] as Array<String>, logger) && ok;
+    return ok;
+}
+
+//! The peek card (UP/DOWN/START during a nap) before and after onset, with
+//! wakes and the armed footer, and in Stay Awake mode.
+(:test)
+function testLayout_peekScreens(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var ok = true;
+
+    var d = new SleepDetector(null);
+    d.testStart();
+    var v = layoutHelperView(d, new AlarmManager());
+    v.showPeek();
+    ok = layoutHelperCheck("peek before onset", v, dc, ["No sleep yet", "Latest|By "] as Array<String>, logger) && ok;
+
+    d = layoutHelperAsleep();
+    d.testRunMinutes(3, 55, 10.0f);
+    d.testRunMinutes(1, 60, 300.0f);
+    d.testRunMinutes(2, 55, 10.0f);
+    v = layoutHelperView(d, new AlarmManager());
+    v.showPeek();
+    v.pressStop(ConfirmPress.CONTEXT_NAP);
+    ok = layoutHelperCheck("peek asleep + armed", v, dc, ["Slept", "1 wake", "Alarm at|At "] as Array<String>, logger) && ok;
+    if ((v.testBuildLayout(dc).getFooterText() as String).find("stats") == null) {
+        logger.debug("armed footer after sleep must mention the stats");
+        ok = false;
+    }
+
+    d = new SleepDetector(null);
+    d.testStartStayAwake();
+    d.testRunMinutes(3, 70, 200.0f);
+    v = layoutHelperView(d, new AlarmManager());
+    v.showPeek();
+    ok = layoutHelperCheck("peek stay awake", v, dc, ["Awake 3:00", "No dozes"] as Array<String>, logger) && ok;
+    return ok;
+}
+
+//! Stay Awake screens: guarding (with every optional line and the armed
+//! footer), the drowsiness warning, the doze alarm and the summary.
+(:test)
+function testLayout_stayAwakeScreens(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var ok = true;
+    var d = new SleepDetector(null);
+    d.testStartStayAwake();
+    var v = layoutHelperView(d, new AlarmManager());
+    ok = layoutHelperCheck("stay calibrating", v, dc,
+        ["Keeping you awake|Keeping awake|On guard", "Awake"] as Array<String>, logger) && ok;
+
+    d.testRunMinutes(3, 70, 10.0f);
+    ok = layoutHelperCheck("stay warning", v, dc, ["Stay alert!"] as Array<String>, logger) && ok;
+
+    d.testRunMinutes(2, 70, 10.0f);
+    ok = layoutHelperCheck("doze alarm", v, dc, ["WAKE UP!", "dozed off|Dozed off"] as Array<String>, logger) && ok;
+
+    d.dismissAlarm();
+    d.testRunMinutes(1, 70, 200.0f);
+    ok = layoutHelperCheck("stay guarding after a doze", v, dc,
+        ["Keeping you awake|Keeping awake|On guard", "1 doze", "Awake"] as Array<String>, logger) && ok;
+
+    // Crowded: both warnings and the armed footer; the warnings must stay.
+    d.noteInactive();
+    v.testForceDnd(true);
+    v.pressStop(ConfirmPress.CONTEXT_NAP);
+    ok = layoutHelperCheck("stay guarding + warnings + armed", v, dc,
+        ["Keeping you awake|Keeping awake|On guard", "Keep app open", "DND"] as Array<String>, logger) && ok;
+
+    d.cancel();
+    ok = layoutHelperCheck("stay summary", v, dc, ["STAY AWAKE|AWAKE", "1 doze"] as Array<String>, logger) && ok;
+
+    // A session over an hour shows h:mm:ss.
+    d = new SleepDetector(null);
+    d.testStartStayAwake();
+    d.testAdvanceClock(3 * 3600 + 25 * 60 + 7);
+    d.cancel();
+    v = layoutHelperView(d, new AlarmManager());
+    ok = layoutHelperCheck("stay summary long", v, dc, ["3:25:07", "No dozes"] as Array<String>, logger) && ok;
+    return ok;
+}
+
+//! The DND warning on the monitoring screen (before sleep) fits with the
+//! other warnings and never pushes out the "Latest alarm" promise.
+(:test)
+function testLayout_monitoringWithDnd(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testSetBaseline(70.0f);
+    d.testRunMinutes(1, 68, 10.0f);
+    var v = layoutHelperView(d, new AlarmManager());
+    v.testForceDnd(true);
+    d.noteInactive();
+    v.pressStop(ConfirmPress.CONTEXT_NAP);
+    return layoutHelperCheck("monitoring + DND + inactive + armed", v, dc,
+        ["Monitoring", "Latest|By "] as Array<String>, logger);
+}
+
+//! The time of day is on every live screen (monitoring, asleep, alarm, Stay
+//! Awake, peek), except on the Instinct where it is drawn in the lens.
+(:test)
+function testLayout_clockOnLiveScreens(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var probe = new PowerNapView(new SleepDetector(null), new AlarmManager());
+    if (probe.testHasSubscreen()) {
+        return true;
+    }
+    var ok = true;
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testSetBaseline(70.0f);
+    var v = layoutHelperView(d, new AlarmManager());
+    ok = layoutHelperClock("monitoring", v, dc, logger) && ok;
+    d.testForceSleep();
+    ok = layoutHelperClock("asleep", v, dc, logger) && ok;
+    v.showPeek();
+    ok = layoutHelperClock("peek", v, dc, logger) && ok;
+    d.testAdvanceClock(31 * 60);
+    d.testTick();
+    ok = layoutHelperClock("alarm", v, dc, logger) && ok;
+
+    d = new SleepDetector(null);
+    d.testStartStayAwake();
+    v = layoutHelperView(d, new AlarmManager());
+    ok = layoutHelperClock("stay awake", v, dc, logger) && ok;
+    return ok;
+}
+
+//! Clock shown on this screen (either side of a minute change counts).
+(:debug)
+function layoutHelperClock(name as String, v as PowerNapView, dc as Graphics.Dc, logger as Test.Logger) as Boolean {
+    var before = v.testClockString();
+    var layout = v.testBuildLayout(dc);
+    var after = v.testClockString();
+    if (!layout.showsText(before) && !layout.showsText(after)) {
+        logger.debug(name + ": clock " + before + " not shown");
+        return false;
+    }
+    return true;
+}
+
+//! Low battery (5 %, not charging) is shown on the start screen and the Stay
+//! Awake screen, and on the monitoring screen it never pushes out "Latest".
+(:test)
+function testLayout_lowBatteryWarning(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var ok = true;
+    // The 176 px Instinct has room for one line under the duration: there the
+    // warning (act on it before the nap) wins, and "Latest alarm" shows on
+    // the monitoring screen right after START. Larger screens show both.
+    var roomy = dc.getHeight() >= 200;
+    var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    v.testForceBattery(5);
+    ok = layoutHelperCheck("start low battery", v, dc,
+        (roomy ? ["battery 5%|Battery 5%|Batt 5%", "Latest|By "] : ["battery 5%|Battery 5%|Batt 5%"])
+            as Array<String>, logger) && ok;
+    v.testForceDnd(true);
+    ok = layoutHelperCheck("start low battery + DND", v, dc,
+        (roomy ? ["battery 5%|Battery 5%|Batt 5%", "DND", "Latest|By "] : ["battery 5%|Battery 5%|Batt 5%", "DND"])
+            as Array<String>, logger) && ok;
+    v.testForceBattery(15);
+    ok = layoutHelperCheck("start 15% is not low", v, dc, ["DND on:|DND may|DND on"] as Array<String>, logger) && ok;
+    if (v.testBuildLayout(dc).showsFragment("attery")) {
+        logger.debug("15% battery must not warn");
+        ok = false;
+    }
+
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testSetBaseline(70.0f);
+    v = layoutHelperView(d, new AlarmManager());
+    v.testForceBattery(5);
+    ok = layoutHelperCheck("monitoring low battery", v, dc, ["Monitoring", "Latest|By "] as Array<String>, logger) && ok;
+    v.testForceDnd(true);
+    d.noteInactive();
+    v.pressStop(ConfirmPress.CONTEXT_NAP);
+    ok = layoutHelperCheck("monitoring low battery crowded", v, dc, ["Monitoring", "Latest|By "] as Array<String>, logger) && ok;
+
+    d = new SleepDetector(null);
+    d.testStartStayAwake();
+    v = layoutHelperView(d, new AlarmManager());
+    v.testForceBattery(5);
+    ok = layoutHelperCheck("stay awake low battery", v, dc,
+        ["Keeping you awake|Keeping awake|On guard", "battery 5%|Battery 5%|Batt 5%"] as Array<String>, logger) && ok;
+    return ok;
+}
+
+//! The start-screen number only shrinks when that keeps the promise line on
+//! screen: with a warning it either keeps its full size, or it is smaller
+//! and "Latest alarm" is shown (on the Instinct the warning replaces the
+//! promise and the number stays full size).
+(:test)
+function testLayout_startNumberShrinksOnlyForThePromise(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var full = dc.getFontHeight(Graphics.FONT_NUMBER_MEDIUM);
+    var ok = true;
+    var pcts = [5, 100] as Array<Number>;
+    for (var i = 0; i < pcts.size(); i++) {
+        var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+        v.testSetPendingDuration(30);
+        v.testForceBattery(pcts[i]);
+        var zones = v.testMeasureTapZones(dc);
+        var layout = v.testBuildLayout(dc);
+        if (zones[2] < full && !layout.showsFragment("Latest") && !layout.showsFragment("By ")) {
+            logger.debug("battery " + pcts[i] + "%: number shrank to " + zones[2] + " px but the promise is gone");
+            ok = false;
+        }
+        if (pcts[i] == 100 && zones[2] != full) {
+            logger.debug("without warnings the number must keep its full size");
+            ok = false;
+        }
     }
     return ok;
 }

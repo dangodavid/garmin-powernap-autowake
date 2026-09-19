@@ -26,14 +26,22 @@ import Toybox.System;
 //! A wrist on a pillow can press a button and a sleeve can touch the screen:
 //! * stopping the nap or the alarm needs two presses within 4 seconds
 //!   (BACK, or START on the alarm screen);
+//! * UP, DOWN and START during a nap only "peek": a few seconds of the
+//!   so-far card (time asleep, wakes, alarm time), nothing stops;
 //! * taps, swipes, holds, flicks and drags are consumed on every nap screen,
 //!   including the alarm, so no gesture reaches system navigation;
-//! * every other key is consumed too.
+//! * every other key is consumed too;
+//! * for 2.5 s after a confirmed stop or a screen change every press is
+//!   ignored, so a burst of presses cannot run on into the next screen.
+//!
+//! The logic lives in handleKey()/handleTap() so tests can drive it without
+//! constructing system input events.
 class PowerNapDelegate extends WatchUi.InputDelegate {
 
     private var _view     as PowerNapView;
     private var _detector as SleepDetector;
     private var _alarm    as AlarmManager;
+    private var _exitEnabled as Boolean = true;   // tests switch System.exit() off
 
     function initialize(view as PowerNapView, detector as SleepDetector, alarm as AlarmManager) {
         InputDelegate.initialize();
@@ -45,8 +53,16 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     // -- Touch: tap with coordinates ------------------------------------
 
     function onTap(clickEvent as WatchUi.ClickEvent) as Boolean {
+        return handleTap(clickEvent.getCoordinates()[1]);
+    }
+
+    //! A tap at height y. Start screen: tap zones; nap and alarm: ignored.
+    function handleTap(y as Number) as Boolean {
+        if (_view.isInputLocked()) {
+            return true;
+        }
         if (!_view.isStarted()) {
-            var action = _view.tapActionAt(clickEvent.getCoordinates()[1]);
+            var action = _view.tapActionAt(y);
             if (action > 0) {
                 _view.adjustDuration(5);
             } else if (action < 0) {
@@ -91,7 +107,15 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     // -- Physical buttons -----------------------------------------------
 
     function onKey(keyEvent as WatchUi.KeyEvent) as Boolean {
-        var key   = keyEvent.getKey();
+        return handleKey(keyEvent.getKey());
+    }
+
+    //! One button press (a WatchUi.KEY_* value).
+    function handleKey(key as Number) as Boolean {
+        if (_view.isInputLocked()) {
+            // Presses that keep coming right after a stop or a screen change.
+            return true;
+        }
         var state = _detector.getState();
 
         // -- Start screen ----------------------------------------------
@@ -109,7 +133,8 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
                 return true;
             }
             if (key == WatchUi.KEY_ESC) {
-                System.exit();
+                exitApp();
+                return true;
             }
             return false;
         }
@@ -124,42 +149,65 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
             return true;
         }
 
-        // -- Summary: BACK exits -----------------------------------------
+        // -- Summary: BACK exits, START sets up a new nap ------------------
         if (state == SleepDetector.STATE_SUMMARY) {
             if (key == WatchUi.KEY_ESC) {
                 exitApp();
+                return true;
+            }
+            if (key == WatchUi.KEY_ENTER) {
+                _view.resetToStart();
+                _view.lockInput();
                 return true;
             }
             return false;
         }
 
         // -- Active nap (CALIBRATING / MONITORING / SLEEPING) ------------
-        if (key == WatchUi.KEY_ESC && _view.pressStop(ConfirmPress.CONTEXT_NAP)) {
-            if (_detector.hasSleptAtLeastOnce()) {
-                // Sleep was recorded: stop and show the summary.
-                _detector.cancel();
-                _alarm.stop();
-                WatchUi.requestUpdate();
-            } else {
-                // Nothing recorded yet: back to the start screen so the
-                // user can adjust the duration and try again.
-                _view.resetToStart();
+        if (key == WatchUi.KEY_ESC) {
+            if (_view.pressStop(ConfirmPress.CONTEXT_NAP)) {
+                if (_detector.hasSleptAtLeastOnce() || _detector.isStayAwake()) {
+                    // Something to report: stop and show the summary.
+                    _detector.cancel();
+                    _alarm.stop();
+                    WatchUi.requestUpdate();
+                } else {
+                    // Nothing recorded yet: back to the start screen so the
+                    // user can adjust the duration and try again.
+                    _view.resetToStart();
+                }
+                _view.lockInput();
             }
+        } else if (key == WatchUi.KEY_UP || key == WatchUi.KEY_DOWN || key == WatchUi.KEY_ENTER) {
+            _view.showPeek();
         }
         return true;
     }
 
     // -- Private helpers ------------------------------------------------
 
+    //! Stop the ringing. A nap then shows its summary; Stay Awake mode goes
+    //! back on guard.
     private function dismissAlarm() as Void {
         _alarm.stop();
-        _detector.finishNap();
+        _detector.dismissAlarm();
+        _view.lockInput();
         WatchUi.requestUpdate();
     }
 
     private function exitApp() as Void {
         _detector.stop();
         _alarm.stop();
-        System.exit();
+        if (_exitEnabled) {
+            System.exit();
+        }
+    }
+
+    // -- Test hooks (debug builds only) -----------------------------------
+
+    //! Keep BACK on the start screen and summary from ending the test run.
+    (:debug)
+    function testDisableExit() as Void {
+        _exitEnabled = false;
     }
 }

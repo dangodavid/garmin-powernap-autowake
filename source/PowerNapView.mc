@@ -5,13 +5,16 @@ import Toybox.Time.Gregorian;
 import Toybox.Application;
 import Toybox.Lang;
 import Toybox.System;
+import Toybox.Timer;
 
-//! Draws the start screen and the four nap screens (monitoring, sleeping,
-//! alarm, summary). The detector requests an update every second while a
-//! nap is active, so every value on screen is live.
+//! Draws the start screen and the nap screens (monitoring, sleeping, alarm,
+//! summary), the Stay Awake screens and the "peek" card. The detector
+//! requests an update every second while a nap is active, so every value on
+//! screen is live; the start screen has its own 1 s refresh for the
+//! "Latest alarm" preview.
 //!
-//! Every nap screen is described as a prioritised list of lines and laid out
-//! by ScreenLayout, which drops optional lines and shrinks fonts until the
+//! Every screen is described as a prioritised list of lines and laid out by
+//! ScreenLayout, which drops optional lines and shrinks fonts until the
 //! content fits between the top margin and the footer on any display
 //! (176 px Instinct to 454 px AMOLED), and keeps each line inside the round
 //! bezel / subscreen.
@@ -25,16 +28,39 @@ class PowerNapView extends WatchUi.View {
 
     // Start screen state
     private var _started as Boolean = false;
-    private var _pendingDuration as Number = 30;
-    // Tap zones measured from the last start-screen draw (-1 = not drawn yet)
+    private var _pendingDuration as Number = 30;     // 0 = Stay Awake mode
+    private var _syncedDuration as Number = 30;      // stored napDuration last taken over
+    // Tap zones measured from the last start-screen layout (-1 = not laid out yet)
     private var _tapPlusMaxY as Number = -1;    // y < this        -> +5 min
-    private var _tapMinusMinY as Number = -1;   // y > this        -> -5 min
+    private var _tapMinusMinY as Number = -1;   // y > this        -> -5 min ...
+    private var _tapStartMinY as Number = -1;   // y >= this       -> ... start ("TAP to begin")
+    private var _uiTimer as Timer.Timer? = null;     // start screen: refresh at each minute for "Latest alarm"
 
     // Two-press confirmation for stopping a nap or the alarm (4 s, in ms).
     private var _confirm as ConfirmPress;
     private const CONFIRM_WINDOW_MS = 4000;
 
-    // Duration options in minutes (step 5, wrap-around)
+    // After a confirmed stop or a screen change, input is ignored for a
+    // moment: a groggy user who keeps pressing START must not skip the
+    // summary and start a new nap, nor end Stay Awake with extra BACKs.
+    private var _locked as Boolean = false;
+    private var _lockStartMs as Number = 0;
+    private const INPUT_LOCK_MS = 2500;
+
+    // Peek: any button during a nap shows the "so far" card for a moment.
+    private var _peeking as Boolean = false;
+    private var _peekStartMs as Number = 0;
+    private const PEEK_MS = 5000;
+
+    private var _forceDnd as Number = -1;            // tests: 1 DND on, 0 off, -1 real setting
+    private var _forceBatteryPct as Number = -1;     // tests: >= 0 replaces the battery level
+
+    // Below this battery level (and not charging) the nap screens warn.
+    private const LOW_BATTERY_PCT = 10;
+
+    // Duration options in minutes (step 5, no wrap-around). One step below
+    // the shortest nap is Stay Awake mode.
+    private const STAY_AWAKE = 0;
     private const DURATION_MIN = 5;
     private const DURATION_MAX = 120;
 
@@ -44,17 +70,23 @@ class PowerNapView extends WatchUi.View {
         _alarm = alarm;
         _confirm = new ConfirmPress(CONFIRM_WINDOW_MS);
         _pendingDuration = readStoredDuration();
+        _syncedDuration = _pendingDuration;
         _debugLabel = buildDebugLabel();
     }
 
     function onShow() as Void {
         // Do NOT auto-start  - wait for user to press START on the start screen
+        if (!_started) {
+            startUiTimer();
+        }
     }
 
     function onHide() as Void {
-        // Cleanup is handled by PowerNapApp.onStop() when the app exits.
+        // Nap cleanup is handled by PowerNapApp.onStop() when the app exits.
         // Do NOT stop sensors/timers here: onHide() can be called when a
         // system overlay appears (incoming call, control menu, battery alert).
+        // Only the start-screen refresh stops; onShow() restarts it.
+        stopUiTimer();
     }
 
     // -- Public interface for delegate / app ----------------------------
@@ -63,52 +95,88 @@ class PowerNapView extends WatchUi.View {
         return _started;
     }
 
-    //! Increase or decrease the pending nap duration by one step.
+    //! Increase or decrease the pending nap duration by one step. It stops
+    //! at 120 (no wrap to 5), and one step below 5 min is Stay Awake mode.
     function adjustDuration(delta as Number) as Void {
-        _pendingDuration += delta;
-        if (_pendingDuration < DURATION_MIN) {
-            _pendingDuration = DURATION_MAX;
-        } else if (_pendingDuration > DURATION_MAX) {
-            _pendingDuration = DURATION_MIN;
+        var d = _pendingDuration + delta;
+        if (_pendingDuration == STAY_AWAKE) {
+            d = (delta > 0) ? DURATION_MIN : STAY_AWAKE;
+        } else if (d < DURATION_MIN) {
+            // An odd value from the phone (e.g. 7) stops at 5 first.
+            d = (_pendingDuration > DURATION_MIN) ? DURATION_MIN : STAY_AWAKE;
+        } else if (d > DURATION_MAX) {
+            d = DURATION_MAX;
         }
+        _pendingDuration = d;
         WatchUi.requestUpdate();
     }
 
     //! Settings changed from the phone: follow a new nap duration while the
-    //! start screen is showing (a running nap keeps its own settings).
+    //! start screen is showing (a running nap keeps its own settings). Any
+    //! other setting leaves the pick on the watch alone, Stay Awake included.
     function onSettingsChanged() as Void {
         if (!_started) {
-            _pendingDuration = readStoredDuration();
+            var stored = readStoredDuration();
+            if (stored != _syncedDuration) {
+                _pendingDuration = stored;
+                _syncedDuration = stored;
+            }
             WatchUi.requestUpdate();
         }
     }
 
-    //! Confirm duration, persist it (only if changed), and begin monitoring.
+    //! Confirm duration, persist it (only if changed, never Stay Awake), and
+    //! begin monitoring.
     function startNap() as Void {
-        if (readStoredDuration() != _pendingDuration) {
+        if (_pendingDuration != STAY_AWAKE && readStoredDuration() != _pendingDuration) {
             try {
                 Application.Properties.setValue("napDuration", _pendingDuration);
+                _syncedDuration = _pendingDuration;
             } catch (e instanceof Lang.Exception) {
                 // Storage full or corrupt -- proceed with in-memory value.
             }
         }
+        stopUiTimer();
         _detector.loadSettings();
-        _detector.start();
+        _detector.start(_pendingDuration);
         _started = true;
+        _peeking = false;
         _confirm.reset();
         WatchUi.requestUpdate();
     }
 
-    //! Cancel the current nap and return to the start screen so the user
-    //! can change the duration and start again.
+    //! Back to the start screen (nap stopped before any sleep, or a new nap
+    //! from the summary) so the user can change the duration and start again.
     function resetToStart() as Void {
         _detector.stop();
         _alarm.stop();
+        // Settings changed from the phone during the nap were ignored by the
+        // running detector; read them now so the "Latest alarm" preview is right.
+        _detector.loadSettings();
         _started = false;
+        _peeking = false;
         _confirm.reset();
-        // Pick up a duration changed from the phone during the aborted nap.
+        // Pick up a duration changed from the phone during the nap. Stay
+        // Awake is never remembered: the next session defaults to a nap.
         _pendingDuration = readStoredDuration();
+        _syncedDuration = _pendingDuration;
+        startUiTimer();
         WatchUi.requestUpdate();
+    }
+
+    //! Ignore input for a moment (after a confirmed stop or screen change).
+    function lockInput() as Void {
+        _locked = true;
+        _lockStartMs = nowMs();
+    }
+
+    //! Input is being ignored (elapsed time: safe across the timer wrap).
+    function isInputLocked() as Boolean {
+        if (!_locked) {
+            return false;
+        }
+        var elapsed = nowMs() - _lockStartMs;
+        return elapsed >= 0 && elapsed < INPUT_LOCK_MS;
     }
 
     //! Register a stop press in the given ConfirmPress context. Returns true
@@ -119,7 +187,27 @@ class PowerNapView extends WatchUi.View {
         return confirmed;
     }
 
+    //! Show the "so far" card for a few seconds (the nap keeps running).
+    function showPeek() as Void {
+        _peeking = true;
+        _peekStartMs = nowMs();
+        WatchUi.requestUpdate();
+    }
+
+    //! The peek card is showing (only while a nap or session is active).
+    //! Elapsed time, not an end time: stays correct when the timer wraps.
+    function isPeeking() as Boolean {
+        if (!_peeking || !_started || !_detector.isActiveState()) {
+            return false;
+        }
+        var elapsed = nowMs() - _peekStartMs;
+        return elapsed >= 0 && elapsed < PEEK_MS;
+    }
+
     //! Start-screen tap: +1 = add 5 min, -1 = remove 5 min, 0 = start.
+    //! Above the number adds, the number and its label start, below them
+    //! removes, and the "TAP to begin" hint at the bottom starts again (a
+    //! tap on the words that say "tap" must not shorten the nap).
     function tapActionAt(y as Number) as Number {
         var plusMax = _tapPlusMaxY;
         var minusMin = _tapMinusMinY;
@@ -129,8 +217,18 @@ class PowerNapView extends WatchUi.View {
             minusMin = h * 65 / 100;
         }
         if (y < plusMax) { return 1; }
-        if (y > minusMin) { return -1; }
-        return 0;
+        if (y <= minusMin) { return 0; }
+        if (_tapStartMinY >= 0 && y >= _tapStartMinY) { return 0; }
+        return -1;
+    }
+
+    //! Start-screen refresh: redraw, then wait for the next minute.
+    function onUiTimer() as Void {
+        _uiTimer = null;
+        if (!_started) {
+            startUiTimer();
+        }
+        WatchUi.requestUpdate();
     }
 
     // -- Main draw dispatch ---------------------------------------------
@@ -146,8 +244,9 @@ class PowerNapView extends WatchUi.View {
 
         var invert = false;
         var state = _detector.getState();
-        if (state == SleepDetector.STATE_ALARM && (Time.now().value() % 2 == 0)) {
-            // 1 Hz flash (the detector refreshes the view every second).
+        if (isFlashPhase() && (Time.now().value() % 2 == 0)) {
+            // 1 Hz flash once the alarm is at full intensity (the detector
+            // refreshes the view every second). The gentle phases stay calm.
             var fill = Palette.isMono() ? Graphics.COLOR_WHITE : Graphics.COLOR_RED;
             dc.setColor(fill, fill);
             dc.fillRectangle(0, 0, dc.getWidth(), dc.getHeight());
@@ -160,25 +259,41 @@ class PowerNapView extends WatchUi.View {
                 summaryAccent(RingMath.clampPct(_detector.getPlannedCompletionPct())));
         }
 
-        var layout = buildLayout(dc);
-        if (layout != null) {
-            (layout as ScreenLayout).draw(dc, invert);
+        buildLayout(dc).draw(dc, invert);
+        if (showsClock() && hasSubscreen()) {
+            drawInLens(dc, clockString(), Graphics.COLOR_LT_GRAY, invert);
         }
     }
 
-    //! Solved layout for the current nap state (null on the start screen).
-    private function buildLayout(dc as Graphics.Dc) as ScreenLayout? {
+    //! The alarm is ringing at full intensity: the screen may flash.
+    private function isFlashPhase() as Boolean {
+        return _detector.getState() == SleepDetector.STATE_ALARM && _alarm.isFullIntensity();
+    }
+
+    //! Screens that show the time of day: everything live during a nap or
+    //! session (the summary is static, a clock there would go stale).
+    private function showsClock() as Boolean {
+        return _started && _detector.getState() != SleepDetector.STATE_SUMMARY;
+    }
+
+    //! Solved layout for the current screen. The start screen also records
+    //! its tap zones from where the number and its label were placed.
+    private function buildLayout(dc as Graphics.Dc) as ScreenLayout {
         if (!_started) {
-            return null;
+            return solveStartScreen(dc, [] as Array<LayoutLine>);
         }
         var state = _detector.getState();
         var layout;
-        if (state == SleepDetector.STATE_CALIBRATING || state == SleepDetector.STATE_MONITORING) {
-            layout = monitoringLayout(dc);
+        if (isPeeking()) {
+            layout = peekLayout(dc);
+        } else if (state == SleepDetector.STATE_CALIBRATING || state == SleepDetector.STATE_MONITORING) {
+            layout = _detector.isStayAwake() ? stayAwakeLayout(dc) : monitoringLayout(dc);
         } else if (state == SleepDetector.STATE_SLEEPING) {
             layout = sleepingLayout(dc);
         } else if (state == SleepDetector.STATE_ALARM) {
             layout = alarmLayout(dc);
+        } else if (_detector.isStayAwake()) {
+            layout = stayAwakeSummaryLayout(dc);
         } else {
             layout = _detector.hasSleptAtLeastOnce() ? summaryLayout(dc) : noSleepLayout(dc);
         }
@@ -188,79 +303,88 @@ class PowerNapView extends WatchUi.View {
 
     // -- Screen 0: Start / Duration Picker -----------------------------
 
-    //! Start-screen geometry: the block is centred vertically. Also records
-    //! the tap zones so they always match what is drawn: everything above
-    //! the number adds 5 min, everything below the "min" label removes 5 min,
-    //! the number and the label start the nap.
-    //! Returns [titleY, upArrowY, numberY, minLabelY, downArrowY, hintY].
-    private function measureStartScreen(dc as Graphics.Dc) as Array<Number> {
-        var w  = dc.getWidth();
-        var h  = dc.getHeight();
-        // With a subscreen (Instinct) the title goes into the lens instead.
-        var titleH = hasSubscreen() ? 0 : dc.getFontHeight(Graphics.FONT_SMALL);
-        var numH   = dc.getFontHeight(Graphics.FONT_NUMBER_MEDIUM);
-        var minH   = dc.getFontHeight(Graphics.FONT_SMALL);
-        var hintH  = dc.getFontHeight(Graphics.FONT_XTINY);
+    //! Start screen: arrows around the duration ("min of sleep": counted from
+    //! falling asleep), the latest alarm time (or what Stay Awake does), and
+    //! the battery and DND warnings. Adds the
+    //! arrow spacers, the number and its label to `lines` for the caller.
+    //! Everything above the number adds 5 min, everything below the label
+    //! removes 5 min, the number and the label start.
+    private function startLayout(dc as Graphics.Dc, lines as Array<LayoutLine>) as ScreenLayout {
+        var w = dc.getWidth();
+        var L = new ScreenLayout(w, dc.getHeight(), 8);
+        var stayAwake = (_pendingDuration == STAY_AWAKE);
         var arrowH = w * 6 / 100;
-        var gap    = h * 3 / 100;
 
-        var titleGap = (titleH > 0) ? gap : 0;
-        var blockH = titleH + titleGap + arrowH + gap + numH + minH + gap + arrowH + gap + hintH;
-        var titleY = (h - blockH) / 2;
-        var upY    = titleY + titleH + titleGap;
-        var numY   = upY + arrowH + gap;
-        var minY   = numY + numH;
-        var downY  = minY + minH + gap;
-        var hintY  = downY + arrowH + gap;
-        _tapPlusMaxY = numY;
-        _tapMinusMinY = minY + minH;
-        return [titleY, upY, numY, minY, downY, hintY] as Array<Number>;
+        if (!hasSubscreen()) {
+            // With a subscreen (Instinct) the title goes into the lens instead.
+            L.addText(["POWER NAP"], fontsBody(), Graphics.COLOR_BLUE, 50);
+        }
+        lines.add(L.addSpacer(arrowH + 1, ScreenLayout.KEEP));
+        // The big number shrinks one size only when a warning needs the room.
+        var number = L.addText([_pendingDuration.toString()],
+            [Graphics.FONT_NUMBER_MEDIUM, Graphics.FONT_NUMBER_MILD] as Array<Graphics.FontDefinition>,
+            Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+        number.gapAfter = 0;
+        lines.add(number);
+        // "min of sleep": the minutes count from falling asleep, not from now.
+        lines.add(L.addText(stayAwake ? ["stay awake"] : ["min of sleep", "min"],
+            [Graphics.FONT_SMALL, Graphics.FONT_TINY] as Array<Graphics.FontDefinition>,
+            stayAwake ? Graphics.COLOR_ORANGE : Graphics.COLOR_LT_GRAY, ScreenLayout.KEEP));
+        if (stayAwake) {
+            L.addText(["Buzzes if you doze", "Buzz if you doze"],
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 90);
+        } else {
+            // Same promise as on the nap screens: start now + allowance + nap,
+            // rounded up to the minute.
+            var by = formatMoment(new Time.Moment(Time.now().value()
+                + (_detector.getFallAsleepAllowanceMin() + _pendingDuration) * 60 + 59));
+            L.addText(["Latest alarm " + by, "Latest " + by, "By " + by],
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 90);
+        }
+        lines.add(L.addSpacer(arrowH + 1, ScreenLayout.KEEP));
+        addWarnings(L, 97);
+        if (_debugLabel.length() > 0) {
+            L.addText([_debugLabel], [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
+                Graphics.COLOR_LT_GRAY, 10);
+        }
+        L.setFooter(hasTouch() ? "TAP to begin" : "START to begin", Graphics.COLOR_LT_GRAY);
+        return L;
+    }
+
+    //! Solve the start screen and record its tap zones from the number and
+    //! label lines (`lines` receives [upArrow, number, label, downArrow]).
+    private function solveStartScreen(dc as Graphics.Dc, lines as Array<LayoutLine>) as ScreenLayout {
+        var L = startLayout(dc, lines);
+        L.solve(dc);
+        _tapPlusMaxY = lines[1].y;
+        _tapMinusMinY = lines[2].y + lines[2].slotH;
+        _tapStartMinY = L.getFooterY();
+        return L;
     }
 
     private function drawStartScreen(dc as Graphics.Dc) as Void {
-        var w  = dc.getWidth();
-        var h  = dc.getHeight();
-        var cx = w / 2;
-        var arrowH = w * 6 / 100;  // arrow triangle height in px
-        var pos = measureStartScreen(dc);
-        var y = pos[0];
+        var lines = [] as Array<LayoutLine>;
+        var L = solveStartScreen(dc, lines);
 
-        dc.setColor(Palette.fg(Graphics.COLOR_BLUE, false), Graphics.COLOR_TRANSPARENT);
         var sub = subscreenBox();
         if (sub != null) {
             var box = sub as Array<Number>;
             var fh = dc.getFontHeight(Graphics.FONT_XTINY);
+            dc.setColor(Palette.fg(Graphics.COLOR_BLUE, false), Graphics.COLOR_TRANSPARENT);
             dc.drawText(box[0] + box[2] / 2, box[1] + (box[3] - fh) / 2, Graphics.FONT_XTINY, "NAP",
                 Graphics.TEXT_JUSTIFY_CENTER);
-        } else {
-            dc.drawText(cx, y, Graphics.FONT_SMALL, "POWER NAP", Graphics.TEXT_JUSTIFY_CENTER);
         }
+        L.draw(dc, false);
 
-        y = pos[1];
+        // Arrows: filled triangles centred in their spacer slots.
+        var cx = dc.getWidth() / 2;
         dc.setColor(Palette.fg(Graphics.COLOR_GREEN, false), Graphics.COLOR_TRANSPARENT);
+        var up = lines[0];
+        var down = lines[3];
+        var arrowH = up.slotH - 1;
         for (var i = 0; i <= arrowH; i++) {
-            dc.drawLine(cx - i, y + (arrowH - i), cx + i, y + (arrowH - i));
-        }
-
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, pos[2], Graphics.FONT_NUMBER_MEDIUM, _pendingDuration.toString(),
-            Graphics.TEXT_JUSTIFY_CENTER);
-
-        dc.setColor(Palette.fg(Graphics.COLOR_LT_GRAY, false), Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, pos[3], Graphics.FONT_SMALL, "min", Graphics.TEXT_JUSTIFY_CENTER);
-
-        y = pos[4];
-        dc.setColor(Palette.fg(Graphics.COLOR_GREEN, false), Graphics.COLOR_TRANSPARENT);
-        for (var i = 0; i <= arrowH; i++) {
-            dc.drawLine(cx - i, y + i, cx + i, y + i);
-        }
-
-        dc.setColor(Palette.fg(Graphics.COLOR_LT_GRAY, false), Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, pos[5], Graphics.FONT_XTINY, "START to begin", Graphics.TEXT_JUSTIFY_CENTER);
-
-        if (_debugLabel.length() > 0) {
-            dc.drawText(cx, h - dc.getFontHeight(Graphics.FONT_XTINY) - 2,
-                Graphics.FONT_XTINY, _debugLabel, Graphics.TEXT_JUSTIFY_CENTER);
+            dc.drawLine(cx - i, up.y + (arrowH - i), cx + i, up.y + (arrowH - i));
+            dc.drawLine(cx - i, down.y + i, cx + i, down.y + i);
         }
     }
 
@@ -271,6 +395,7 @@ class PowerNapView extends WatchUi.View {
         var calibrating = (_detector.getState() == SleepDetector.STATE_CALIBRATING);
         var awake = _detector.hasSleptAtLeastOnce();   // after a wake episode
 
+        addClock(L);
         L.addText(["POWER NAP"], fontsTitle(), Graphics.COLOR_BLUE, 60);
         L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
         L.addText(["HR " + hrString(_detector.getCurrentHR())], fontsBody(), Graphics.COLOR_RED, 70);
@@ -291,16 +416,25 @@ class PowerNapView extends WatchUi.View {
             L.addText(["Waiting for sleep...", "Waiting..."], fontsDetail(), Graphics.COLOR_LT_GRAY, 95);
         }
 
+        // Before sleep: the guaranteed latest alarm time (rounded UP to the
+        // minute, so the alarm is never later than the time shown). After a
+        // wake episode: the fixed alarm time. Ranked above the stillness
+        // line: on the smallest screens the alarm promise must survive.
+        L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_LT_GRAY, 96);
         if (!awake) {
-            // The guaranteed latest alarm time, rounded UP to the minute so
-            // the alarm is never later than the time shown.
-            // Ranked above the stillness line: on the smallest screens the
-            // alarm promise is the line that must survive.
-            var byStr = formatMoment(new Time.Moment(_detector.getDeadlineTime().value() + 59));
-            L.addText(["Alarm by " + byStr, "By " + byStr], fontsDetail(), Graphics.COLOR_LT_GRAY, 96);
+            // Below the promise: on the smallest screens "Latest alarm" wins;
+            // the start screen already showed the warnings with room to spare.
+            addWarnings(L, 94);
         }
         addInactiveWarning(L);
-        L.addText(["Nap " + _detector.getNapDurationMin() + " min"], fontsDetail(), Graphics.COLOR_LT_GRAY, 30);
+        if (!awake) {
+            // How the alarm is set: the nap counts from falling asleep. After
+            // a wake episode the alarm time is fixed, so the rule no longer
+            // applies (falling asleep again does not add another N minutes).
+            var n = _detector.getNapDurationMin();
+            L.addText(["Alarm " + n + " min after sleep", n + " min after sleep", "Nap " + n + " min"],
+                fontsDetail(), Graphics.COLOR_LT_GRAY, 75);
+        }
         L.setFooter(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
         return L;
     }
@@ -311,15 +445,20 @@ class PowerNapView extends WatchUi.View {
         var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
         var smartWake = _detector.isSmartWakeActive();
 
+        addClock(L);
         L.addText(["NAP DETECTED", "ASLEEP"], fontsTitle(), Graphics.COLOR_PURPLE, 60);
         L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
         var sleepStart = _detector.getSleepStartTime();
         if (sleepStart != null) {
             // First onset of this nap (not reset by a wake episode).
             var t = formatMoment(sleepStart as Time.Moment);
-            L.addText(["Nap from " + t, "From " + t], fontsBody(), Graphics.COLOR_LT_GRAY, 50);
+            L.addText(["Asleep since " + t, "Since " + t], fontsBody(), Graphics.COLOR_LT_GRAY, 70);
         }
-        var label = L.addText([smartWake ? "Smart Wake" : "Wake in"], fontsBody(), Graphics.COLOR_WHITE, 80);
+        // Above the countdown: the time the alarm now rings at (it moved with
+        // sleep onset). Inside the smart-wake window it may ring earlier.
+        var at = alarmAtString();
+        var label = L.addText(smartWake ? ["Smart Wake"] : ["Wake at " + at, "At " + at, "Wake in"],
+            fontsBody(), Graphics.COLOR_WHITE, 90);
         label.gapAfter = 2;
         L.addText([formatCountdown(_detector.getRemainingSeconds())],
             [Graphics.FONT_NUMBER_MEDIUM, Graphics.FONT_NUMBER_MILD, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL]
@@ -333,33 +472,52 @@ class PowerNapView extends WatchUi.View {
 
     // -- Screen 3: Alarm / Wake Up -------------------------------------
 
+    //! Gentle phases: calm colours and words on a dark screen (the backlight
+    //! only comes on from phase 2). From full intensity, and always for the
+    //! Stay Awake doze alarm, the loud screen: white text, flashing.
     private function alarmLayout(dc as Graphics.Dc) as ScreenLayout {
         var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
         var reason = _detector.getAlarmReason();
         var deadline = (reason == SleepDetector.ALARM_DEADLINE);
+        var loud = (reason == SleepDetector.ALARM_DOZE) || _alarm.isFullIntensity();
+        var text = loud ? Graphics.COLOR_WHITE : Graphics.COLOR_LT_GRAY;
 
-        L.addText([deadline ? "TIME'S UP" : "WAKE UP!"],
-            [Graphics.FONT_LARGE, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL] as Array<Graphics.FontDefinition>,
-            Graphics.COLOR_WHITE, ScreenLayout.KEEP);
-        L.addDivider(14, Graphics.COLOR_WHITE, 10);
+        addClock(L);
+        var title;
         if (deadline) {
-            L.addText(["No sleep detected", "No sleep"], fontsBody(), Graphics.COLOR_WHITE, 85);
-        } else if (reason == SleepDetector.ALARM_SMART_WAKE) {
-            L.addText(["Smart wake"], fontsBody(), Graphics.COLOR_WHITE, 85);
-        }
-
-        if (deadline) {
-            L.addText(["Waited " + (sessionSeconds() / 60) + " min"], fontsBody(), Graphics.COLOR_WHITE, 80);
+            title = loud ? ["TIME'S UP"] : ["Time's up"];
         } else {
-            L.addText(["Slept " + formatCountdown(_detector.getActualNapDurationSec())],
-                fontsBody(), Graphics.COLOR_WHITE, 80);
+            title = loud ? ["WAKE UP!"] : ["Time to wake up", "Wake up"];
         }
-        var avgHR = _detector.getAvgSleepHR();
-        if (avgHR > 0) {
-            L.addText(["Avg HR " + avgHR + " BPM", "Avg " + avgHR], fontsBody(), Graphics.COLOR_WHITE, 30);
+        L.addText(title as Array<String>,
+            [Graphics.FONT_LARGE, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL] as Array<Graphics.FontDefinition>,
+            loud ? Graphics.COLOR_WHITE : Graphics.COLOR_ORANGE, ScreenLayout.KEEP);
+        L.addDivider(14, loud ? Graphics.COLOR_WHITE : Graphics.COLOR_DK_GRAY, 10);
+        if (reason == SleepDetector.ALARM_DOZE) {
+            L.addText(["You dozed off", "Dozed off"], fontsBody(), text, 85);
+            L.addText(["Doze #" + _detector.getDozeCount()], fontsBody(), text, 60);
+        } else {
+            if (deadline) {
+                L.addText(["No sleep detected", "No sleep"], fontsBody(), text, 85);
+            } else if (reason == SleepDetector.ALARM_SMART_WAKE) {
+                L.addText(["Smart wake"], fontsBody(), text, 85);
+            }
+
+            if (deadline) {
+                L.addText(["Waited " + (sessionSeconds() / 60) + " min"], fontsBody(), text, 80);
+            } else {
+                L.addText(["Slept " + formatCountdown(_detector.getActualNapDurationSec())],
+                    fontsBody(), text, 80);
+            }
+            var avgHR = _detector.getAvgSleepHR();
+            if (avgHR > 0) {
+                L.addText(["Avg HR " + avgHR + " BPM", "Avg " + avgHR], fontsBody(), text, 30);
+            }
         }
-        L.addText(["ALARM " + (_alarm.getCurrentPhase() + 1) + "/4"], fontsBody(), Graphics.COLOR_YELLOW, 40);
-        L.setFooter(stopHint(ConfirmPress.CONTEXT_ALARM), Graphics.COLOR_WHITE);
+        // The phase of the ring the user just felt (the style above follows it too).
+        L.addText(["ALARM " + (_alarm.getLastRingPhase() + 1) + "/4"], fontsBody(),
+            loud ? Graphics.COLOR_YELLOW : Graphics.COLOR_LT_GRAY, 40);
+        L.setFooter(stopHint(ConfirmPress.CONTEXT_ALARM), text);
         return L;
     }
 
@@ -401,6 +559,13 @@ class PowerNapView extends WatchUi.View {
         L.addText([completion + "% of " + _detector.getNapDurationMin() + " min", completion + "%"],
             [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, accent, 85);
         L.addText(quality as Array<String>, [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, accent, 90);
+        var fallSec = _detector.getFallAsleepSec();
+        if (fallSec >= 0) {
+            // How long it took to fall asleep: the alarm moved by this much.
+            var m = (fallSec + 30) / 60;
+            L.addText(["Fell asleep in " + m + " min", "Asleep in " + m + " min", m + " min to sleep"],
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 86);
+        }
         L.addDivider(20, Graphics.COLOR_DK_GRAY, 20);
 
         var avgHR = _detector.getAvgSleepHR();
@@ -415,7 +580,7 @@ class PowerNapView extends WatchUi.View {
             L.addText([formatMoment(sleepStart as Time.Moment) + " - " + formatMoment(napEnd as Time.Moment)],
                 [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 40);
         }
-        L.setFooter("BACK to exit", Graphics.COLOR_LT_GRAY);
+        L.setFooterTexts(summaryFooter(), Graphics.COLOR_LT_GRAY);
         return L;
     }
 
@@ -430,7 +595,100 @@ class PowerNapView extends WatchUi.View {
         var endStr = (napEnd != null) ? formatMoment(napEnd as Time.Moment) : "--:--";
         L.addText([formatMoment(_detector.getStartTime()) + " - " + endStr],
             fontsDetail(), Graphics.COLOR_LT_GRAY, 50);
-        L.setFooter("BACK to exit", Graphics.COLOR_LT_GRAY);
+        L.setFooterTexts(summaryFooter(), Graphics.COLOR_LT_GRAY);
+        return L;
+    }
+
+    // -- Stay Awake screens ------------------------------------------------
+
+    //! Guarding: a short message that the watch keeps the user awake, the
+    //! drowsiness warning once the wrist has been still for a while, and
+    //! how long the session has run.
+    private function stayAwakeLayout(dc as Graphics.Dc) as ScreenLayout {
+        var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
+        var calibrating = (_detector.getState() == SleepDetector.STATE_CALIBRATING);
+
+        addClock(L);
+        L.addText(["STAY AWAKE"], fontsTitle(), Graphics.COLOR_ORANGE, 60);
+        L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
+        if (_detector.isDozeWarning()) {
+            L.addText(["Stay alert!"], fontsBody(), Graphics.COLOR_YELLOW, ScreenLayout.KEEP);
+            L.addText(["Move a bit", "Move"], fontsDetail(), Graphics.COLOR_YELLOW, 96);
+        } else {
+            L.addText(["Keeping you awake", "Keeping awake", "On guard"], fontsBody(),
+                Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+            if (calibrating) {
+                L.addText(["Building baseline...", "Baseline..."], fontsDetail(), Graphics.COLOR_LT_GRAY, 95);
+            } else if (_detector.getStillMinutes() > 0) {
+                L.addText(["Stillness " + _detector.getOnsetProgressPct() + "%"],
+                    fontsDetail(), Graphics.COLOR_YELLOW, 95);
+            } else {
+                L.addText(["Buzzes if you doze", "Buzz if you doze"], fontsDetail(), Graphics.COLOR_LT_GRAY, 95);
+            }
+        }
+        L.addText(["Awake " + formatLong(_detector.getSessionSec())], fontsDetail(), Graphics.COLOR_LT_GRAY, 80);
+        var dozes = _detector.getDozeCount();
+        if (dozes > 0) {
+            L.addText(dozesText(dozes), fontsDetail(), Graphics.COLOR_ORANGE, 85);
+        }
+        addWarnings(L, 97);
+        addInactiveWarning(L);
+        L.addText(["HR " + hrString(_detector.getCurrentHR())], fontsDetail(), Graphics.COLOR_RED, 40);
+        L.setFooter(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
+        return L;
+    }
+
+    //! Stay Awake summary: session length and dozes caught.
+    private function stayAwakeSummaryLayout(dc as Graphics.Dc) as ScreenLayout {
+        var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 18);
+        var dozes = _detector.getDozeCount();
+        var accent = (dozes == 0) ? Graphics.COLOR_GREEN : Graphics.COLOR_ORANGE;
+        L.addText(["STAY AWAKE", "AWAKE"], fontsBody(), accent, ScreenLayout.KEEP);
+        L.addText([formatLong(sessionSeconds())],
+            [Graphics.FONT_NUMBER_MILD, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL] as Array<Graphics.FontDefinition>,
+            Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+        L.addText((dozes == 0) ? ["No dozes"] : dozesText(dozes), fontsDetail(), accent, 90);
+        L.addDivider(20, Graphics.COLOR_DK_GRAY, 20);
+        var napEnd = _detector.getNapEndTime();
+        var endStr = (napEnd != null) ? formatMoment(napEnd as Time.Moment) : "--:--";
+        L.addText([formatMoment(_detector.getStartTime()) + " - " + endStr],
+            [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 40);
+        L.setFooterTexts(summaryFooter(), Graphics.COLOR_LT_GRAY);
+        return L;
+    }
+
+    // -- Peek -----------------------------------------------------------
+
+    //! "So far" card shown for a few seconds after UP/DOWN/START during a
+    //! nap: time asleep, wakes and the alarm time. Nothing stops.
+    private function peekLayout(dc as Graphics.Dc) as ScreenLayout {
+        var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
+        addClock(L);
+        if (_detector.isStayAwake()) {
+            L.addText(["STAY AWAKE"], fontsTitle(), Graphics.COLOR_ORANGE, 60);
+            L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
+            L.addText(["Awake " + formatLong(_detector.getSessionSec())], fontsBody(),
+                Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+            var dozes = _detector.getDozeCount();
+            L.addText((dozes == 0) ? ["No dozes"] : dozesText(dozes), fontsDetail(),
+                Graphics.COLOR_LT_GRAY, 90);
+            var since = formatMoment(_detector.getStartTime());
+            L.addText(["Since " + since], fontsDetail(), Graphics.COLOR_LT_GRAY, 70);
+        } else {
+            L.addText(["NAP SO FAR", "SO FAR"], fontsTitle(), Graphics.COLOR_BLUE, 60);
+            L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
+            if (_detector.hasSleptAtLeastOnce()) {
+                L.addText(["Slept " + formatCountdown(_detector.getActualNapDurationSec())], fontsBody(),
+                    Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+                var wakes = _detector.getWakeEpisodes();
+                L.addText([(wakes == 0) ? "No wakes" : (wakes + ((wakes == 1) ? " wake" : " wakes"))],
+                    fontsDetail(), Graphics.COLOR_LT_GRAY, 80);
+            } else {
+                L.addText(["No sleep yet"], fontsBody(), Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+            }
+            L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_YELLOW, 95);
+        }
+        L.setFooter(stopHint(ConfirmPress.CONTEXT_NAP), footerColor(ConfirmPress.CONTEXT_NAP));
         return L;
     }
 
@@ -477,8 +735,54 @@ class PowerNapView extends WatchUi.View {
         }
     }
 
+    //! Warnings the user can still act on (start and before sleep): a nearly
+    //! empty battery may not last until the alarm, and Do Not Disturb may
+    //! keep the watch from vibrating or beeping. Both at once share one line,
+    //! so they never push the alarm promise off a small screen together.
+    private function addWarnings(L as ScreenLayout, priority as Number) as Void {
+        var pct = lowBatteryPct();
+        var dnd = dndOn();
+        var texts = null;
+        var color = Graphics.COLOR_ORANGE;
+        if (pct >= 0 && dnd) {
+            texts = ["Low battery " + pct + "%, DND on", "Battery " + pct + "%, DND on", "Batt " + pct + "%, DND"];
+            color = Graphics.COLOR_RED;
+        } else if (pct >= 0) {
+            texts = ["Low battery " + pct + "%", "Battery " + pct + "%"];
+            color = Graphics.COLOR_RED;
+        } else if (dnd) {
+            texts = ["DND on: alarm may be silent", "DND may mute alarm", "DND on"];
+        }
+        if (texts != null) {
+            L.addText(texts as Array<String>, [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
+                color, priority);
+        }
+    }
+
+    private function dndOn() as Boolean {
+        if (_forceDnd >= 0) {
+            return _forceDnd == 1;
+        }
+        try {
+            var ds = System.getDeviceSettings();
+            if (ds has :doNotDisturb) {
+                return ds.doNotDisturb;
+            }
+        } catch (e instanceof Lang.Exception) {
+            // Unknown: no warning.
+        }
+        return false;
+    }
+
+    //! Footer of the nap screens. Once armed it says what the second press
+    //! does: with sleep recorded (or in Stay Awake mode) it ends the nap and
+    //! shows the results, otherwise it goes back to the start screen.
     private function stopHint(context as Number) as String {
         if (_confirm.isArmed(nowMs(), context)) {
+            if (context == ConfirmPress.CONTEXT_NAP
+                && (_detector.hasSleptAtLeastOnce() || _detector.isStayAwake())) {
+                return "Again: stop + stats";
+            }
             return "Press again to stop";
         }
         return "BACK x2 to stop";
@@ -486,6 +790,91 @@ class PowerNapView extends WatchUi.View {
 
     private function footerColor(context as Number) as Graphics.ColorType {
         return _confirm.isArmed(nowMs(), context) ? Graphics.COLOR_RED : Graphics.COLOR_LT_GRAY;
+    }
+
+    //! START sets up a new nap, BACK exits (the START hint is dropped where
+    //! the bottom of the screen is too narrow for both).
+    private function summaryFooter() as Array<String> {
+        return ["START new, BACK exit", "BACK to exit"] as Array<String>;
+    }
+
+    //! The alarm promise. Before sleep: the latest possible alarm (the
+    //! deadline), rounded UP to the minute so the alarm never rings after
+    //! the time shown. Once asleep: the minute the alarm now rings in.
+    private function alarmLineTexts() as Array<String> {
+        if (_detector.getPlannedEndTime() != null) {
+            var at = alarmAtString();
+            return ["Alarm at " + at, "At " + at] as Array<String>;
+        }
+        var by = formatMoment(new Time.Moment(_detector.getDeadlineTime().value() + 59));
+        return ["Latest alarm " + by, "Latest " + by, "By " + by] as Array<String>;
+    }
+
+    //! The minute the planned alarm rings in ("--:--" before onset).
+    private function alarmAtString() as String {
+        var planned = _detector.getPlannedEndTime();
+        return (planned != null) ? formatMoment(planned as Time.Moment) : "--:--";
+    }
+
+    //! The time of day as the top line of a live screen. On the Instinct it
+    //! goes into the round lens instead (see onUpdate).
+    private function addClock(L as ScreenLayout) as Void {
+        if (!hasSubscreen()) {
+            L.addText([clockString()], [Graphics.FONT_TINY, Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
+                Graphics.COLOR_LT_GRAY, 92);
+        }
+    }
+
+    private function clockString() as String {
+        return formatMoment(Time.now());
+    }
+
+    //! A short text centred in the Instinct's subscreen lens.
+    private function drawInLens(dc as Graphics.Dc, text as String, color as Graphics.ColorType,
+                                invert as Boolean) as Void {
+        var sub = subscreenBox();
+        if (sub == null) {
+            return;
+        }
+        var box = sub as Array<Number>;
+        var fh = dc.getFontHeight(Graphics.FONT_XTINY);
+        dc.setColor(Palette.fg(color, invert), Graphics.COLOR_TRANSPARENT);
+        dc.drawText(box[0] + box[2] / 2, box[1] + (box[3] - fh) / 2, Graphics.FONT_XTINY, text,
+            Graphics.TEXT_JUSTIFY_CENTER);
+    }
+
+    //! Battery percentage when it is below LOW_BATTERY_PCT and the watch is
+    //! not charging, else -1.
+    private function lowBatteryPct() as Number {
+        if (_forceBatteryPct >= 0) {
+            return (_forceBatteryPct < LOW_BATTERY_PCT) ? _forceBatteryPct : -1;
+        }
+        try {
+            var stats = System.getSystemStats();
+            if ((stats has :charging) && stats.charging) {
+                return -1;
+            }
+            var pct = stats.battery.toNumber();
+            return (pct < LOW_BATTERY_PCT) ? pct : -1;
+        } catch (e instanceof Lang.Exception) {
+            return -1;
+        }
+    }
+
+    private function dozesText(dozes as Number) as Array<String> {
+        if (dozes == 1) {
+            return ["1 doze caught", "1 doze"] as Array<String>;
+        }
+        return [dozes + " dozes caught", dozes + " dozes"] as Array<String>;
+    }
+
+    //! A touchscreen that is switched on (FR255 and Instinct 3 have none).
+    private function hasTouch() as Boolean {
+        try {
+            return System.getDeviceSettings().isTouchScreen;
+        } catch (e instanceof Lang.Exception) {
+            return false;
+        }
     }
 
     private function isRoundScreen() as Boolean {
@@ -537,7 +926,7 @@ class PowerNapView extends WatchUi.View {
     }
 
     private function readStoredDuration() as Number {
-        var d = _pendingDuration;
+        var d = _syncedDuration;
         try {
             var saved = Application.Properties.getValue("napDuration");
             if (saved != null && saved instanceof Number) {
@@ -549,6 +938,32 @@ class PowerNapView extends WatchUi.View {
         if (d < DURATION_MIN) { d = DURATION_MIN; }
         if (d > DURATION_MAX) { d = DURATION_MAX; }
         return d;
+    }
+
+    //! One-shot timer to just after the next change of the "Latest alarm"
+    //! preview. It is rounded up to the minute (see alarmLineTexts), so it
+    //! moves when the clock reaches second 1 of a minute.
+    private function startUiTimer() as Void {
+        if (_uiTimer != null) {
+            return;
+        }
+        var sec = System.getClockTime().sec;
+        var waitSec = (sec < 1) ? (1 - sec) : (61 - sec);
+        try {
+            var t = new Timer.Timer();
+            t.start(method(:onUiTimer), waitSec * 1000 + 200, false);
+            _uiTimer = t;
+        } catch (e instanceof Lang.Exception) {
+            // Timer limit: the preview refreshes on the next key press.
+            _uiTimer = null;
+        }
+    }
+
+    private function stopUiTimer() as Void {
+        if (_uiTimer != null) {
+            (_uiTimer as Timer.Timer).stop();
+            _uiTimer = null;
+        }
     }
 
     //! Millisecond clock for the two-press window (not rounded to seconds).
@@ -565,13 +980,38 @@ class PowerNapView extends WatchUi.View {
         return (totalSeconds / 60).toString() + ":" + formatTwoDigits(totalSeconds % 60);
     }
 
+    //! m:ss below an hour, h:mm:ss from an hour on (Stay Awake sessions).
+    private function formatLong(totalSeconds as Number) as String {
+        if (totalSeconds < 3600) {
+            return formatCountdown(totalSeconds);
+        }
+        var h = totalSeconds / 3600;
+        var rest = totalSeconds % 3600;
+        return h.toString() + ":" + formatTwoDigits(rest / 60) + ":" + formatTwoDigits(rest % 60);
+    }
+
     private function formatTwoDigits(n as Number) as String {
         return (n < 10) ? "0" + n.toString() : n.toString();
     }
 
+    //! HH:MM, or h:mm when the watch is set to the 12-hour clock.
     private function formatMoment(moment as Time.Moment) as String {
         var info = Gregorian.info(moment, Time.FORMAT_SHORT);
-        return formatTwoDigits(info.hour as Number) + ":" + formatTwoDigits(info.min as Number);
+        var hour = info.hour as Number;
+        var min = formatTwoDigits(info.min as Number);
+        if (is24Hour()) {
+            return formatTwoDigits(hour) + ":" + min;
+        }
+        hour = hour % 12;
+        return ((hour == 0) ? 12 : hour).toString() + ":" + min;
+    }
+
+    private function is24Hour() as Boolean {
+        try {
+            return System.getDeviceSettings().is24Hour;
+        } catch (e instanceof Lang.Exception) {
+            return true;
+        }
     }
 
     // Debug builds: show "dev #<build>" on the start screen so you can tell
@@ -579,7 +1019,7 @@ class PowerNapView extends WatchUi.View {
     // the watch. Release builds show nothing.
     (:debug)
     private function buildDebugLabel() as String {
-        return "dev #0919b";
+        return "dev #0919d";
     }
 
     (:release)
@@ -589,10 +1029,10 @@ class PowerNapView extends WatchUi.View {
 
     // -- Test hooks (debug builds only) -----------------------------------
 
-    //! Build and solve the layout for the current detector state against the
-    //! given Dc (tests pass a screen-sized buffered bitmap).
+    //! Build and solve the layout for the current state (start screen when
+    //! not started) against the given Dc (tests pass a screen-sized bitmap).
     (:debug)
-    function testBuildLayout(dc as Graphics.Dc) as ScreenLayout? {
+    function testBuildLayout(dc as Graphics.Dc) as ScreenLayout {
         return buildLayout(dc);
     }
 
@@ -606,10 +1046,50 @@ class PowerNapView extends WatchUi.View {
         return _pendingDuration;
     }
 
-    //! Measure the start screen on dc and return [plusMaxY, minusMinY].
+    (:debug)
+    function testSetPendingDuration(minutes as Number) as Void {
+        _pendingDuration = minutes;
+    }
+
+    //! Force the DND state (true/false) instead of reading the watch setting.
+    (:debug)
+    function testForceDnd(on as Boolean) as Void {
+        _forceDnd = on ? 1 : 0;
+    }
+
+    //! Pretend the battery is at pct % (-1: use the real level).
+    (:debug)
+    function testForceBattery(pct as Number) as Void {
+        _forceBatteryPct = pct;
+    }
+
+    (:debug)
+    function testIsFlashPhase() as Boolean {
+        return isFlashPhase();
+    }
+
+    (:debug)
+    function testClockString() as String {
+        return clockString();
+    }
+
+    (:debug)
+    function testHasSubscreen() as Boolean {
+        return hasSubscreen();
+    }
+
+    //! End the input lock now (tests of deliberate follow-up presses).
+    (:debug)
+    function testExpireInputLock() as Void {
+        _locked = false;
+    }
+
+    //! Lay out the start screen on dc and return [plusMaxY, minusMinY,
+    //! number slot height, label slot height, hint (start) min Y].
     (:debug)
     function testMeasureTapZones(dc as Graphics.Dc) as Array<Number> {
-        measureStartScreen(dc);
-        return [_tapPlusMaxY, _tapMinusMinY] as Array<Number>;
+        var lines = [] as Array<LayoutLine>;
+        solveStartScreen(dc, lines);
+        return [_tapPlusMaxY, _tapMinusMinY, lines[1].slotH, lines[2].slotH, _tapStartMinY] as Array<Number>;
     }
 }
