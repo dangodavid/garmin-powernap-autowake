@@ -13,7 +13,8 @@ import Toybox.Time;
 //     still minutes; the HR drop is measured against a rolling reference
 //     (minutes 4-13 ago) once 5 such minutes exist;
 //   * one gentle nudge at 3 still minutes;
-//   * the doze alarm starts at phase 2; dismissing it goes back on guard;
+//   * the doze alarm starts at the ramp's 60 % step; dismissing it goes back
+//     on guard;
 //   * the session ends only when the user stops it, with its own summary.
 // -----------------------------------------------------------------------------
 
@@ -61,7 +62,7 @@ function testStay_noTimedAlarmEver(logger as Test.Logger) as Boolean {
 
 //! Still from the start with a steady HR: calibration counts, nudge at 3
 //! still minutes (once), doze alarm exactly at 5 still minutes (300 s),
-//! starting at phase 2.
+//! starting at the ramp's doze step (the first step of at least 60 %).
 (:test)
 function testStay_fiveStillMinutesRingDozeAlarm(logger as Test.Logger) as Boolean {
     var a = stayHelperAlarm();
@@ -84,8 +85,9 @@ function testStay_fiveStillMinutesRingDozeAlarm(logger as Test.Logger) as Boolea
         logger.debug("expected the doze alarm at 300 s, state " + d.getState() + " reason " + d.getAlarmReason());
         ok = false;
     }
-    if (!a.isAlarming() || a.getCurrentPhase() != 2 || a.testGetRingsFired() != 1) {
-        logger.debug("doze alarm must start at phase 2, phase " + a.getCurrentPhase());
+    if (!a.isAlarming() || a.testGetLastRingStep() != a.testDozeStartStep() || a.testGetRingsFired() != 1
+        || a.testGetRampRow(a.testGetLastRingStep())[0] < 60) {
+        logger.debug("doze alarm must start at the 60 % step, step " + a.testGetLastRingStep());
         ok = false;
     }
     if (d.hasSleptAtLeastOnce() || d.getActualNapDurationSec() != 0 || d.getRemainingSeconds() != 0) {

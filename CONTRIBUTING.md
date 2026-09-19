@@ -42,7 +42,7 @@ Command line: build with `-t` and run `monkeydo <prg> fenix847mm -t` with the si
 | `PowerNapView.mc` | Start screen + 4 nap screens built as prioritised line lists; live 1 Hz refresh; owns the two-press `ConfirmPress` |
 | `PowerNapDelegate.mc` | `InputDelegate` (not `BehaviorDelegate`): routes physical button presses and tap coordinates to view actions |
 | `SleepDetector.mc` | Core engine: wall-clock timing, per-minute sensor aggregation, onset / wake / smart-wake logic, deadline alarm |
-| `AlarmManager.mc` | 4-phase escalating alarm: restarts its own timer on each phase boundary; AMOLED-safe backlight handling |
+| `AlarmManager.mc` | Ramp-table crescendo (9 steps to full strength in ~2 min, then persistent); restarts its own timer when the wait changes; AMOLED-safe backlight handling; quiet onset gate |
 | `ScreenLayout.mc` | Line layout that fits any screen (drops/shrinks by priority, round chord, Instinct subscreen) + `Palette` |
 | `ConfirmPress.mc` | Two-press confirmation for stopping a nap or the alarm |
 | `RingMath.mc` | Angle math for the summary ring |
@@ -94,18 +94,20 @@ The deadline (start + allowance + nap) is shown as "Alarm by HH:MM" (rounded up 
 
 ### Alarm escalation (AlarmManager)
 
-Four phases, each running for 4 rings before the timer interval tightens:
+One table, `RAMP`, one row per step `[intensity %, pulse ms, pulses, gap ms, interval ms, rings]`; everything else is derived from it (see the class comment for the full table):
 
-| Phase | Rings | Interval | Vibration intensity |
-|-------|-------|----------|---------------------|
-| 0 - feather | 0-3  | 9 s | 15 % |
-| 1 - gentle  | 4-7  | 7 s | 30 % |
-| 2 - medium  | 8-11 | 6 s | 65 % |
-| 3 - full    | 12+  | 5 s | 100 % |
+| Step | Intensity | Pulses | Wait after each ring | First ring at |
+|------|-----------|--------|----------------------|---------------|
+| 0 | 22 % | 2 × 120 ms | 10 s | 0 s |
+| 1-7 | 28 → 92 % | 2-3 × 140-320 ms | 9 → 5 s | 20 → 108 s |
+| 8 | 100 % | 3 × 350 ms | 5 s | 118 s (36 rings = 3 min) |
+| 9 (persistent) | 100 % | 3 × 350 ms | 30 s | 298 s |
 
-On each phase transition the current timer is stopped and restarted with the new interval.
+The wait after a ring is that of its step; when it changes the repeat timer is restarted. Thresholds resolved with `firstStepAtLeast(pct)`: melody joins ("Both") at 40 %, backlight from 50 %, Stay Awake doze alarm starts at 60 %, nudge uses the 30 % step. Display phases: 0 below 40 %, 1 below 65 %, 2 below 100 %, 3 at full.
 
-**AMOLED rule:** vibration and tone run first, each in its own try block; `Attention.backlight(true)` runs last, in its own try block, and only on rings 0, 1 and every 6th ring. Burn-in protected displays throw after the display has been held on for about a minute; a backlight call placed before the vibration in a shared try block silences the alarm.
+**AMOLED rule:** vibration and tone run first, each in its own try block; `Attention.backlight(true)` runs last, in its own try block, only from the 50 % step and only on the first two such rings and every 6th after. Burn-in protected displays throw after the display has been held on for about a minute; a backlight call placed before the vibration in a shared try block silences the alarm.
+
+**Quiet onset gate:** `deliver()` and `requestBacklight()` refuse every call while the alarm is not ringing (except from `nudge()`), and `nudge()` is refused unless the detector marked the session as Stay Awake. `test/QuietOnsetTest.mc` and the invariant tests guard it.
 
 ## Coding Conventions
 

@@ -11,9 +11,9 @@
     <string id="MotionSensTitle">Motion Sensitivity</string>
 
     <!-- Companion app settings list values -->
-    <string id="VibrationOnly">Vibration Only</string>
-    <string id="ToneOnly">Tone Only</string>
-    <string id="VibrationAndTone">Vibration + Tone</string>
+    <string id="VibrationOnly">Vibration only</string>
+    <string id="ToneOnly">Nature sound only</string>
+    <string id="VibrationAndTone">Vibration + nature sound (default)</string>
     <string id="Low">Low (restless sleepers)</string>
     <string id="Medium">Medium (default)</string>
     <string id="High">High (strict stillness)</string>

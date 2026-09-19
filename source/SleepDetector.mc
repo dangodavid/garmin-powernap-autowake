@@ -65,9 +65,10 @@ import Toybox.WatchUi;
 //! against a rolling reference (the mean of the per-minute HR 4-13 minutes
 //! ago) because a session can last hours and HR drifts. At 3 still minutes
 //! a single gentle nudge vibrates ("Stay alert"); at onset the doze alarm
-//! (ALARM_DOZE) rings, starting at the medium phase. Dismissing it goes back
-//! on guard, so one session can catch several dozes. There is no deadline
-//! and no sleep state; the session ends when the user stops it.
+//! (ALARM_DOZE) rings, starting part-way up the ramp (AlarmManager's 60 %
+//! step). Dismissing it goes back on guard, so one session can catch
+//! several dozes. There is no deadline and no sleep state; the session ends
+//! when the user stops it.
 //!
 //! Settings
 //! --------
@@ -114,7 +115,6 @@ class SleepDetector {
     private const NUDGE_STILL_MIN          = 3;     // one gentle nudge after this many still minutes
     private const HR_REF_MINUTES           = 10;    // rolling HR reference: minutes before the window
     private const HR_REF_MIN_MINUTES       = 5;     // ... used once at least this many exist
-    private const DOZE_ALARM_PHASE         = 2;     // the doze alarm starts at the medium phase
     private const REACTION_ACTIVE_SEC      = 3;     // moving this long after the nudge = awake
 
     // ── State ───────────────────────────────────────────────────────────
@@ -816,8 +816,13 @@ class SleepDetector {
         trace("alarm," + reason);
         try {
             if (_alarm != null) {
-                (_alarm as AlarmManager).startAlarmFromPhase(
-                    (reason == ALARM_DOZE) ? DOZE_ALARM_PHASE : 0);
+                // The doze alarm starts part-way up the ramp (the manager
+                // knows where); a nap alarm starts from the first, finest step.
+                if (reason == ALARM_DOZE) {
+                    (_alarm as AlarmManager).startDozeAlarm();
+                } else {
+                    (_alarm as AlarmManager).startAlarm();
+                }
             }
         } catch (e instanceof Lang.Exception) {
             // Alarm start failed -- state is ALARM so the WAKE UP screen

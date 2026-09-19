@@ -476,8 +476,9 @@ class PowerNapView extends WatchUi.View {
     // -- Screen 3: Alarm / Wake Up -------------------------------------
 
     //! Gentle phases: calm colours and words on a dark screen (the backlight
-    //! only comes on from phase 2). From full intensity, and always for the
-    //! Stay Awake doze alarm, the loud screen: white text, flashing.
+    //! only comes on from the ramp's 50 % step). From full strength, and
+    //! always for the Stay Awake doze alarm, the loud screen: white text,
+    //! flashing.
     private function alarmLayout(dc as Graphics.Dc) as ScreenLayout {
         var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
         var reason = _detector.getAlarmReason();

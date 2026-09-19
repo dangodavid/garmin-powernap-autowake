@@ -198,12 +198,13 @@ function testLayout_alarmScreens(logger as Test.Logger) as Boolean {
     v.pressStop(ConfirmPress.CONTEXT_ALARM);
     ok = layoutHelperCheck("alarm armed", v, dc, ["wake up|Wake up"] as Array<String>, logger) && ok;
 
-    // After ring 11 (the last of phase 2) the next ring is full intensity,
-    // but the screen is still calm and the counter shows the phase felt: 3/4.
+    // After ring 15 (the last one below full strength, 92 %) the next ring is
+    // full, but the screen is still calm and the counter shows the phase
+    // felt: 3/4.
     var edgeAlarm = new AlarmManager();
     edgeAlarm.testSetAlarmType(0);
     edgeAlarm.startAlarm();
-    while (edgeAlarm.testGetRingCount() < 12) {
+    while (edgeAlarm.testGetRingCount() < 16) {
         edgeAlarm.testFireRing();
     }
     v = layoutHelperView(d, edgeAlarm);
@@ -214,11 +215,11 @@ function testLayout_alarmScreens(logger as Test.Logger) as Boolean {
     }
     edgeAlarm.stop();
 
-    // Full intensity: the loud screen, flashing.
+    // Full strength (ring 16): the loud screen, flashing.
     var loudAlarm = new AlarmManager();
     loudAlarm.testSetAlarmType(0);
     loudAlarm.startAlarm();
-    while (loudAlarm.testGetRingCount() < 13) {
+    while (loudAlarm.testGetRingCount() < 17) {
         loudAlarm.testFireRing();
     }
     v = layoutHelperView(d, loudAlarm);

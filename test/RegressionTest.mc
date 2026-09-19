@@ -338,36 +338,44 @@ function testReg_unknownAlarmTypeVibrates(logger as Test.Logger) as Boolean {
     return ok;
 }
 
-//! Every phase has its own, stronger vibration pattern within the SDK limit
-//! of 8 profiles: first pulse 15/30/65/100 % for 80/120/200/300 ms.
+//! Every step's vibration pattern is built from its RAMP row within the SDK
+//! limit of 8 profiles: `pulses` pulses of `pulse ms` at `pct`, separated by
+//! `gap ms` pauses.
 (:test)
-function testReg_vibePatternEscalatesPerPhase(logger as Test.Logger) as Boolean {
+function testReg_vibePatternFollowsRampRow(logger as Test.Logger) as Boolean {
     var a = new AlarmManager();
-    var sizes = [3, 5, 5, 5] as Array<Number>;
-    var duty = [15, 30, 65, 100] as Array<Number>;
-    var len = [80, 120, 200, 300] as Array<Number>;
-    for (var p = 0; p < 4; p++) {
-        var pat = a.testGetVibePattern(p);
-        if (pat.size() != sizes[p] || pat.size() > 8) {
-            logger.debug("phase " + p + " size " + pat.size());
+    for (var s = 0; s < a.testGetRampSize(); s++) {
+        var row = a.testGetRampRow(s);
+        var pat = a.testGetVibePattern(s);
+        if (pat.size() != 2 * row[2] - 1 || pat.size() > 8) {
+            logger.debug("step " + s + " size " + pat.size() + " for " + row[2] + " pulses");
             return false;
         }
-        if (pat[0].dutyCycle != duty[p] || pat[0].length != len[p]) {
-            logger.debug("phase " + p + " first pulse " + pat[0].dutyCycle + "%/" + pat[0].length + "ms");
-            return false;
+        for (var i = 0; i < pat.size(); i++) {
+            var pulse = (i % 2 == 0);
+            if (pat[i].dutyCycle != (pulse ? row[0] : 0) || pat[i].length != (pulse ? row[1] : row[3])) {
+                logger.debug("step " + s + " profile " + i + ": " + pat[i].dutyCycle + "%/" + pat[i].length + "ms");
+                return false;
+            }
         }
     }
     return true;
 }
 
-//! Tones escalate ALERT_LO, ALERT_LO, ALERT_HI, ALARM.
+//! Built-in tones (devices without ToneProfile) follow the display phase:
+//! ALERT_LO below 65 %, ALERT_HI below full, ALARM at full strength.
 (:test)
-function testReg_tonePerPhase(logger as Test.Logger) as Boolean {
+function testReg_builtInTonePerStep(logger as Test.Logger) as Boolean {
     var a = new AlarmManager();
-    return a.testGetToneForPhase(0) == Attention.TONE_ALERT_LO
-        && a.testGetToneForPhase(1) == Attention.TONE_ALERT_LO
-        && a.testGetToneForPhase(2) == Attention.TONE_ALERT_HI
-        && a.testGetToneForPhase(3) == Attention.TONE_ALARM;
+    for (var s = 0; s < a.testGetRampSize(); s++) {
+        var pct = a.testGetRampRow(s)[0];
+        var expected = (pct >= 100) ? Attention.TONE_ALARM : ((pct >= 65) ? Attention.TONE_ALERT_HI : Attention.TONE_ALERT_LO);
+        if (a.testGetToneForStep(s) != expected) {
+            logger.debug("step " + s + " (" + pct + " %): wrong built-in tone");
+            return false;
+        }
+    }
+    return true;
 }
 
 //! ringNow() rings immediately while alarming and does nothing otherwise.
@@ -545,20 +553,25 @@ function testReg_startClampsDuration(logger as Test.Logger) as Boolean {
     return true;
 }
 
-//! The persistent phase keeps the full-intensity pattern and trill.
+//! The persistent step (the last RAMP row) keeps the full-strength pattern
+//! and melody of the step before it; only the wait grows to 30 s.
 (:test)
 function testReg_persistentPhaseKeepsFullPattern(logger as Test.Logger) as Boolean {
     var a = new AlarmManager();
-    var p3 = a.testGetVibePattern(3);
-    var p4 = a.testGetVibePattern(4);
-    if (p3.size() != p4.size()) { return false; }
-    for (var i = 0; i < p3.size(); i++) {
-        if (p3[i].dutyCycle != p4[i].dutyCycle || p3[i].length != p4[i].length) { return false; }
+    var last = a.testGetRampSize() - 1;
+    var full = a.testGetVibePattern(last - 1);
+    var persistent = a.testGetVibePattern(last);
+    if (full.size() != persistent.size() || a.testGetIntervalForStep(last) != 30000
+        || a.testGetRampRow(last)[0] != 100 || a.testGetRampRow(last)[5] != 0) {
+        return false;
+    }
+    for (var i = 0; i < full.size(); i++) {
+        if (full[i].dutyCycle != persistent[i].dutyCycle || full[i].length != persistent[i].length) { return false; }
     }
     if (!(Attention has :ToneProfile)) {
         return true;                         // vivoactive 5/6: no melodies to compare
     }
-    return a.testGetToneProfile(4).size() == a.testGetToneProfile(3).size();
+    return a.testGetToneProfile(last).size() == a.testGetToneProfile(last - 1).size();
 }
 
 //! System.getTimer() wraps after ~24.8 days of uptime. A press 3 s after the

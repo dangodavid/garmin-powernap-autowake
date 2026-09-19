@@ -14,7 +14,7 @@ Put on the watch, start the app, lie down.
 4. **Sleep detected:** The alarm time is fixed at detection + nap duration, or at the "Latest alarm" time if that is earlier. The screen shows when you fell asleep, "Wake at HH:MM" and a live countdown. Example: 15 min nap started at 9:00, asleep at 9:10 → alarm at 9:25.
 5. **Guaranteed alarm time:** From the start, the screen shows "Latest alarm HH:MM" = start + "max time to fall asleep" + nap duration. The alarm never rings later than that: if sleep is never detected it rings exactly then, and if you fall asleep late the nap is shortened to end by then. You can never sleep through a nap because detection failed.
 6. **Smart Wake Window (naps of 15 min or more):** In the last 20 % of the nap before the alarm (at most 5 minutes) a restless minute or a slight HR rise fires the alarm early at a natural waking moment. If the "Latest alarm" cap shortened the nap below 15 minutes, there is no smart wake.
-7. **Wake-up alarm:** An escalating haptic pattern brings you out of sleep gradually, from a barely-perceptible feather tap to full intensity after 84 seconds. The screen is gentle too: it stays dark for the first minute and then shows a calm "Time to wake up"; it only flashes once the alarm is at full intensity. After three minutes at full intensity it keeps ringing every 30 seconds until you stop it. If your alarm type cannot be heard on the watch (for example Tone Only on a vívoactive, which has no speaker tones, or vibration switched off in the watch settings) the other channel is used. Works with Do Not Disturb on (verified on a fēnix 8 Pro: DND does not mute the vibration).
+7. **Wake-up alarm:** A slow crescendo brings you out of sleep gradually. It starts with taps so fine you barely feel them (22 % for 120 ms) and grows in nine steps to full strength about two minutes after the first tap (118 s), then keeps ringing at full strength every 5 seconds for three minutes and every 30 seconds after that until you stop it. The screen is gentle too: it stays dark until the taps are clearly felt (the 50 % step) and then shows a calm "Time to wake up"; it only flashes once the alarm is at full strength. By default a soft nature-inspired melody joins the vibration from the 40 % step on watches with a beeper or speaker (see Alarm Escalation). If your alarm type cannot be heard on the watch (for example Nature sound only on a vívoactive, which has no speaker tones, or vibration switched off in the watch settings) the other channel is used. Works with Do Not Disturb on (verified on a fēnix 8 Pro: DND does not mute the vibration).
 8. **Woke up early?** Nothing to do: lie still for two minutes and the nap continues, the alarm time stays the same. Every nap screen shows the time of day. Press UP, DOWN or START to peek at the nap so far (time asleep, wakes, alarm time) for a few seconds; this never stops anything.
 9. **Stop:** Press BACK (or START) twice within 4 seconds to stop the alarm. Screen taps and swipes are ignored during a nap and during the alarm, and stopping a running nap also needs two BACK presses, so a wrist or sleeve on the pillow cannot silence anything. After the first BACK press the screen says what the second one does ("Again: stop + stats" once sleep was recorded; before that it returns to the start screen). For 2.5 seconds after a stop every press is ignored (each further press extends the pause), so extra presses of a half-asleep hand cannot skip the summary or start a new nap.
 10. **Summary screen:** Shows time asleep, how long it took you to fall asleep ("Fell asleep in 10 min"), how much of the planned nap was completed (ring), the number of wake episodes, average and minimum HR, and the time window you slept. START sets up a new nap, BACK exits.
@@ -27,17 +27,24 @@ Put on the watch, start the app, lie down.
 
 ## Alarm Escalation
 
-The wake-up alarm is designed to ease you out of sleep rather than startle you. Gradual haptic escalation starting at minimal intensity.
+The wake-up alarm is designed to ease you out of sleep rather than startle you: one data-driven ramp (`AlarmManager.RAMP`, one row per step) from barely-perceptible taps to full strength, every step a small, noticeable increase.
 
-| Phase       | Duration | Intensity | Feel                          |
-|-------------|----------|-----------|-------------------------------|
-| Feather     | 0–34 s   | 15 %      | Barely perceptible taps       |
-| Gentle      | 34–61 s  | 30 %      | Soft, clearly felt pulses     |
-| Medium      | 61–84 s  | 65 %      | Firm, unmistakable buzzes     |
-| Full        | 84 s–4.3 min | 100 % | Standard alarm, every 5 s      |
-| Persistent  | then     | 100 %     | Same burst every 30 s until stopped (saves battery if the watch is not on the wrist) |
+| Step | Intensity | Pulses | Wait after each ring | First ring at | Feel |
+|------|-----------|--------|----------------------|---------------|------|
+| 0 | 22 % | 2 × 120 ms | 10 s | 0 s | Barely perceptible taps |
+| 1 | 28 % | 2 × 140 ms | 9 s | 20 s | |
+| 2 | 35 % | 2 × 160 ms | 8 s | 38 s | Soft taps (the Stay Awake nudge uses this step) |
+| 3 | 43 % | 3 × 180 ms | 8 s | 54 s | The melody joins here with "Vibration + nature sound" |
+| 4 | 52 % | 3 × 210 ms | 7 s | 70 s | Clearly felt; the screen may light up from here |
+| 5 | 63 % | 3 × 240 ms | 6 s | 84 s | Firm (the Stay Awake doze alarm starts here) |
+| 6 | 78 % | 3 × 280 ms | 6 s | 96 s | |
+| 7 | 92 % | 3 × 320 ms | 5 s | 108 s | |
+| 8 | 100 % | 3 × 350 ms | 5 s | 118 s | Full strength for 3 minutes; the screen flashes |
+| Persistent | 100 % | 3 × 350 ms | 30 s | 298 s | Until stopped (saves battery if the watch is not on the wrist) |
 
-**Tone:** Connect IQ cannot play sound files or set the volume, so "Tone" plays short nature-like melodies that grow with the phases: a low, soft "coo-coo" first, then bird chirps, then a trill (higher pitch sounds louder on the watch buzzer). With **Vibration + Tone** the vibration starts alone and the birds join from the medium phase. The default is vibration only.
+Each ring is a short burst of pulses; the wait after a ring is that of its step, and each step rings twice before the next one. The screen shows the ramp as "ALARM 1/4" (below 40 %), "2/4" (below 65 %), "3/4" (below 100 %) and "4/4" (full). The ramp can be felt without napping: see "Test alarm" in the start-screen menu.
+
+**Nature sound:** Connect IQ cannot play the watch's own alarm sounds ("Nature Awaits" and the like), audio files, or set the volume, so the app's nature sound is a short synthesized melody per step that grows with the ramp: a distant, low two-note "cuckoo" first, then bird chirps that gain notes, pitch and length (higher pitch sounds louder on the watch beeper), up to a trill at full strength. The default alarm type is **Vibration + nature sound**: the vibration opens the wake-up alone and the melody joins from the 43 % step. **Nature sound only** plays the melody from the first ring; **Vibration only** never plays it. Watches without tones (vívoactive 5/6) vibrate whatever the setting.
 
 ---
 
@@ -46,7 +53,7 @@ The wake-up alarm is designed to ease you out of sleep rather than startle you. 
 Press DOWN below 5 min on the start screen ("0 stay awake"). The watch then keeps you awake instead of letting you sleep: it shows "Keeping you awake", and
 
 - after 3 still minutes it gives one gentle buzz and shows **"Stay alert! Move a bit"**; moving for a few seconds or pressing any button answers it and the watch starts counting again;
-- if you doze off anyway (the same detection as a nap: 2 still minutes with a heart-rate drop, or 5 still minutes) the **doze alarm** rings right away at medium strength and shows "You dozed off";
+- if you doze off anyway (the same detection as a nap: 2 still minutes with a heart-rate drop, or 5 still minutes) the **doze alarm** rings right away, starting part-way up the ramp (the 63 % step) and shows "You dozed off";
 - stopping the doze alarm (two presses) puts the watch back on guard, so one session catches every doze;
 - BACK twice ends the session; the summary shows how long you stayed awake and how many dozes were caught.
 
@@ -82,7 +89,7 @@ These appear in the **Garmin Connect companion app** on your phone under the app
 |----------------------|------------------|---------------------------------------------|-----------------------------------------------|
 | Nap Duration         | 30 min           | 5–120 min                                   | Target nap length                             |
 | Max time to fall asleep | 15 min        | 5–30 min                                    | The alarm rings at the latest this long plus the nap duration after start |
-| Alarm Type           | Vibration Only   | Vibration / Tone / Vibration + Tone         | How the alarm wakes you                       |
+| Alarm Type           | Vibration + nature sound | Vibration only / Nature sound only / Vibration + nature sound | How the alarm wakes you (watches without tones always vibrate) |
 | HR Drop Threshold    | 5 BPM            | 3-20 BPM                                     | HR drop below the baseline that shortens onset to 2 still minutes (otherwise 5) |
 | Motion Sensitivity   | Medium           | Low (restless sleepers) / Medium / High (strict stillness) | Low tolerates more movement while asleep; High counts even small movements as awake |
 
@@ -158,7 +165,7 @@ $CIQ_HOME/bin/monkeydo bin/PowerNap.prg fenix847mm
 Ctrl+Shift+P -> Monkey C: Run Tests
 ```
 
-The suite under `test/` (207 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
+The suite under `test/` (210 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
 
 - **Invariant tests** run seeded random naps (settings and a minute-by-minute story of dozing, stirring, waking and sensor dropouts) and check after every simulated second the rules that must always hold: the alarm always rings and never after the deadline, the planned end never moves, smart wake only inside its window, stats in range. A failure prints the seed to replay it.
 - **Negative tests** feed absurd heart rates, missing accelerometer data, a wall clock stepping back, lifecycle calls in every state and wrong-type settings.
@@ -198,7 +205,7 @@ source/
   PowerNapView.mc               UI: start screen, nap, Stay Awake and peek screens as line lists
   PowerNapDelegate.mc           Input handler: buttons, start-screen touch zones, peek
   SleepDetector.mc              Sleep-detection engine (wall clock, per-minute aggregates, Stay Awake)
-  AlarmManager.mc               Escalating vibration/melody alarm with channel fallback, nudge
+  AlarmManager.mc               Ramp-table vibration/melody alarm with channel fallback, quiet onset gate, nudge
   MotionMath.mc                 Offset-free motion measure for one accelerometer batch
   ScreenLayout.mc               Fit-any-screen line layout + monochrome palette
   ConfirmPress.mc               Two-press confirmation for stopping a nap or the alarm
@@ -207,7 +214,7 @@ test/
   OnsetTest.mc                  Calibration, stillness, onset paths
   WakeTest.mc                   Wake episodes, re-entry, sleep accumulation
   TimingTest.mc                 Wall-clock alarm, deadline cap, smart wake
-  AlarmManagerTest.mc           Escalation phases, backlight regression
+  AlarmManagerTest.mc           Ramp constraints and schedule, melodies, backlight regression
   SummaryTest.mc                Finish/cancel paths, statistics, RingMath
   RegressionTest.mc             HR wake rules, frozen settings, lifecycle, channel fallback
   LayoutTest.mc                 Every screen fits the running device
