@@ -930,12 +930,11 @@ class PowerNapView extends WatchUi.View {
             L.setFooterTexts(alarm ? HINT_STOP
                 : (["START again: stop + stats", "START again: stop", "Again: stop"] as Array<String>),
                 Graphics.COLOR_RED);
-        } else if (alarm && _detector.isStayAwake()) {
-            // The doze alarm: both pairs stop it and go back on guard.
-            L.setFooterTexts(["BACK x2 or START x2: stop", "BACK/START x2: stop", "BACK x2 to stop"]
-                as Array<String>, color);
         } else if (alarm) {
-            L.setFooterTexts(["BACK x2: stop, START x2: stats", "BACK x2 stop, START x2 stats", "BACK x2 to stop"]
+            // Both pairs stop the ringing (START x2 then shows the stats of a
+            // nap). Kept short: a longer hint climbs over "ALARM x/4" on the
+            // 260 px round screens.
+            L.setFooterTexts(["BACK x2 or START x2: stop", "BACK x2 or START x2", "BACK x2 to stop"]
                 as Array<String>, color);
         } else {
             // On the smallest screens only "BACK x2 to end" fits; there the
