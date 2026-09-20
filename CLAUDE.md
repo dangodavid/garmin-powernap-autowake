@@ -565,8 +565,14 @@ centred in the room above the first line, only if the text fits the chord
 there, `ScreenLayout.visibleInkBounds`), the round-screen analogue of the
 Instinct lens, which shows the clock instead of "NAP" on the start screen
 now (`testLayout_clockOnStartScreen`: box present on every non-lens device,
-with the low-battery warning from 240 px, on screen, clear of the first
-line, inside the chord; the promise stays and the number keeps its size). The wording "Latest
+and with the low-battery warning from 260 px, on screen, clear of the first
+line, inside the chord; the promise stays and the number keeps its size).
+Below 260 px the warning takes the clock's room, which is the right way
+round: a watch that dies mid-nap never rings at all. That test reads
+neither the battery nor the wall clock from the simulator - it forces the
+battery and pins the widest time of day the device can draw, because
+"12:30" is a glyph wider than "3:32" and at 240 px that glyph is the whole
+difference between a clock and no clock. The wording "Latest
 alarm" was replaced by "Alarm by" (the owner: "latest" reads as "most
 recent", and the 26-minute gap to a 10-minute nap looked wrong without the
 clock); the short variant stays "By HH:MM".

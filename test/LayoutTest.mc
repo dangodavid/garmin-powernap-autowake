@@ -59,6 +59,16 @@ const LAYOUT_MAX_PASSES = 6;
 (:debug)
 const LAYOUT_MAX_FITS = 60;
 
+//! Screens this wide (px) keep the time of day on the start screen even when
+//! the low-battery warning is there too. Below it the warning takes that room:
+//! it adds a line, the block grows towards the top of the screen, and the
+//! clock's row ends up where a round chord is at its narrowest. That is the
+//! right way round - a watch that dies mid-nap never rings at all - and it is
+//! why the 240 px fenix 7S drops the clock while the 260 px fenix 7 keeps it.
+//! With a healthy battery the clock is on every screen that has no lens.
+(:debug)
+const LOW_BATTERY_CLOCK_FROM_PX = 260;
+
 //! Common checks; mustShow are text fragments that must appear on screen.
 (:debug)
 function layoutHelperCheck(name as String, v as PowerNapView, dc as Graphics.Dc,
@@ -528,21 +538,44 @@ function testLayout_clockOnLiveScreens(logger as Test.Logger) as Boolean {
 (:test)
 function testLayout_clockOnStartScreen(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
-    var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    var d = new SleepDetector(null);
+    var v = layoutHelperStartView(d, new AlarmManager());
     if (v.testHasSubscreen()) {
         return true;
     }
     var ok = true;
+    // Both inputs of this screen come from the test, never from the
+    // simulator. The battery is forced (testForceBattery short-circuits the
+    // system read); the clock is pinned, because its WIDTH decides whether
+    // "HH:MM" still fits the narrow top of a round screen, and it changes
+    // with the hour and with the watch's 12/24 h setting: "3:32" is one
+    // glyph narrower than "12:30". Pin the widest time of day this device
+    // can draw, so the answer is the same at 3 in the morning as at noon.
+    // (The sweep is over the 24 hours, not over the minutes: the minute part
+    // is the same in all of them, and 48 is a wide pair of digits.)
+    var widestSec = 0;
+    var widest = -1;
+    for (var h = 0; h < 24; h++) {
+        var sec = h * 3600 + 48 * 60;
+        d.testPinClock(sec);
+        var tw = dc.getTextWidthInPixels(v.testClockString(), Graphics.FONT_XTINY);
+        if (tw > widest) {
+            widest = tw;
+            widestSec = sec;
+        }
+    }
+    d.testPinClock(widestSec);
     var durations = [5, 30, 120, 0] as Array<Number>;
     var batteries = [100, 5] as Array<Number>;
     for (var b = 0; b < batteries.size(); b++) {
         for (var i = 0; i < durations.size(); i++) {
             v.testSetPendingDuration(durations[i]);
             v.testForceBattery(batteries[b]);
-            var name = "start " + durations[i] + " battery " + batteries[b];
+            var name = "start " + durations[i] + " battery " + batteries[b]
+                + " clock " + v.testClockString();
             var box = v.testStartClockBox(dc);
             if (box == null) {
-                if (batteries[b] == 100 || dc.getHeight() >= 240) {
+                if (batteries[b] == 100 || dc.getHeight() >= LOW_BATTERY_CLOCK_FROM_PX) {
                     logger.debug(name + ": no clock");
                     logger.debug(v.testBuildLayout(dc).testDescribe());
                     ok = false;

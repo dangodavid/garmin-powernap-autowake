@@ -506,14 +506,17 @@ class PowerNapView extends WatchUi.View {
         // before the lines so the exit banner covers them. Same size and
         // same centres as ever (the tap zones are measured off these
         // slots), one step down in brightness so the duration leads.
+        // Each one points the way its own zone moves the number: the top
+        // arrow is drawn apex-up (a row of 1 px at its top growing to the
+        // full width at its bottom), the bottom arrow apex-down.
         var cx = dc.getWidth() / 2;
         dc.setColor(Palette.fg(Palette.ACCENT_DIM, false), Graphics.COLOR_TRANSPARENT);
         var up = lines[0];
         var down = lines[3];
         var arrowH = up.slotH - 1;
         for (var i = 0; i <= arrowH; i++) {
-            dc.drawLine(cx - i, up.y + (arrowH - i), cx + i, up.y + (arrowH - i));
-            dc.drawLine(cx - i, down.y + i, cx + i, down.y + i);
+            dc.drawLine(cx - i, up.y + i, cx + i, up.y + i);
+            dc.drawLine(cx - i, down.y + (arrowH - i), cx + i, down.y + (arrowH - i));
         }
         L.draw(dc, false);
     }
@@ -576,11 +579,7 @@ class PowerNapView extends WatchUi.View {
         // colours the start screen gave it. After a wake episode: the fixed
         // alarm time. Ranked above the stillness line: on the smallest
         // screens the alarm promise must survive.
-        if (_detector.getPlannedEndTime() != null) {
-            L.addText(alarmLineTexts(), fontsDetail(), Palette.TEXT_SECONDARY, 96);
-        } else {
-            addAlarmByLine(L, _detector.getDeadlineTime().value(), fontsDetail(), 96);
-        }
+        addAlarmLine(L, fontsDetail(), 96);
         if (!awake) {
             // Below the promise: on the smallest screens "Alarm by" wins;
             // the start screen already showed the warnings with room to spare.
@@ -855,7 +854,7 @@ class PowerNapView extends WatchUi.View {
             } else {
                 L.addText(["No sleep yet"], fontsBody(), Graphics.COLOR_WHITE, ScreenLayout.KEEP);
             }
-            L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_YELLOW, 95);
+            addAlarmLine(L, fontsDetail(), 95);
         }
         setNapFooter(L, false, Graphics.COLOR_LT_GRAY);
         return L;
@@ -973,6 +972,21 @@ class PowerNapView extends WatchUi.View {
         var line = L.addText(alarmByTexts(capSec), fonts, Palette.TEXT_SECONDARY, priority);
         line.tailColor = Palette.TEXT_PRIMARY;
         return line;
+    }
+
+    //! The alarm line every session screen shows, in the colours the start
+    //! screen gave the promise: before sleep the guaranteed cap ("Alarm by"
+    //! in secondary grey, the time itself in primary white), once asleep the
+    //! minute the alarm now rings in. The monitoring screen and the peek card
+    //! both take it from here, so the card cannot drift into a colour of its
+    //! own again.
+    private function addAlarmLine(L as ScreenLayout, fonts as Array<Graphics.FontDefinition>,
+                                  priority as Number) as Void {
+        if (_detector.getPlannedEndTime() != null) {
+            L.addText(alarmLineTexts(), fonts, Palette.TEXT_SECONDARY, priority);
+        } else {
+            addAlarmByLine(L, _detector.getDeadlineTime().value(), fonts, priority);
+        }
     }
 
     //! The start screen's footer: what starts a nap on this watch. Loaded
