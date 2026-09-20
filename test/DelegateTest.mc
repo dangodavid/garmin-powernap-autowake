@@ -1165,3 +1165,155 @@ function testDelegate_previewForgetsArmedExit(logger as Test.Logger) as Boolean 
     r.cleanup();
     return ok;
 }
+
+// -- The BACK contract, over every screen -------------------------------------
+//
+// The owner's rule, written down in CLAUDE.md and CONTRIBUTING.md:
+//   * on every screen below the start screen one BACK goes back one level and
+//     never leaves the app; pressed again it walks on to the start screen;
+//   * only the start screen leaves, on a second BACK inside the 4 s window,
+//     after "Press BACK again to exit";
+//   * a right swipe outside a session is that same BACK.
+// The two tests below walk the rule over EVERY screen rather than one path at
+// a time, so a screen added later has to be added to BACK_SCREENS and cannot
+// quietly get a BACK of its own. The wording of the pair on the start screen
+// is covered by testDelegate_startScreenBackTwiceExits, the swipe by
+// testDelegate_swipeRightIsBackOutsideTheNap.
+
+//! Every screen the app can show below the start screen.
+(:debug)
+const BACK_SCREENS = ["alarm preview", "calibrating", "monitoring", "sleeping", "nap peek",
+                      "nap alarm", "stay awake guard", "stay awake peek", "doze alarm",
+                      "nap summary", "no-sleep summary", "stay awake summary"] as Array<String>;
+
+//! How many BACK presses that screen is away from the start screen. One
+//! everywhere: the doze alarm sits on top of the Stay Awake guard, so it
+//! takes the guard's press too.
+(:debug)
+const BACK_STEPS = [1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1] as Array<Number>;
+
+//! A rig sitting on BACK_SCREENS[i], with the input lock already expired so
+//! the next press is the one under test.
+(:debug)
+function delegateHelperOpenScreen(i as Number) as DelegateRig {
+    var r = new DelegateRig((i >= 6 && i <= 8) || i == 11 ? 0 : 30);
+    if (i == 0) {                                     // alarm preview ("Test alarm")
+        r.view.startPreview();
+    } else if (i == 1) {                              // calibrating
+        r.startNap();
+    } else if (i == 2) {                              // monitoring
+        r.startNap();
+        r.detector.testRunMinutes(3, 70, 10.0f);
+    } else if (i == 3) {                              // sleeping
+        r.startNap();
+        r.detector.testForceSleep();
+    } else if (i == 4) {                              // peek card over the nap
+        r.startNap();
+        r.detector.testForceSleep();
+        r.key(WatchUi.KEY_UP);
+    } else if (i == 5) {                              // the nap alarm, ringing
+        r.startAndRing();
+    } else if (i == 6) {                              // Stay Awake, on guard
+        r.key(WatchUi.KEY_ENTER);
+        r.detector.testRunMinutes(2, 70, 10.0f);
+    } else if (i == 7) {                              // peek card over the guard
+        r.key(WatchUi.KEY_ENTER);
+        r.detector.testRunMinutes(2, 70, 10.0f);
+        r.key(WatchUi.KEY_UP);
+    } else if (i == 8) {                              // the doze alarm, ringing
+        r.startAndDoze();
+    } else if (i == 9) {                              // summary of a finished nap
+        r.startAndRing();
+        r.key(WatchUi.KEY_ENTER);
+        r.key(WatchUi.KEY_ENTER);
+    } else if (i == 10) {                             // summary without any sleep
+        r.startNap();
+        r.key(WatchUi.KEY_ENTER);
+        r.key(WatchUi.KEY_ENTER);
+    } else {                                          // Stay Awake summary
+        r.key(WatchUi.KEY_ENTER);
+        r.detector.testRunMinutes(2, 70, 10.0f);
+        r.key(WatchUi.KEY_ENTER);
+        r.key(WatchUi.KEY_ENTER);
+    }
+    r.view.testExpireInputLock();
+    return r;
+}
+
+//! True when the rig is back on the start screen (no session, no preview).
+(:debug)
+function delegateHelperOnStartScreen(r as DelegateRig) as Boolean {
+    return !r.view.isStarted() && !r.alarm.isPreviewing();
+}
+
+//! No screen below the start screen may leave the app on one BACK, and none
+//! of them asks for a second press: only the start screen does that, and only
+//! there is the exit popup shown.
+(:test)
+function testDelegate_backNeverLeavesBelowTheStartScreen(logger as Test.Logger) as Boolean {
+    var ok = true;
+    for (var i = 0; i < BACK_SCREENS.size(); i++) {
+        var r = delegateHelperOpenScreen(i);
+        if (delegateHelperOnStartScreen(r) && i != 0) {
+            logger.debug(BACK_SCREENS[i] + ": the test did not reach that screen");
+            ok = false;
+        }
+        r.key(WatchUi.KEY_ESC);
+        if (r.delegate.testExitRequested()) {
+            logger.debug(BACK_SCREENS[i] + ": one BACK left the app");
+            ok = false;
+        }
+        if (r.view.testIsHintShowing()) {
+            logger.debug(BACK_SCREENS[i] + ": BACK must act at once, not ask for a second press");
+            ok = false;
+        }
+        r.cleanup();
+    }
+    return ok;
+}
+
+//! From every screen, BACK pressed again and again walks to the start screen
+//! in the documented number of steps, without leaving on the way; and once
+//! there it takes two more presses to leave, never one.
+(:test)
+function testDelegate_backReachesTheStartScreenFromEveryScreen(logger as Test.Logger) as Boolean {
+    var ok = true;
+    for (var i = 0; i < BACK_SCREENS.size(); i++) {
+        var r = delegateHelperOpenScreen(i);
+        var steps = 0;
+        while (!delegateHelperOnStartScreen(r) && steps < 4) {
+            r.key(WatchUi.KEY_ESC);
+            steps++;
+            r.view.testExpireInputLock();
+            if (r.delegate.testExitRequested()) {
+                logger.debug(BACK_SCREENS[i] + ": left the app after " + steps + " BACK press(es)");
+                ok = false;
+                break;
+            }
+        }
+        if (!delegateHelperOnStartScreen(r)) {
+            logger.debug(BACK_SCREENS[i] + ": BACK never reached the start screen");
+            ok = false;
+        } else if (steps != BACK_STEPS[i]) {
+            logger.debug(BACK_SCREENS[i] + ": took " + steps + " BACK press(es), expected " + BACK_STEPS[i]);
+            ok = false;
+        }
+        if (!r.delegate.testExitRequested()) {
+            r.key(WatchUi.KEY_ESC);               // on the start screen: arms only
+            if (r.delegate.testExitRequested()) {
+                logger.debug(BACK_SCREENS[i] + ": the first BACK on the start screen left the app");
+                ok = false;
+            } else if (!r.view.testIsHintShowing()) {
+                logger.debug(BACK_SCREENS[i] + ": the start screen must show the exit hint");
+                ok = false;
+            }
+            r.key(WatchUi.KEY_ESC);               // and the second one leaves
+            if (!r.delegate.testExitRequested()) {
+                logger.debug(BACK_SCREENS[i] + ": BACK twice on the start screen did not leave");
+                ok = false;
+            }
+        }
+        r.cleanup();
+    }
+    return ok;
+}

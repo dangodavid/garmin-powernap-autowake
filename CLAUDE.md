@@ -7,6 +7,16 @@
 - A PR that changes text, colours or layout also needs simulator screenshots: `instinct3solar45mm` (smallest, and the only 1-bit), `fenix847mm` (largest), `fr255s` (smallest colour screen, so the three shots do not prove the same thing twice).
 - Supported devices are read from `manifest.xml`, never from a hardcoded list.
 - New tests are for logic, not for texts and colours.
+- BACK contract (owner's; changing it needs the owner's word, not a session's judgement):
+  on every screen below the start screen one BACK goes back one level and never leaves
+  the app, so pressing it again walks to the start screen; only the start screen exits,
+  on a second BACK within 4 s, after the popup "Press BACK again to exit"; a right
+  swipe outside a session is that same BACK.
+- Guarded by `testDelegate_backNeverLeavesBelowTheStartScreen` and
+  `testDelegate_backReachesTheStartScreenFromEveryScreen` (both walk every screen in
+  `BACK_SCREENS`), `testDelegate_backWalksBackToStartThenExits`,
+  `testDelegate_startScreenBackTwiceExits` and
+  `testDelegate_swipeRightIsBackOutsideTheNap`.
 - If something cannot be done the way it was asked for, stop and propose the alternative instead of improvising.
 
 Procedure, device sets, release steps and what each test file covers: `CONTRIBUTING.md`.
@@ -35,9 +45,14 @@ below means "since the unreleased 1.1.0", not "in the version users run". So
 Stay Awake, the ramp table, "Test alarm", the BACK key model and "Alarm by"
 are all unreleased.
 
-The `bin/PowerNap-1.1.0.iq` built on 2026-09-19 predates commit `130212e`
-(the exit flag moved behind `(:debug)`), so it does not match `main`. The next
-store package is built from `main`; that old `.iq` is not repackaged.
+The `bin/PowerNap-1.1.0.iq` built on 2026-09-19 at 22:02 predates commit
+`b589eb4` of 23:49 (BACK became a single-press back button) and `130212e`
+(the exit flag moved behind `(:debug)`), so it does not match `main`. Its BACK
+is the `44fe39e`/`080c7bc` model, BACK x2 at every level, which the owner
+rejected on the wrist that same night: a sideload of that file behaves the
+way the key model says it must not. The next store package is built from
+`main`; that old `.iq` is not repackaged, and it is not what to test a BACK
+question on.
 
 ## Language & SDK
 
@@ -143,9 +158,11 @@ tools/
                         #   SDK lookup in the repo - CIQ_SDK/CIQ_HOME, then
                         #   current-sdk.cfg, ~/connectiq-sdk, newest installed;
                         #   never a pinned SDK build id
-CONTRIBUTING.md         # the full procedure: git flow, what to run and when, the
-                        #   screenshots a text/colour/layout PR needs, the release
-                        #   sweep, and what every file under test/ covers
+CONTRIBUTING.md         # the full procedure: git flow, the BACK contract, what to
+                        #   run and when, the screenshots a text/colour/layout PR
+                        #   needs, the release sweep, and what each test/ file covers
+CHANGELOG.md            # what changed for the wearer, from 1.1.0 on (not filled
+                        #   in backwards; the published version lives in the store)
 docs/history/           # superseded documents, kept for provenance only; each one
                         #   opens with a header saying CLAUDE.md takes precedence
   PLAN-v1.1.0.md        #   the v1.1.0 brief (W1-W7, D1-D4), finished 2026-09-19
