@@ -98,7 +98,9 @@ source/
                         #   Awake nudge; ToneClock overlap guard
   MotionMath.mc         # Offset-free motion value of one accelerometer batch
   ScreenLayout.mc       # Line layout that fits 176-454 px round/octagon screens (text,
-                        #   dividers, spacers, popup banner); Palette module (Instinct 3 Solar is 1-bit)
+                        #   dividers, spacers, popup banner, two-tone label/value lines);
+                        #   Palette module: the text hierarchy and the accent
+                        #   (Instinct 3 Solar is 1-bit, so every shade folds onto white)
   ConfirmPress.mc       # Two-press confirmation, contexts EXIT (BACK) / STOP (START), wrap-safe
   RingMath.mc           # Angle math for the summary progress ring (unit-testable)
   AlarmCap.mc           # The one "Alarm by" formula (start rounded up to the next minute
@@ -123,7 +125,7 @@ resources/
   drawables/            # launcher_icon.png (60x60 default) + drawables.xml
   properties/           # Default property values
   settings/             # Companion app settings UI definitions
-  strings/              # Localized strings (English only)
+  strings/              # Localized strings (English only), the on-screen hints included
 resources-launcher/     # LauncherIcon at each device's native size (40 MIP, 54, 56, 62 1-bit,
                         #   65, 70), wired per device in monkey.jungle; PNGs drawn by
                         #   generate_launcher_icons.py (outside every resource path)
@@ -427,7 +429,7 @@ the wrist: "double back" must exist only on the start screen. The start screen s
 exit banner (`solveStartScreen` sets it; arrows are drawn before the lines so
 the banner covers them) and, having no 1 Hz refresh, schedules a redraw when
 the hint expires (`showHint` reuses the one-shot `_uiTimer`). The start
-screen's footer stays "TAP/START to begin" (it is a tap zone). A right swipe
+screen's footer stays the start hint (it is a tap zone). A right swipe
 outside a session (start screen, summary, preview) is handled as KEY_ESC
 (`handleSwipe`), so the system back gesture can never leave the app in one
 swipe; during a nap/alarm swipes are consumed. Opening the menu or the
@@ -437,7 +439,8 @@ preview forgets an armed BACK (`cancelConfirm`).
   on Fenix 8 `BehaviorDelegate` swallows tap coordinates needed for the start
   screen touch zones. The zones come from the solved start layout: above the
   number = +5 min, number and label = start, below the label = −5 min, and the
-  footer hint ("TAP to begin" with `isTouchScreen`, else "START to begin") =
+  footer hint ("TAP to start" with `isTouchScreen`, else "START to begin";
+  both from `resources/strings/strings.xml`, `Rez.Strings.StartHint*`) =
   start again, so tapping the word "TAP" never shortens the nap.
 - `ConfirmPress` (owned by the view, window 4000 ms, `System.getTimer()` ms,
   elapsed-based so the 24.8-day timer wrap cannot leave it armed) has contexts
@@ -558,12 +561,26 @@ it), but NOT as a line of the block: on the 454 px fenix 8 the band's slack
 is 26 px and a clock line needs 47, so the engine dropped it (a priority
 above IMPORTANT would have shrunk the number instead). `drawStartScreen`
 draws it at FONT_XTINY in the margin above the block (`startClockBox`:
-centred in the room above the first line, only if the text fits the chord
-there, `ScreenLayout.visibleInkBounds`), the round-screen analogue of the
-Instinct lens, which shows the clock instead of "NAP" on the start screen
-now (`testLayout_clockOnStartScreen`: box present on every non-lens device,
-with the low-battery warning from 240 px, on screen, clear of the first
-line, inside the chord; the promise stays and the number keeps its size). The wording "Latest
+centred in the room above the first line, only if the WIDEST time of day
+this watch can show fits the chord there, `ScreenLayout.visibleInkBounds`),
+the round-screen analogue of the Instinct lens, which shows the clock
+instead of "NAP" on the start screen now. **The decision is taken on the
+widest time, never on the current one** (`widestClockWidth`: the widest
+minute beside the widest hour in the watch's own 12/24 h format, measured
+once per format and kept): "12:30" is a glyph wider than "3:32", and on a
+240 px screen with the low-battery warning that glyph is the whole
+difference, so deciding per draw would show the clock at 9:59 and take it
+away at 10:00 while someone was looking at it. The box is centred on the
+same point either way, so the time is drawn exactly where it was.
+`testLayout_clockOnStartScreen`: the box is the SAME box at the narrowest
+and at the widest time of day (or absent at both), on every duration and
+both battery states; it is present on every non-lens device, and with the
+low-battery warning from 260 px, on screen, clear of the first line, inside
+the chord; the promise stays and the number keeps its size. Below 260 px
+the warning takes the clock's room - stably, now - which is the right way
+round: a watch that dies mid-nap never rings at all. The test reads neither
+the battery nor the wall clock from the simulator: it forces one and pins
+the other. The wording "Latest
 alarm" was replaced by "Alarm by" (the owner: "latest" reads as "most
 recent", and the 26-minute gap to a 10-minute nap looked wrong without the
 clock); the short variant stays "By HH:MM".
@@ -619,6 +636,16 @@ fits the round chord (or the Instinct subscreen) at its own rows.
 every nap-screen state on the device it runs on; run it on 176-454 px devices after
 any UI change. `Palette.fg()` maps every colour to white on the 1-bit Instinct 3
 Solar (detected by its semi-octagon screen shape).
+Colours come from `Palette`, never spelled out in a view: `TEXT_PRIMARY` /
+`TEXT_SECONDARY` / `TEXT_TERTIARY` (what the screen is about / the words
+around it / the hints) and `ACCENT` with `ACCENT_DIM` for the start screen's
+arrows. The values are ones an 8-bit MIP screen holds exactly (each channel
+0x00/0x55/0xAA/0xFF), and on the Instinct all of them fold onto white, so the
+hierarchy there is the font sizes alone and no shade may be added for it.
+A line may carry a second colour for the part after its last inner space
+(`LayoutLine.tailColor`, split by `ScreenLayout.tailStart`): "Alarm by
+**HH:MM**" is the only one, drawn the same way on the start screen and on the
+nap screen. It is still measured, fitted and centred as one text.
 
 ## Testing
 

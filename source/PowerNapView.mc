@@ -87,6 +87,15 @@ class PowerNapView extends WatchUi.View {
     private var _peekStartMs as Number = 0;
     private const PEEK_MS = 5000;
 
+    // The start screen's footer hint, read from strings.xml on first use
+    // (it depends on the watch having a touchscreen, which never changes).
+    private var _startHint as Array<String>? = null;
+
+    // The widest "HH:MM" this watch can draw, measured once per 12/24 h
+    // format: what the start screen's clock is shown or hidden on.
+    private var _clockWidth as Number = -1;
+    private var _clockWidth24 as Boolean = false;
+
     private var _forceBatteryPct as Number = -1;     // tests: >= 0 replaces the battery level
     private var _msOffset as Number = 0;             // tests: moves the millisecond clock
 
@@ -358,7 +367,7 @@ class PowerNapView extends WatchUi.View {
 
         buildLayout(dc).draw(dc, invert);
         if (showsClock() && hasSubscreen()) {
-            drawInLens(dc, clockString(), Graphics.COLOR_LT_GRAY, invert);
+            drawInLens(dc, clockString(), Palette.TEXT_SECONDARY, invert);
         }
     }
 
@@ -438,23 +447,23 @@ class PowerNapView extends WatchUi.View {
         // The big number shrinks one size only when a warning needs the room.
         var number = L.addText([_pendingDuration.toString()],
             [Graphics.FONT_NUMBER_MEDIUM, Graphics.FONT_NUMBER_MILD] as Array<Graphics.FontDefinition>,
-            Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+            Palette.TEXT_PRIMARY, ScreenLayout.KEEP);
         number.gapAfter = 0;
         lines.add(number);
         // "min of sleep": the minutes count from falling asleep, not from now.
         lines.add(L.addText(stayAwake ? ["stay awake"] : ["min of sleep", "min"],
             [Graphics.FONT_SMALL, Graphics.FONT_TINY] as Array<Graphics.FontDefinition>,
-            stayAwake ? Graphics.COLOR_ORANGE : Graphics.COLOR_LT_GRAY, ScreenLayout.KEEP));
+            stayAwake ? Graphics.COLOR_ORANGE : Palette.TEXT_SECONDARY, ScreenLayout.KEEP));
         if (stayAwake) {
             L.addText(["Buzzes if you doze", "Buzz if you doze"],
-                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 90);
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Palette.TEXT_SECONDARY, 90);
         } else {
             // The same promise the nap screens show, from the same formula
             // (AlarmCap): a nap started in this minute keeps this time.
             // Recomputed on every draw, and the start screen redraws itself
             // at each minute change (startUiTimer).
-            L.addText(alarmByTexts(_detector.previewDeadlineSec(_pendingDuration)),
-                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 90);
+            addAlarmByLine(L, _detector.previewDeadlineSec(_pendingDuration),
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, 90);
         }
         lines.add(L.addSpacer(arrowH + 1, ScreenLayout.KEEP));
         addWarnings(L, 97);
@@ -462,8 +471,7 @@ class PowerNapView extends WatchUi.View {
             L.addText([_debugLabel], [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
                 Graphics.COLOR_LT_GRAY, 10);
         }
-        L.setFooterTexts(hasTouch() ? ["TAP to begin", "TAP"] as Array<String> : ["START to begin", "START"] as Array<String>,
-            Graphics.COLOR_LT_GRAY);
+        L.setFooterTexts(startHintTexts(), Palette.TEXT_TERTIARY);
         return L;
     }
 
@@ -489,26 +497,31 @@ class PowerNapView extends WatchUi.View {
         // The time of day, as on the live screens: in the Instinct lens,
         // elsewhere in the margin above the block (see startClockBox).
         if (subscreenBox() != null) {
-            drawInLens(dc, clockString(), Graphics.COLOR_LT_GRAY, false);
+            drawInLens(dc, clockString(), Palette.TEXT_SECONDARY, false);
         } else {
             var box = startClockBox(dc, L, lines[0].y);
             if (box != null) {
                 var b = box as Array<Number>;
-                dc.setColor(Palette.fg(Graphics.COLOR_LT_GRAY, false), Graphics.COLOR_TRANSPARENT);
+                dc.setColor(Palette.fg(Palette.TEXT_SECONDARY, false), Graphics.COLOR_TRANSPARENT);
                 dc.drawText(b[0] + b[2] / 2, b[1], Graphics.FONT_XTINY, clockString(), Graphics.TEXT_JUSTIFY_CENTER);
             }
         }
 
         // Arrows: filled triangles centred in their spacer slots, drawn
-        // before the lines so the exit banner covers them.
+        // before the lines so the exit banner covers them. Same size and
+        // same centres as ever (the tap zones are measured off these
+        // slots), one step down in brightness so the duration leads.
+        // Each one points the way its own zone moves the number: the top
+        // arrow is drawn apex-up (a row of 1 px at its top growing to the
+        // full width at its bottom), the bottom arrow apex-down.
         var cx = dc.getWidth() / 2;
-        dc.setColor(Palette.fg(Graphics.COLOR_GREEN, false), Graphics.COLOR_TRANSPARENT);
+        dc.setColor(Palette.fg(Palette.ACCENT_DIM, false), Graphics.COLOR_TRANSPARENT);
         var up = lines[0];
         var down = lines[3];
         var arrowH = up.slotH - 1;
         for (var i = 0; i <= arrowH; i++) {
-            dc.drawLine(cx - i, up.y + (arrowH - i), cx + i, up.y + (arrowH - i));
-            dc.drawLine(cx - i, down.y + i, cx + i, down.y + i);
+            dc.drawLine(cx - i, up.y + i, cx + i, up.y + i);
+            dc.drawLine(cx - i, down.y + (arrowH - i), cx + i, down.y + (arrowH - i));
         }
         L.draw(dc, false);
     }
@@ -567,10 +580,11 @@ class PowerNapView extends WatchUi.View {
         }
 
         // Before sleep: the guaranteed latest alarm time (the cap fixed at
-        // start, the very minute the start screen promised). After a
-        // wake episode: the fixed alarm time. Ranked above the stillness
-        // line: on the smallest screens the alarm promise must survive.
-        L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_LT_GRAY, 96);
+        // start, the very minute the start screen promised), in the two
+        // colours the start screen gave it. After a wake episode: the fixed
+        // alarm time. Ranked above the stillness line: on the smallest
+        // screens the alarm promise must survive.
+        addAlarmLine(L, fontsDetail(), 96);
         if (!awake) {
             // Below the promise: on the smallest screens "Alarm by" wins;
             // the start screen already showed the warnings with room to spare.
@@ -845,7 +859,7 @@ class PowerNapView extends WatchUi.View {
             } else {
                 L.addText(["No sleep yet"], fontsBody(), Graphics.COLOR_WHITE, ScreenLayout.KEEP);
             }
-            L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_YELLOW, 95);
+            addAlarmLine(L, fontsDetail(), 95);
         }
         setNapFooter(L, false, Graphics.COLOR_LT_GRAY);
         return L;
@@ -953,6 +967,52 @@ class PowerNapView extends WatchUi.View {
         return ["Alarm by " + by, "By " + by] as Array<String>;
     }
 
+    //! The "Alarm by HH:MM" promise, added with the two colours it carries
+    //! everywhere it is shown: the words in secondary grey, the time itself
+    //! in primary white, so the time reads at a glance and the promise looks
+    //! the same on the start screen as during the nap.
+    private function addAlarmByLine(L as ScreenLayout, capSec as Number,
+                                    fonts as Array<Graphics.FontDefinition>,
+                                    priority as Number) as LayoutLine {
+        var line = L.addText(alarmByTexts(capSec), fonts, Palette.TEXT_SECONDARY, priority);
+        line.tailColor = Palette.TEXT_PRIMARY;
+        return line;
+    }
+
+    //! The alarm line every session screen shows, in the colours the start
+    //! screen gave the promise: before sleep the guaranteed cap ("Alarm by"
+    //! in secondary grey, the time itself in primary white), once asleep the
+    //! minute the alarm now rings in. The monitoring screen and the peek card
+    //! both take it from here, so the card cannot drift into a colour of its
+    //! own again.
+    private function addAlarmLine(L as ScreenLayout, fonts as Array<Graphics.FontDefinition>,
+                                  priority as Number) as Void {
+        if (_detector.getPlannedEndTime() != null) {
+            L.addText(alarmLineTexts(), fonts, Palette.TEXT_SECONDARY, priority);
+        } else {
+            addAlarmByLine(L, _detector.getDeadlineTime().value(), fonts, priority);
+        }
+    }
+
+    //! The start screen's footer: what starts a nap on this watch. Loaded
+    //! once from strings.xml (the wording lives in the resources, not here)
+    //! and listed longest first, so the layout can fall back to the short
+    //! variant on a narrow screen.
+    private function startHintTexts() as Array<String> {
+        if (_startHint == null) {
+            _startHint = hasTouch()
+                ? [loadText(Rez.Strings.StartHintTouch), loadText(Rez.Strings.StartHintTouchShort)]
+                    as Array<String>
+                : [loadText(Rez.Strings.StartHintButton), loadText(Rez.Strings.StartHintButtonShort)]
+                    as Array<String>;
+        }
+        return _startHint as Array<String>;
+    }
+
+    private function loadText(id as Lang.ResourceId) as String {
+        return WatchUi.loadResource(id) as String;
+    }
+
     //! The minute the planned alarm rings in ("--:--" before onset).
     private function alarmAtString() as String {
         var planned = _detector.getPlannedEndTime();
@@ -964,15 +1024,18 @@ class PowerNapView extends WatchUi.View {
     private function addClock(L as ScreenLayout) as Void {
         if (!hasSubscreen()) {
             L.addText([clockString()], [Graphics.FONT_TINY, Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
-                Graphics.COLOR_LT_GRAY, 92);
+                Palette.TEXT_SECONDARY, 92);
         }
     }
 
     //! Where the start screen's clock goes (owner request: "Alarm by HH:MM"
-    //! reads against it): [x, y, w, h] of the text at FONT_XTINY, centred
-    //! in the room above the first line of the block (`firstY`), or null
-    //! when that room is too small or the text does not fit the visible
-    //! width at those rows (the narrow top of a round screen). Not a line
+    //! reads against it): [x, y, w, h] at FONT_XTINY, centred in the room
+    //! above the first line of the block (`firstY`), or null when that room
+    //! is too small or the WIDEST time of day this watch can show does not
+    //! fit the visible width at those rows (the narrow top of a round
+    //! screen). Sized and decided on that widest time, never on the current
+    //! one, so the clock cannot appear at 9:59 and vanish at 10:00; the
+    //! time is drawn centred in the box, so it sits where it always did. Not a line
     //! of the block on purpose: on the 454 px fenix 8 the band's slack is
     //! 26 px and a clock line would need 47, so the engine dropped it (or
     //! would have shrunk the number). The round-screen analogue of the
@@ -988,7 +1051,10 @@ class PowerNapView extends WatchUi.View {
             return null;
         }
         var y = (room - fh) / 2;
-        var tw = dc.getTextWidthInPixels(clockString(), font);
+        // The widest time of day, not the current one: the clock must not
+        // come and go with the hour. The box is centred on the same point
+        // either way, so the time itself is drawn exactly where it was.
+        var tw = widestClockWidth(dc, font);
         var b = L.visibleInkBounds(y, fh);
         if (tw > b[1] - b[0]) {
             return null;
@@ -1268,13 +1334,53 @@ class PowerNapView extends WatchUi.View {
     //! HH:MM, or h:mm when the watch is set to the 12-hour clock.
     private function formatMoment(moment as Time.Moment) as String {
         var info = Gregorian.info(moment, Time.FORMAT_SHORT);
-        var hour = info.hour as Number;
-        var min = formatTwoDigits(info.min as Number);
+        return formatHourMin(info.hour as Number, info.min as Number);
+    }
+
+    //! A time of day in the watch's own format (12 h: "h:mm", no am/pm).
+    //! Takes the hour and minute rather than a Moment, so the start screen
+    //! can also ask how wide the widest time of day would be.
+    private function formatHourMin(hour as Number, min as Number) as String {
+        var mm = formatTwoDigits(min);
         if (is24Hour()) {
-            return formatTwoDigits(hour) + ":" + min;
+            return formatTwoDigits(hour) + ":" + mm;
         }
-        hour = hour % 12;
-        return ((hour == 0) ? 12 : hour).toString() + ":" + min;
+        var h = hour % 12;
+        return ((h == 0) ? 12 : h).toString() + ":" + mm;
+    }
+
+    //! How wide the WIDEST time of day this watch can show is, in `font`.
+    //! The start screen decides whether the clock fits on this, never on the
+    //! time it happens to be: deciding on the current time would show the
+    //! clock at 9:59 and take it away at 10:00, in front of someone who is
+    //! looking at the screen. Widths add up, so the widest "HH:MM" is the
+    //! widest hour beside the widest minute; measured once per 12/24 h
+    //! format and kept (the Instinct never gets here - its clock is in the
+    //! lens).
+    private function widestClockWidth(dc as Graphics.Dc, font as Graphics.FontDefinition) as Number {
+        var is24 = is24Hour();
+        if (_clockWidth >= 0 && _clockWidth24 == is24) {
+            return _clockWidth;
+        }
+        var minute = 0;
+        var widest = -1;
+        for (var m = 0; m < 60; m++) {
+            var w = dc.getTextWidthInPixels(formatTwoDigits(m), font);
+            if (w > widest) {
+                widest = w;
+                minute = m;
+            }
+        }
+        widest = -1;
+        for (var h = 0; h < 24; h++) {
+            var w = dc.getTextWidthInPixels(formatHourMin(h, minute), font);
+            if (w > widest) {
+                widest = w;
+            }
+        }
+        _clockWidth = widest;
+        _clockWidth24 = is24;
+        return widest;
     }
 
     private function is24Hour() as Boolean {

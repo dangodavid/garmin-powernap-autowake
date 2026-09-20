@@ -17,4 +17,12 @@
     <string id="Low">Low (restless sleepers)</string>
     <string id="Medium">Medium (default)</string>
     <string id="High">High (strict stillness)</string>
+
+    <!-- On-screen text. The wording the watch shows lives here, not in the
+         views; each hint is listed longest first, and the layout picks the
+         longest variant that fits the screen it is drawn on. -->
+    <string id="StartHintTouch">TAP to start</string>
+    <string id="StartHintTouchShort">TAP</string>
+    <string id="StartHintButton">START to begin</string>
+    <string id="StartHintButtonShort">START</string>
 </strings>

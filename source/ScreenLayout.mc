@@ -10,6 +10,28 @@ import Toybox.WatchUi;
 //! disappears.
 module Palette {
 
+    //! Text hierarchy: the three levels every screen ranks its lines with,
+    //! named here so no view spells a grey out for itself. PRIMARY is what
+    //! the screen is about (the duration, the time the alarm rings at),
+    //! SECONDARY the words around it (labels, the clock in the margin),
+    //! TERTIARY the hints that only need to be there when looked for.
+    //!
+    //! The values are the ones an 8-bit MIP screen can show exactly: its
+    //! palette gives each channel 0x00, 0x55, 0xAA or 0xFF, so anything
+    //! between two of them is snapped to one anyway. On the 1-bit Instinct
+    //! fg() folds all three onto white - the hierarchy is carried by the
+    //! font sizes there, and no shade may be added for it.
+    const TEXT_PRIMARY = Graphics.COLOR_WHITE;         // 0xFFFFFF
+    const TEXT_SECONDARY = Graphics.COLOR_LT_GRAY;     // 0xAAAAAA
+    const TEXT_TERTIARY = Graphics.COLOR_DK_GRAY;      // 0x555555
+
+    //! The start screen's arrows: the accent one step down, so they read as
+    //! controls without competing with the duration between them. A colour
+    //! of its own and not an alpha of ACCENT: MIP screens do no alpha
+    //! blending, and 0x00AA00 is in their palette.
+    const ACCENT = Graphics.COLOR_GREEN;               // 0x00FF00
+    const ACCENT_DIM = 0x00AA00;
+
     var _mono as Boolean? = null;
 
     function isMono() as Boolean {
@@ -50,6 +72,12 @@ class LayoutLine {
     var spacerH as Number = 0;                     // > 0: spacer of this height, drawn by the view
     var linkedTo as Number = -1;                   // divider: hidden whenever this line is hidden
     var gapAfter as Number = -1;                   // -1 = layout default
+    //! Colour for the part after the last space ("14:35" of "Alarm by
+    //! 14:35"), so a label can stay quiet while its value stands out. The
+    //! line is still measured, fitted and centred as one text, and every
+    //! variant of it splits the same way. COLOR_TRANSPARENT = one colour,
+    //! which is what nearly every line is.
+    var tailColor as Graphics.ColorType = Graphics.COLOR_TRANSPARENT;
 
     // Solved by ScreenLayout.solve()
     var forceHidden as Boolean = false;   // optional line too wide for its row
@@ -1048,6 +1076,9 @@ class ScreenLayout {
                 if (line.drawX1 > line.drawX) {
                     dc.drawLine(line.drawX, line.y, line.drawX1, line.y);
                 }
+            } else if (line.tailColor != Graphics.COLOR_TRANSPARENT
+                       && tailStart(line.drawText) > 0) {
+                drawTwoTone(dc, line, invert);
             } else {
                 dc.drawText(line.drawX, line.drawY, line.drawFont, line.drawText,
                     Graphics.TEXT_JUSTIFY_CENTER);
@@ -1071,6 +1102,40 @@ class ScreenLayout {
             dc.drawText(_bannerX + _bannerW / 2, _bannerY + (_bannerH - fh) / 2, _bannerFont, _bannerText,
                 Graphics.TEXT_JUSTIFY_CENTER);
         }
+    }
+
+    //! Index of the value at the end of `text`: the character after its last
+    //! inner space (one with text on both sides), or 0 when there is none.
+    //! Used for a line whose
+    //! label and value carry different colours, so "Alarm by 14:35" and its
+    //! short variant "By 14:35" split the same way without either wording
+    //! being written down twice.
+    static function tailStart(text as String) as Number {
+        var chars = text.toCharArray();
+        for (var i = chars.size() - 2; i > 0; i--) {
+            if (chars[i] == ' ') {
+                return i + 1;
+            }
+        }
+        return 0;
+    }
+
+    //! A line drawn in two colours: label in `color`, the value after the
+    //! last space in `tailColor`. The whole text keeps the width and the
+    //! centre the fit was solved for - the parts are placed from its left
+    //! edge, and the value from the right, so the gap between them is the
+    //! font's own space however it measures one.
+    private function drawTwoTone(dc as Graphics.Dc, line as LayoutLine, invert as Boolean) as Void {
+        var cut = tailStart(line.drawText);
+        var label = line.drawText.substring(0, cut - 1) as String;
+        var value = line.drawText.substring(cut, line.drawText.length()) as String;
+        var totalW = dc.getTextWidthInPixels(line.drawText, line.drawFont);
+        var valueW = dc.getTextWidthInPixels(value, line.drawFont);
+        var left = line.drawX - totalW / 2;
+        dc.setColor(Palette.fg(line.color, invert), Graphics.COLOR_TRANSPARENT);
+        dc.drawText(left, line.drawY, line.drawFont, label, Graphics.TEXT_JUSTIFY_LEFT);
+        dc.setColor(Palette.fg(line.tailColor, invert), Graphics.COLOR_TRANSPARENT);
+        dc.drawText(left + totalW - valueW, line.drawY, line.drawFont, value, Graphics.TEXT_JUSTIFY_LEFT);
     }
 
     // -- Inspection (tests) ---------------------------------------------
@@ -1130,6 +1195,18 @@ class ScreenLayout {
     }
 
     function getFooterText() as String? { return _footerText; }
+
+    //! The first visible line drawn in two colours (label and value), or null.
+    (:debug)
+    function testTwoToneLine() as LayoutLine? {
+        for (var i = 0; i < _lines.size(); i++) {
+            var line = _lines[i];
+            if (line.visible && !line.isDivider && line.tailColor != Graphics.COLOR_TRANSPARENT) {
+                return line;
+            }
+        }
+        return null;
+    }
 
     //! The banner's text, or null when no banner is set.
     function getBannerText() as String? {

@@ -5,6 +5,7 @@ import Toybox.Math;
 import Toybox.System;
 import Toybox.Application;
 import Toybox.Time;
+import Toybox.WatchUi;
 
 // -----------------------------------------------------------------------------
 // Screen layout tests.
@@ -57,6 +58,16 @@ function layoutHelperStartView(d as SleepDetector, a as AlarmManager) as PowerNa
 const LAYOUT_MAX_PASSES = 6;
 (:debug)
 const LAYOUT_MAX_FITS = 60;
+
+//! Screens this wide (px) keep the time of day on the start screen even when
+//! the low-battery warning is there too. Below it the warning takes that room:
+//! it adds a line, the block grows towards the top of the screen, and the
+//! clock's row ends up where a round chord is at its narrowest. That is the
+//! right way round - a watch that dies mid-nap never rings at all - and it is
+//! why the 240 px fenix 7S drops the clock while the 260 px fenix 7 keeps it.
+//! With a healthy battery the clock is on every screen that has no lens.
+(:debug)
+const LOW_BATTERY_CLOCK_FROM_PX = 260;
 
 //! Common checks; mustShow are text fragments that must appear on screen.
 (:debug)
@@ -329,17 +340,21 @@ function testLayout_startScreenTapZones(logger as Test.Logger) as Boolean {
         logger.debug("tap zone mapping wrong around " + plusMax + ".." + minusMin);
         ok = false;
     }
-    // The hint at the bottom ("TAP to begin") starts; just above it removes.
+    // The hint at the bottom ("TAP to start") starts; just above it removes.
     var hintY = zones[4];
     if (hintY <= minusMin + 1 || v.tapActionAt(hintY) != 0 || v.tapActionAt(hintY + 5) != 0
         || v.tapActionAt(hintY - 1) != -1) {
         logger.debug("hint zone wrong: hint at " + hintY + ", label ends at " + minusMin);
         ok = false;
     }
-    // Touch watches say TAP, the others (FR255, Instinct 3) say START.
+    // Touch watches say TAP, the others (FR255, Instinct 3) say START -
+    // and the full wording fits every screen in the matrix. Read from the
+    // resources rather than repeated here: the wording lives in strings.xml,
+    // and a test that copies it only has to be edited when it improves.
     var touch = System.getDeviceSettings().isTouchScreen;
     var footer = v.testBuildLayout(dc).getFooterText();
-    var expected = touch ? "TAP to begin" : "START to begin";
+    var expected = WatchUi.loadResource(
+        touch ? Rez.Strings.StartHintTouch : Rez.Strings.StartHintButton) as String;
     if (footer == null || !(footer as String).equals(expected)) {
         logger.debug("hint '" + footer + "', expected '" + expected + "' (touch " + touch + ")");
         logger.debug(v.testBuildLayout(dc).testDescribe());
@@ -523,11 +538,35 @@ function testLayout_clockOnLiveScreens(logger as Test.Logger) as Boolean {
 (:test)
 function testLayout_clockOnStartScreen(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
-    var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    var d = new SleepDetector(null);
+    var v = layoutHelperStartView(d, new AlarmManager());
     if (v.testHasSubscreen()) {
         return true;
     }
     var ok = true;
+    // Neither input of this screen comes from the simulator. The battery is
+    // forced (testForceBattery short-circuits the system read), and the
+    // clock is pinned - to the narrowest and to the widest time of day this
+    // device can draw, because the view must give the same answer for both.
+    // "12:30" is a glyph wider than "3:32", and deciding on the time it
+    // happens to be would show the clock at 9:59 and take it away at 10:00.
+    var narrowSec = 0;
+    var wideSec = 0;
+    var narrow = -1;
+    var wide = -1;
+    for (var h = 0; h < 24; h++) {
+        var sec = h * 3600 + 48 * 60;
+        d.testPinClock(sec);
+        var tw = dc.getTextWidthInPixels(v.testClockString(), Graphics.FONT_XTINY);
+        if (tw > wide) {
+            wide = tw;
+            wideSec = sec;
+        }
+        if (narrow < 0 || tw < narrow) {
+            narrow = tw;
+            narrowSec = sec;
+        }
+    }
     var durations = [5, 30, 120, 0] as Array<Number>;
     var batteries = [100, 5] as Array<Number>;
     for (var b = 0; b < batteries.size(); b++) {
@@ -535,9 +574,19 @@ function testLayout_clockOnStartScreen(logger as Test.Logger) as Boolean {
             v.testSetPendingDuration(durations[i]);
             v.testForceBattery(batteries[b]);
             var name = "start " + durations[i] + " battery " + batteries[b];
+            d.testPinClock(wideSec);
             var box = v.testStartClockBox(dc);
+            d.testPinClock(narrowSec);
+            var other = v.testStartClockBox(dc);
+            // Same answer, and the same box, whatever the time says.
+            if (!layoutHelperSameBox(box, other)) {
+                logger.debug(name + ": the clock box moves with the time of day, "
+                    + layoutHelperBoxText(box) + " at " + wide + " px wide vs "
+                    + layoutHelperBoxText(other) + " at " + narrow + " px");
+                ok = false;
+            }
             if (box == null) {
-                if (batteries[b] == 100 || dc.getHeight() >= 240) {
+                if (batteries[b] == 100 || dc.getHeight() >= LOW_BATTERY_CLOCK_FROM_PX) {
                     logger.debug(name + ": no clock");
                     logger.debug(v.testBuildLayout(dc).testDescribe());
                     ok = false;
@@ -560,6 +609,32 @@ function testLayout_clockOnStartScreen(logger as Test.Logger) as Boolean {
         ok = false;
     }
     return ok;
+}
+
+//! Two clock boxes are the same box (or both absent).
+(:debug)
+function layoutHelperSameBox(a as Array<Number>?, b as Array<Number>?) as Boolean {
+    if (a == null || b == null) {
+        return a == null && b == null;
+    }
+    var x = a as Array<Number>;
+    var y = b as Array<Number>;
+    for (var i = 0; i < x.size(); i++) {
+        if (x[i] != y[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+//! A clock box as "x,y wxh", or "none".
+(:debug)
+function layoutHelperBoxText(box as Array<Number>?) as String {
+    if (box == null) {
+        return "none";
+    }
+    var b = box as Array<Number>;
+    return b[0] + "," + b[1] + " " + b[2] + "x" + b[3];
 }
 
 //! The clock box [x, y, w, h, firstLineY] is on screen, above the first
@@ -784,6 +859,52 @@ function testLayout_promiseValues(logger as Test.Logger) as Boolean {
     var after = s.testFormatMoment(new Time.Moment(sd.previewDeadlineSec(30)));
     if (!layout.showsFragment(before) && !layout.showsFragment(after)) {
         logger.debug("start preview must show the cap of 15 + 30 min: " + before);
+        ok = false;
+    }
+    return ok;
+}
+
+//! A line drawn in two colours (the "Alarm by HH:MM" promise: the words
+//! quiet, the time itself bright) is still one text. It is measured, fitted
+//! and centred as a whole, and the two parts it is drawn in put it back
+//! together exactly - for whichever wording variant the screen ended up
+//! with, because the split is the last inner space and not a second copy of
+//! the wording.
+(:test)
+function testLayout_promiseSplitsAtItsTime(logger as Test.Logger) as Boolean {
+    var ok = true;
+    var texts = ["Alarm by 14:35", "By 9:05", "Monitoring", " 9:05", ""] as Array<String>;
+    var cuts  = [9, 3, 0, 0, 0] as Array<Number>;
+    for (var i = 0; i < texts.size(); i++) {
+        var cut = ScreenLayout.tailStart(texts[i]);
+        if (cut != cuts[i]) {
+            logger.debug("'" + texts[i] + "' splits at " + cut + ", expected " + cuts[i]);
+            ok = false;
+        }
+    }
+
+    var dc = layoutHelperDc();
+    var s = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    s.testSetPendingDuration(30);
+    var line = s.testBuildLayout(dc).testTwoToneLine();
+    if (line == null) {
+        logger.debug("the start screen's promise must carry its own colour for the time");
+        return false;
+    }
+    var l = line as LayoutLine;
+    var cut = ScreenLayout.tailStart(l.drawText);
+    if (cut <= 0) {
+        logger.debug("'" + l.drawText + "' has no time to split off");
+        return false;
+    }
+    var label = l.drawText.substring(0, cut - 1) as String;
+    var value = l.drawText.substring(cut, l.drawText.length()) as String;
+    if (!(label + " " + value).equals(l.drawText)) {
+        logger.debug("'" + label + "' + '" + value + "' is not '" + l.drawText + "'");
+        ok = false;
+    }
+    if (value.find(":") == null) {
+        logger.debug("the part in its own colour must be the time, got '" + value + "'");
         ok = false;
     }
     return ok;
