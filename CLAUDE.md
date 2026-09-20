@@ -7,6 +7,38 @@
 - A PR that changes text, colours or layout also needs simulator screenshots: `instinct3solar45mm` (smallest, and the only 1-bit), `fenix847mm` (largest), `fr255s` (smallest colour screen, so the three shots do not prove the same thing twice).
 - Supported devices are read from `manifest.xml`, never from a hardcoded list.
 - New tests are for logic, not for texts and colours.
+- Every build meant for a wrist carries its commit in its file name
+  (`PowerNap-<version>-<sha>-<device>.prg`, the file copied to `GARMIN/APPS/`);
+  only the store package `PowerNap-<version>.iq`, built from `main`, is named
+  without one. An old package is never reused. See "Release status".
+- BACK contract (owner's; changing it needs the owner's word, not a session's judgement):
+  BACK goes back one level and never leaves the app below the start screen, so
+  pressing it again walks to the start screen; only the start screen exits, on a
+  second BACK within 4 s, after the popup "Press BACK again to exit". Wherever that
+  step would END something - a nap, a ringing alarm, a Stay Awake session - it takes
+  two presses in that same 4 s window, after a popup saying which of the three it
+  is, and the first press changes nothing at all: the nap runs on, the alarm keeps
+  ringing exactly as loudly as it had got (not paused, not quietened), the guard
+  keeps guarding. Where nothing is lost one press is enough: the first two minutes
+  (calibrating), the summary and the "Test alarm" preview. A right swipe is that
+  same BACK OUTSIDE a session only; during a nap and during its alarm every swipe
+  does nothing at all, not even arm the pair - there only the buttons act. That is
+  the single exception to "a right swipe is BACK" (owner decision 2026-09-20). What
+  the app cannot refuse is the system BACK GESTURE, which some touch watches deliver
+  as `KEY_ESC` and not as a swipe: it is indistinguishable from the button, so it
+  goes through the pair like one, and that pair is now what keeps a stray edge swipe
+  from ending a nap (walked in the simulator on 2026-09-20: gesture, popup, wait,
+  nap still running).
+- Guarded by `testDelegate_backNeverLeavesBelowTheStartScreen` and
+  `testDelegate_backReachesTheStartScreenFromEveryScreen` (both walk every screen in
+  `BACK_SCREENS`, with `BACK_HINTS` and `BACK_STEPS` beside it),
+  `testDelegate_backWalksBackToStartThenExits`,
+  `testDelegate_startScreenBackTwiceExits`,
+  `testDelegate_swipeRightIsBackOutsideTheNap` and, for the wording on each screen,
+  `testLayout_backHintBanner`. Verified by mutation on 2026-09-20: letting the nap
+  give way to a single BACK fails 6 of them, the alarm 8, both 9, and letting a
+  swipe act during a nap or its alarm fails
+  `testDelegate_swipeRightIsBackOutsideTheNap` on both screens.
 - If something cannot be done the way it was asked for, stop and propose the alternative instead of improvising.
 
 Procedure, device sets, release steps and what each test file covers: `CONTRIBUTING.md`.
@@ -35,9 +67,23 @@ below means "since the unreleased 1.1.0", not "in the version users run". So
 Stay Awake, the ramp table, "Test alarm", the BACK key model and "Alarm by"
 are all unreleased.
 
-The `bin/PowerNap-1.1.0.iq` built on 2026-09-19 predates commit `130212e`
-(the exit flag moved behind `(:debug)`), so it does not match `main`. The next
-store package is built from `main`; that old `.iq` is not repackaged.
+**Every build meant for a wrist carries its commit in its file name**:
+`PowerNap-<version>-<short sha>-<device>.prg` for a sideload (that is the
+file copied to `GARMIN/APPS/`; `monkeyc -e` ignores `-d` and packs all 56
+device variants, so an `.iq` is never "the build for one watch"), and
+`PowerNap-<version>.iq` only for the file uploaded to the store, built from
+`main` at the commit being published. A package whose name does
+not say which commit it is cannot be trusted a day later, and an `.iq` left
+over from an earlier attempt is never repackaged: it was built from whatever
+the tree held that day.
+
+That rule was written after `bin/PowerNap-1.1.0.iq`. Built on 2026-09-19 at
+22:02, it predated `b589eb4` of 23:49 (BACK became a back button) and
+`130212e` (the exit flag moved behind `(:debug)`), so it never matched
+`main`: its BACK was the `44fe39e`/`080c7bc` model, BACK x2 at every level,
+which the owner rejected on the wrist that same night. Nothing said so from
+its name, and it was sideloaded and tested by mistake. It was deleted on
+2026-09-20; `bin/` is not in version control, so nothing was lost.
 
 ## Language & SDK
 
@@ -143,9 +189,11 @@ tools/
                         #   SDK lookup in the repo - CIQ_SDK/CIQ_HOME, then
                         #   current-sdk.cfg, ~/connectiq-sdk, newest installed;
                         #   never a pinned SDK build id
-CONTRIBUTING.md         # the full procedure: git flow, what to run and when, the
-                        #   screenshots a text/colour/layout PR needs, the release
-                        #   sweep, and what every file under test/ covers
+CONTRIBUTING.md         # the full procedure: git flow, the BACK contract, what to
+                        #   run and when, the screenshots a text/colour/layout PR
+                        #   needs, the release sweep, and what each test/ file covers
+CHANGELOG.md            # what changed for the wearer, from 1.1.0 on (not filled
+                        #   in backwards; the published version lives in the store)
 docs/history/           # superseded documents, kept for provenance only; each one
                         #   opens with a header saying CLAUDE.md takes precedence
   PLAN-v1.1.0.md        #   the v1.1.0 brief (W1-W7, D1-D4), finished 2026-09-19
@@ -296,8 +344,9 @@ notification, Garmin's own nap detection).
 - Onset -> `ALARM_DOZE`, `_dozeCount++`, alarm starts at the ramp's 60 % step
   (`AlarmManager.startDozeAlarm()`, step 5 = 63 %).
   `dismissAlarm()` -> `resumeGuard()`: MONITORING, clean minute, stillness 0,
-  `_hrWindow` cleared, history kept. START x2 while guarding -> summary; one BACK -> start screen; one BACK on the
-  doze alarm -> back on guard.
+  `_hrWindow` cleared, history kept. START x2 while guarding -> summary;
+  BACK x2 -> start screen; BACK x2 on the doze alarm -> back on guard (the
+  first press of either pair only shows its popup, and counts as being awake).
 - Summary: session length (`getSessionSec`), dozes caught.
 
 ### Trace log (debug builds only)
@@ -399,41 +448,58 @@ flashes only at full strength too.
 ## Input Design Decisions
 
 Key model (owner decision 2026-09-19 evening, revised the same night after
-the wrist test; replaces D1 of the v1.1.0 plan): BACK is a normal back
-button. One press goes back one level, down to the start screen; only there
-does BACK x2 leave the app, with the popup "Press BACK again to exit". No
-other screen asks for a second BACK or shows a BACK popup. Implemented in
-`PowerNapDelegate.handleKey` (`goBack`) and `handleSwipe`:
+the wrist test, and again on 2026-09-20; replaces D1 of the v1.1.0 plan):
+BACK is a normal back button. It goes back one level, down to the start
+screen; only there does it leave the app, with the popup "Press BACK again
+to exit". Wherever the step back would END something it takes two presses
+in the same 4 s window, after a popup naming what would be lost; where
+nothing is lost, one press is enough. Implemented in
+`PowerNapDelegate.handleKey` (`goBack`, `backHintKind`) and `handleSwipe`:
 
 | Screen | BACK | START | UP / DOWN | Taps, swipes |
 |---|---|---|---|---|
 | Start | x2 within 4 s -> `exitApp()`; 1st -> popup `HINT_EXIT` "Press BACK again to exit" | start nap | +/-5 min | zones as below; right swipe = BACK |
 | Menu (Test alarm), preview | closes / ends it -> start screen (1 press) | select / nothing | nothing | right swipe = BACK |
-| Nap running (calibrating, monitoring, sleeping), peek card | 1 press -> `goBack`: `resetToStart()` + lock (nap ended, no summary, no popup) | x2 -> `stopNap()` (cancel -> summary, also before any sleep); 1st -> peek card, footer "START again: stop + stats" | peek card | ignored |
-| Stay Awake guard, its peek | 1 press -> start screen (session ended, no summary) | x2 -> summary | peek card | ignored |
-| Alarm ringing (nap) | 1 press -> alarm off, start screen (no summary) | x2 -> alarm off, summary; 1st -> `HINT_STOP` | consumed, nothing | ignored |
-| Doze alarm (Stay Awake) | 1 press -> alarm off, back on guard (`dismissAlarm`) | x2 -> alarm off, back on guard | consumed | ignored |
+| Calibrating (nap or Stay Awake) | 1 press -> `goBack`: `resetToStart()` + lock (no summary, no popup) | x2 -> `stopNap()`; 1st -> peek card | peek card | ignored |
+| Nap running (monitoring, sleeping), peek card | x2 -> `goBack`: `resetToStart()` + lock (nap ended, no summary); 1st -> popup "Press BACK again to end nap" | x2 -> `stopNap()` (cancel -> summary, also before any sleep); 1st -> peek card, footer "START again: stop + stats" | peek card | ignored |
+| Stay Awake guard, its peek | x2 -> start screen (session ended, no summary); 1st -> popup "Press BACK again to end Stay Awake" | x2 -> summary | peek card | ignored |
+| Alarm ringing (nap) | x2 -> alarm off, start screen (no summary); 1st -> popup "Press BACK again to stop alarm" | x2 -> alarm off, summary; 1st -> `HINT_STOP` | consumed, nothing | ignored |
+| Doze alarm (Stay Awake) | x2 -> alarm off, back on guard (`dismissAlarm`); 1st -> "...to stop alarm" | x2 -> alarm off, back on guard | consumed | ignored |
 | Summary | start screen (`resetToStart` + lock, 1 press) | start screen (new nap, same) | nothing | right swipe = BACK |
 
-So from the nap alarm the way out is BACK (start screen), BACK x2 (exit);
-from the doze alarm BACK (guard), BACK (start), BACK x2 (exit)
+The first press of a pair does nothing but show the popup: it does not end
+the nap, and on the alarm it neither stops nor pauses nor quietens the
+ringing - the ramp goes on climbing while the popup is up
+(`testDelegate_backOnAlarmGoesToStart` asserts the ring phase is unchanged).
+The three texts live in `resources/strings/strings.xml`
+(`Rez.Strings.BackAgain*`, four length variants each, loaded once by
+`PowerNapView.backHintTexts(BACK_HINT_NAP|ALARM|SESSION)`), not in the view -
+unlike the older `HINT_EXIT`/`HINT_STOP` consts, which stay where they are.
+`testLayout_backHintBanner` fits each of them on every screen it can appear
+on, on the device the suite runs on; the 176 px Instinct falls back to
+"BACK x2: end" / "BACK x2: stop".
+
+So from the nap alarm the way out is BACK x2 (start screen), BACK x2 (exit);
+from the doze alarm BACK x2 (guard), BACK x2 (start), BACK x2 (exit)
 (`testDelegate_backWalksBackToStartThenExits`). The 1.5 s lock after every
 BACK that changes the screen means a burst of BACK presses during a nap
-ends on the start screen and never reaches the exit pair
+ends on the start screen and does not run straight on into the exit pair
 (`testDelegate_lockDoesNotTrapRepeatedPresses`: BACK every 700 ms from the
-alarm leaves at the 5th press). Accepted trade-off (owner decision, wrist
-test of 2026-09-19): BACK is not guarded against an accidental press during
-a nap; one press ends the nap and its alarm (START x2 keeps its guard). A
-first version with BACK x2 at every level (commit 44fe39e) was rejected on
-the wrist: "double back" must exist only on the start screen. The start screen shows the
-exit banner (`solveStartScreen` sets it; arrows are drawn before the lines so
-the banner covers them) and, having no 1 Hz refresh, schedules a redraw when
-the hint expires (`showHint` reuses the one-shot `_uiTimer`). The start
+alarm leaves at the 6th press - arm, stop, two swallowed by the lock, arm,
+exit). A first version with BACK x2 at every level (commit 44fe39e) was
+rejected on the wrist because it also asked twice where nothing was at
+stake; the pair now exists exactly where something would be lost. The start
+screen shows the exit banner (`solveStartScreen` sets it; arrows are drawn
+before the lines so the banner covers them) and, having no 1 Hz refresh,
+schedules a redraw when the hint expires (`showHint` reuses the one-shot
+`_uiTimer`); the session screens redraw every second anyway. The start
 screen's footer stays the start hint (it is a tap zone). A right swipe
 outside a session (start screen, summary, preview) is handled as KEY_ESC
 (`handleSwipe`), so the system back gesture can never leave the app in one
-swipe; during a nap/alarm swipes are consumed. Opening the menu or the
-preview forgets an armed BACK (`cancelConfirm`).
+swipe; during a nap AND during its alarm every swipe is consumed and does
+nothing, not even arm the pair, which is the one exception to "a right swipe
+is BACK". Opening the menu or the preview forgets an armed BACK
+(`cancelConfirm`).
 
 - `PowerNapDelegate` extends `WatchUi.InputDelegate` (NOT `BehaviorDelegate`):
   on Fenix 8 `BehaviorDelegate` swallows tap coordinates needed for the start
@@ -446,16 +512,20 @@ preview forgets an armed BACK (`cancelConfirm`).
   elapsed-based so the 24.8-day timer wrap cannot leave it armed) has contexts
   `CONTEXT_EXIT` (BACK on the start screen only) and `CONTEXT_STOP` (START
   during a session): a press of the other key re-arms for its own context,
-  so a BACK and a START never form a pair (during a session BACK does not go
-  through it at all: it acts at once, and `resetToStart` forgets an armed
-  START). The armed press is bound to its screen (`screenId()`: the detector
-  state, or `SCREEN_START`).
+  so a BACK and a START never form a pair, in either direction (a BACK
+  during a session goes through the same guard, in `CONTEXT_EXIT`, so a
+  START in between re-arms for the stop pair and vice versa; `resetToStart`
+  forgets an armed press). The armed press is bound to its screen
+  (`screenId()`: the detector state, or `SCREEN_START`), so a pair started
+  on the nap screen cannot be completed on the alarm.
   `view.pressConfirm(context)` returns true on the confirming press. Taps,
   swipes, holds, flicks and drags are consumed on every nap screen including
   the alarm (an unhandled right swipe is the system back gesture and would
   close the app). In Stay Awake every press also calls `noteUserAwake()`.
 - Popup hint: `view.showHint(HINT_EXIT)` after a first BACK on the start
-  screen, `showHint(HINT_STOP)` after a first START on the alarm; `isHintShowing()`
+  screen, `showHint(HINT_STOP)` after a first START on the alarm,
+  `showHint(backHintTexts(kind))` after a first BACK on a session screen;
+  `isHintShowing()`
   while that press is armed on its screen. Drawn by
   `ScreenLayout.setBanner(texts, fonts)` / `solveBanner`: a filled rounded box
   centred on the screen (the screen's negative: white box + black text, or
@@ -463,8 +533,17 @@ preview forgets an armed BACK (`cancelConfirm`).
   the largest of FONT_MEDIUM/SMALL/TINY/XTINY whose box fits the visible
   width at its rows (`boundsAtRows`, round chord, octagon, lens). Variants:
   `HINT_EXIT` `["Press BACK again to exit", "BACK again to exit", "BACK again: exit"]`,
-  `HINT_STOP` `["Press START again to stop", "START again to stop", "START again: stop"]`.
-  The armed alarm footer repeats the stop hint in red. A first START belongs
+  `HINT_STOP` `["Press START again to stop", "START again to stop", "START again: stop"]`,
+  and from the resources `BackAgainNap` / `BackAgainAlarm` /
+  `BackAgainStayAwake` ("Press BACK again to end nap / to stop alarm / to end
+  Stay Awake") with their Short, Tiny and Tiniest variants down to
+  "BACK x2: end" / "BACK x2: stop", which is what the 176 px Instinct shows.
+  Each names the thing the way its own screen names it - "Stay Awake", never
+  "session", a word the app shows nowhere else - and only the last Stay Awake
+  variant drops the name, because nothing longer fits the Instinct's banner
+  and that screen already says STAY AWAKE at the top. The armed alarm footer
+  repeats the stop hint in red; the BACK popups are carried by the banner
+  alone, over a footer that already says both pairs. A first START belongs
   to the screen it was made on (`_armedState`): if the alarm starts inside
   the 4 s window, the press on the alarm screen arms again instead of confirming
   (review finding: one press silenced the alarm;
@@ -472,18 +551,20 @@ preview forgets an armed BACK (`cancelConfirm`).
   NOT used: its look and timing differ per device and LayoutTest could not
   check it. `allTextFits()` / `firstMisfit()` include the banner.
 - Unarmed footers (`setNapFooter`): nap, Stay Awake and peek
-  `["BACK: end, START x2: stats", "BACK end, START x2 stats", "BACK to end"]`,
-  both alarms `["BACK or START x2: stop", "BACK to stop"]`
-  (short on purpose: a 31-glyph "BACK x2: stop, START x2: stats" climbed over
-  "ALARM 3/4" on the 260 px fenix7 and failed `testLayout_alarmScreens`)
+  `["BACK x2: end, START x2: stats", "BACK x2 end, START x2 stats", "BACK x2: end"]`,
+  both alarms `["BACK x2 or START x2: stop", "BACK x2: stop"]`
+  (still short: a 31-glyph "BACK x2: stop, START x2: stats" once climbed over
+  "ALARM 3/4" on the 260 px fenix7 and failed `testLayout_alarmScreens`, and
+  240 px screens pick the short variant of both)
   (ASCII only; on 176-260 px screens the shortest wins and the peek footer
-  teaches START x2); armed STOP on the
+  teaches START x2). They say "x2" because BACK now takes two presses there
+  too, and `testLayout_footers` fails a footer that drops it. Armed STOP on the
   nap/peek `["START again: stop + stats", "START again: stop", "Again: stop"]`,
   on the alarm `HINT_STOP` in red;
   summary `["START: new nap", "START: new"]` (`setFooterChoices`; BACK goes
   back to the start screen like START). LayoutTest picks the variant per device.
 - Input lock: `INPUT_LOCK_MS` = 1500, applied after every confirmed stop and
-  screen change: the alarm or the nap stopped by START x2 or one BACK, the
+  screen change: the alarm or the nap stopped by START x2 or BACK x2, the
   summary's START or BACK, a dismissed doze alarm (`view.lockInput()`, which
   also ends a peek card); never before an exit. While locked
   `handleKey`/`handleTap` swallow everything and NEVER extend the lock (the
