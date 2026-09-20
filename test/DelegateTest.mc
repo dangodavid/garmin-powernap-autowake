@@ -10,17 +10,22 @@ import Toybox.Application;
 // the frozen clock without sensors or timers; the alarm manager is real (it
 // vibrates in the simulator) and is stopped by cleanup().
 //
-// Key model under test (owner decision 2026-09-19, revised the same night):
-// BACK is a normal back button. One press goes back one level: on a nap, the
-// Stay Awake guard or the nap alarm to the start screen (no summary), on the
-// doze alarm back on guard, on the summary to the start screen. Only the
-// start screen asks for BACK twice within 4 s to leave the app ("Press BACK
-// again to exit" after the first press). START x2 stops the nap or the alarm
-// and shows the summary (the doze alarm goes back on guard); a BACK never
-// completes a START pair. A right swipe outside a session is BACK, and the
-// 1.5 s input lock after a stop is never extended by presses. Two presses
-// within the confirmation window come from consecutive calls (well inside
-// 4 s); the window itself is covered by testReg_confirmPressRules and
+// Key model under test (owner decision 2026-09-19, revised the same night;
+// BACK confirmed below the start screen on 2026-09-20): BACK is a normal
+// back button. It goes back one level: on a nap, the Stay Awake guard or
+// the nap alarm to the start screen (no summary), on the doze alarm back on
+// guard, on the summary to the start screen. Wherever that step would END
+// something it takes two presses within 4 s, the same pair and window as the
+// exit on the start screen, and the first press changes nothing: the nap
+// runs on, the alarm keeps ringing as loudly as it had got. Calibrating, the
+// summary and the alarm preview act on one press - nothing is lost there.
+// START x2 stops the nap or the alarm and shows the summary (the doze alarm
+// goes back on guard); a BACK never completes a START pair, nor a START a
+// BACK pair. A right swipe is BACK outside a session only: during a nap and
+// during its alarm swipes do nothing at all. The 1.5 s input lock after a
+// stop is never extended by presses. Two presses within the confirmation
+// window come from consecutive calls (well inside 4 s); the window itself is
+// covered by testReg_confirmPressRules and
 // testDelegate_startScreenBackTwiceExits.
 // -----------------------------------------------------------------------------
 
@@ -60,11 +65,19 @@ class DelegateRig {
         detector.testSetBaseline(70.0f);
     }
 
-    //! Start a 10 min nap, force sleep and let the alarm become due.
+    //! Start from the start screen and stay in the first two minutes: no
+    //! baseline yet, so the detector is still STATE_CALIBRATING. (startNap()
+    //! cannot be used for that: setting the baseline ends calibration.)
+    function startCalibrating() as Void {
+        key(WatchUi.KEY_ENTER);
+    }
+
+    //! Start the nap the rig was built with, force sleep and let the alarm
+    //! become due - whatever that duration is.
     function startAndRing() as Void {
         startNap();
         detector.testForceSleep();
-        detector.testAdvanceClock(10 * 60);
+        detector.testAdvanceClock(detector.getNapDurationMin() * 60 + 60);
         detector.testTick();
     }
 
@@ -73,6 +86,13 @@ class DelegateRig {
         view.testSetPendingDuration(0);
         key(WatchUi.KEY_ENTER);
         detector.testRunMinutes(5, 70, 10.0f);
+    }
+
+    //! BACK as a wearer presses it where the contract asks for a pair: the
+    //! press that arms and the press that acts, back to back.
+    function backTwice() as Void {
+        key(WatchUi.KEY_ESC);
+        key(WatchUi.KEY_ESC);
     }
 
     //! The footer text of the current screen.
@@ -177,22 +197,25 @@ function testDelegate_startScreenDurationSteps(logger as Test.Logger) as Boolean
     return ok;
 }
 
-//! START begins a nap with the shown duration; one BACK goes back to the
-//! start screen at once: nap ended, no summary, no popup, no exit, and the
-//! 1.5 s lock follows.
+//! START begins a nap with the shown duration. While calibrating one BACK
+//! goes back to the start screen at once (the first two minutes have nothing
+//! to lose); once the nap proper is running it takes two, and the first press
+//! ends nothing: the nap runs on and the popup says what the second one does.
 (:test)
 function testDelegate_backDuringNapGoesToStart(logger as Test.Logger) as Boolean {
     var r = new DelegateRig(20);
-    r.startNap();
+    r.startCalibrating();
     var ok = true;
-    if (!r.view.isStarted() || r.detector.getNapDurationMin() != 20 || r.detector.isStayAwake()) {
-        logger.debug("START must begin a 20 min nap, got " + r.detector.getNapDurationMin());
+    if (!r.view.isStarted() || r.detector.getNapDurationMin() != 20 || r.detector.isStayAwake()
+        || r.detector.getState() != SleepDetector.STATE_CALIBRATING) {
+        logger.debug("START must begin a 20 min nap, got " + r.detector.getNapDurationMin()
+            + " state " + r.detector.getState());
         ok = false;
     }
     r.key(WatchUi.KEY_ESC);
     if (r.view.isStarted() || r.delegate.testExitRequested() || r.detector.testIsRunning()
         || r.alarm.isAlarming() || !r.view.isInputLocked() || r.view.testIsHintShowing()) {
-        logger.debug("one BACK must go back to the start screen, started " + r.view.isStarted()
+        logger.debug("calibrating: one BACK must go back to the start screen, started " + r.view.isStarted()
             + " exit " + r.delegate.testExitRequested() + " running " + r.detector.testIsRunning()
             + " hint " + r.view.testIsHintShowing());
         ok = false;
@@ -202,7 +225,33 @@ function testDelegate_backDuringNapGoesToStart(logger as Test.Logger) as Boolean
         ok = false;
     }
     if (r.view.testBuildLayout(layoutHelperDc()).getBannerText() != null) {
-        logger.debug("no popup after BACK during a nap");
+        logger.debug("no popup after BACK while calibrating");
+        ok = false;
+    }
+    r.cleanup();
+
+    r = new DelegateRig(20);
+    r.startNap();
+    r.detector.testRunMinutes(3, 70, 10.0f);     // calibration over: monitoring
+    r.key(WatchUi.KEY_ESC);
+    if (!r.view.isStarted() || !r.detector.testIsRunning()
+        || r.detector.getState() != SleepDetector.STATE_MONITORING || r.view.isInputLocked()) {
+        logger.debug("monitoring: the first BACK must end nothing, state " + r.detector.getState()
+            + " started " + r.view.isStarted() + " locked " + r.view.isInputLocked());
+        ok = false;
+    }
+    if (!r.view.testIsHintShowing() || !r.view.testHintIsFor(PowerNapView.BACK_HINT_NAP)
+        || r.view.testBuildLayout(layoutHelperDc()).getBannerText() == null) {
+        logger.debug("monitoring: the first BACK must show the 'end nap' popup, showing "
+            + r.view.testIsHintShowing());
+        ok = false;
+    }
+    r.key(WatchUi.KEY_ESC);
+    if (r.view.isStarted() || r.detector.testIsRunning() || r.delegate.testExitRequested()
+        || r.detector.getState() == SleepDetector.STATE_SUMMARY || !r.view.isInputLocked()
+        || r.view.testIsHintShowing()) {
+        logger.debug("monitoring: BACK x2 must go back to the start screen, started " + r.view.isStarted()
+            + " state " + r.detector.getState());
         ok = false;
     }
     r.cleanup();
@@ -242,21 +291,31 @@ function testDelegate_startTwiceDuringNapShowsSummary(logger as Test.Logger) as 
     return ok;
 }
 
-//! A START and a BACK never combine: START then BACK during the nap peeks,
-//! then goes back to the start screen (no summary, no exit), and the armed
-//! START does not carry over: after the lock, START there begins a new nap.
-//! On the alarm, START arms the stop pair and BACK alone stops the alarm
-//! and goes back to the start screen without a summary.
+//! A START and a BACK never combine, in either direction: START then BACK
+//! during the nap peeks and then arms the BACK pair instead of completing
+//! the START one, so nothing stops until the second BACK; the armed START
+//! does not carry over either - after the lock, START on the start screen
+//! begins a new nap. Same on the alarm: a START arms the stop pair, a BACK
+//! re-arms for itself and leaves the alarm ringing, and it takes a second
+//! BACK to stop it.
 (:test)
 function testDelegate_startThenBackDoesNotPair(logger as Test.Logger) as Boolean {
     var r = new DelegateRig(30);
     r.startNap();
+    r.detector.testRunMinutes(3, 70, 10.0f);     // monitoring: BACK needs its pair
     r.key(WatchUi.KEY_ENTER);
     var ok = r.view.isPeeking() && r.detector.isActiveState();
-    r.key(WatchUi.KEY_ESC);
+    r.key(WatchUi.KEY_ESC);                      // must not complete the START pair
+    if (!r.view.isStarted() || !r.detector.testIsRunning()
+        || r.detector.getState() == SleepDetector.STATE_SUMMARY) {
+        logger.debug("START then BACK must stop nothing: started " + r.view.isStarted()
+            + " state " + r.detector.getState());
+        ok = false;
+    }
+    r.key(WatchUi.KEY_ESC);                      // the BACK pair, on its own
     if (r.view.isStarted() || r.delegate.testExitRequested() || r.detector.testIsRunning()
         || r.detector.getState() == SleepDetector.STATE_SUMMARY) {
-        logger.debug("START then BACK: started " + r.view.isStarted() + " state " + r.detector.getState());
+        logger.debug("START then BACK x2: started " + r.view.isStarted() + " state " + r.detector.getState());
         ok = false;
     }
     r.view.testExpireInputLock();
@@ -275,10 +334,16 @@ function testDelegate_startThenBackDoesNotPair(logger as Test.Logger) as Boolean
         logger.debug("one START on the alarm must only arm, state " + r.detector.getState());
         ok = false;
     }
+    r.key(WatchUi.KEY_ESC);                      // re-arms for BACK, stops nothing
+    if (!r.alarm.isAlarming() || r.detector.getState() != SleepDetector.STATE_ALARM
+        || !r.view.testHintIsFor(PowerNapView.BACK_HINT_ALARM)) {
+        logger.debug("a BACK after a START on the alarm must only re-arm, alarming " + r.alarm.isAlarming());
+        ok = false;
+    }
     r.key(WatchUi.KEY_ESC);
     if (r.alarm.isAlarming() || r.view.isStarted() || r.delegate.testExitRequested()
         || r.detector.getState() == SleepDetector.STATE_SUMMARY) {
-        logger.debug("BACK after a START on the alarm must stop it and go to the start screen, no summary");
+        logger.debug("BACK x2 after a START on the alarm must stop it and go to the start screen, no summary");
         ok = false;
     }
     r.cleanup();
@@ -319,7 +384,8 @@ function testDelegate_buttonsPeekTapsIgnored(logger as Test.Logger) as Boolean {
 
 //! On the ringing alarm UP/DOWN do nothing; one BACK stops the alarm and
 //! goes back to the start screen: no summary, no popup, no exit, and the
-//! lock follows.
+//! lock follows. The first of the two presses neither stops nor quietens
+//! the ringing: the ramp is exactly where it was.
 (:test)
 function testDelegate_backOnAlarmGoesToStart(logger as Test.Logger) as Boolean {
     var r = new DelegateRig(10);
@@ -336,11 +402,23 @@ function testDelegate_backOnAlarmGoesToStart(logger as Test.Logger) as Boolean {
         logger.debug("UP/DOWN on the alarm must do nothing");
         ok = false;
     }
+    var phase = r.alarm.getLastRingPhase();
+    r.key(WatchUi.KEY_ESC);
+    if (!r.alarm.isAlarming() || r.detector.getState() != SleepDetector.STATE_ALARM
+        || r.alarm.getLastRingPhase() != phase || r.view.isInputLocked()) {
+        logger.debug("the first BACK must leave the alarm ringing exactly as it was, alarming "
+            + r.alarm.isAlarming() + " phase " + phase + " -> " + r.alarm.getLastRingPhase());
+        ok = false;
+    }
+    if (!r.view.testIsHintShowing() || !r.view.testHintIsFor(PowerNapView.BACK_HINT_ALARM)) {
+        logger.debug("the first BACK on the alarm must show the 'stop alarm' popup");
+        ok = false;
+    }
     r.key(WatchUi.KEY_ESC);
     if (r.delegate.testExitRequested() || r.alarm.isAlarming() || r.detector.testIsRunning() || r.view.isStarted()
         || !r.view.isInputLocked() || r.view.testIsHintShowing()
         || r.detector.getState() == SleepDetector.STATE_SUMMARY) {
-        logger.debug("one BACK on the alarm must go back to the start screen, started " + r.view.isStarted()
+        logger.debug("BACK x2 on the alarm must go back to the start screen, started " + r.view.isStarted()
             + " exit " + r.delegate.testExitRequested() + " alarming " + r.alarm.isAlarming());
         ok = false;
     }
@@ -390,9 +468,10 @@ function testDelegate_startTwiceOnDozeAlarmResumesGuard(logger as Test.Logger) a
     return ok;
 }
 
-//! One BACK on the Stay Awake guard screen (here during the drowsiness
-//! warning) goes back to the start screen: the session ends, no summary,
-//! no popup, no exit.
+//! BACK twice on the Stay Awake guard screen (here during the drowsiness
+//! warning) goes back to the start screen: the session ends, no summary, no
+//! exit. The first press only shows the "end Stay Awake" popup - and, as any
+//! press in Stay Awake does, counts as proof of being awake.
 (:test)
 function testDelegate_backInStayAwakeGoesToStart(logger as Test.Logger) as Boolean {
     var r = new DelegateRig(5);
@@ -401,12 +480,25 @@ function testDelegate_backInStayAwakeGoesToStart(logger as Test.Logger) as Boole
     r.detector.testRunMinutes(3, 70, 10.0f);
     var warned = r.detector.isDozeWarning();
     r.key(WatchUi.KEY_ESC);
-    var ok = warned && !r.delegate.testExitRequested() && !r.detector.testIsRunning() && !r.view.isStarted()
-        && r.detector.getState() != SleepDetector.STATE_SUMMARY && !r.view.testIsHintShowing()
-        && r.view.isInputLocked();
-    if (!ok) {
+    var ok = warned;
+    if (!r.detector.testIsRunning() || !r.view.isStarted() || !r.view.testIsHintShowing()
+        || !r.view.testHintIsFor(PowerNapView.BACK_HINT_STAY_AWAKE)) {
+        logger.debug("the first BACK must keep the session and show the 'end Stay Awake' popup, running "
+            + r.detector.testIsRunning() + " hint " + r.view.testIsHintShowing());
+        ok = false;
+    }
+    if (r.detector.getStillMinutes() != 0 || r.detector.isDozeWarning()) {
+        logger.debug("a press in Stay Awake must still count as being awake, stillness "
+            + r.detector.getStillMinutes());
+        ok = false;
+    }
+    r.key(WatchUi.KEY_ESC);
+    if (r.delegate.testExitRequested() || r.detector.testIsRunning() || r.view.isStarted()
+        || r.detector.getState() == SleepDetector.STATE_SUMMARY || r.view.testIsHintShowing()
+        || !r.view.isInputLocked()) {
         logger.debug("warned " + warned + " exit " + r.delegate.testExitRequested() + " started " + r.view.isStarted()
             + " state " + r.detector.getState());
+        ok = false;
     }
     r.cleanup();
     return ok;
@@ -573,8 +665,9 @@ function testDelegate_startScreenBackTwiceExits(logger as Test.Logger) as Boolea
 }
 
 //! BACK on the peek card is BACK on the nap: one press goes back to the
-//! start screen. On the Stay Awake doze alarm one BACK stops the alarm and
-//! goes back on guard (the session goes on, the doze is counted).
+//! start screen, and the first of the two ends nothing. On the Stay Awake
+//! doze alarm BACK twice stops the alarm and goes back on guard (the session
+//! goes on, the doze is counted).
 (:test)
 function testDelegate_backOnPeekAndDozeAlarm(logger as Test.Logger) as Boolean {
     var r = new DelegateRig(30);
@@ -583,10 +676,17 @@ function testDelegate_backOnPeekAndDozeAlarm(logger as Test.Logger) as Boolean {
     r.key(WatchUi.KEY_UP);                       // peek card
     var peeked = r.view.isPeeking();
     r.key(WatchUi.KEY_ESC);
-    var ok = peeked && !r.view.isStarted() && !r.detector.testIsRunning() && !r.delegate.testExitRequested()
-        && !r.view.isPeeking();
-    if (!ok) {
-        logger.debug("peek then BACK: peeked " + peeked + " started " + r.view.isStarted());
+    var ok = peeked;
+    if (!r.view.isStarted() || !r.detector.testIsRunning()
+        || !r.view.testHintIsFor(PowerNapView.BACK_HINT_NAP)) {
+        logger.debug("peek: the first BACK must end nothing, started " + r.view.isStarted());
+        ok = false;
+    }
+    r.key(WatchUi.KEY_ESC);
+    if (!peeked || r.view.isStarted() || r.detector.testIsRunning() || r.delegate.testExitRequested()
+        || r.view.isPeeking()) {
+        logger.debug("peek then BACK x2: peeked " + peeked + " started " + r.view.isStarted());
+        ok = false;
     }
     r.cleanup();
 
@@ -594,10 +694,17 @@ function testDelegate_backOnPeekAndDozeAlarm(logger as Test.Logger) as Boolean {
     r.startAndDoze();
     var alarmed = r.detector.getAlarmReason() == SleepDetector.ALARM_DOZE && r.alarm.isAlarming();
     r.key(WatchUi.KEY_ESC);
+    if (!r.alarm.isAlarming() || r.detector.getState() != SleepDetector.STATE_ALARM
+        || !r.view.testHintIsFor(PowerNapView.BACK_HINT_ALARM)) {
+        logger.debug("doze alarm: the first BACK must leave it ringing, alarming " + r.alarm.isAlarming()
+            + " state " + r.detector.getState());
+        ok = false;
+    }
+    r.key(WatchUi.KEY_ESC);
     if (!alarmed || r.alarm.isAlarming() || r.detector.getState() != SleepDetector.STATE_MONITORING
         || !r.detector.testIsRunning() || !r.view.isStarted() || r.detector.getDozeCount() != 1
         || r.delegate.testExitRequested() || !r.view.isInputLocked()) {
-        logger.debug("doze alarm BACK: alarmed " + alarmed + " state " + r.detector.getState()
+        logger.debug("doze alarm BACK x2: alarmed " + alarmed + " state " + r.detector.getState()
             + " started " + r.view.isStarted() + " dozes " + r.detector.getDozeCount());
         ok = false;
     }
@@ -622,8 +729,8 @@ function testDelegate_peekFooterTeachesStartTwice(logger as Test.Logger) as Bool
     if (!ok) {
         logger.debug("peek footer '" + f + "' peeking " + r.view.isPeeking());
     }
-    if (unarmed.find("BACK") == null || unarmed.find("BACK x2") != null) {
-        logger.debug("unarmed nap footer must say what one BACK does, not BACK x2: '" + unarmed + "'");
+    if (unarmed.find("BACK x2") == null) {
+        logger.debug("the unarmed nap footer must say BACK takes two presses: '" + unarmed + "'");
         ok = false;
     }
     r.cleanup();
@@ -656,8 +763,8 @@ function testDelegate_pressBurstAfterAlarmStopsAtSummary(logger as Test.Logger) 
     return ok;
 }
 
-//! A burst of BACK presses on the Stay Awake doze alarm stops the alarm at
-//! the first press and goes back on guard; the lock swallows the rest, so
+//! A burst of BACK presses on the Stay Awake doze alarm stops the alarm on
+//! the second press and goes back on guard; the lock swallows the rest, so
 //! the burst neither ends the session nor leaves the app.
 (:test)
 function testDelegate_backBurstOnDozeAlarmKeepsGuarding(logger as Test.Logger) as Boolean {
@@ -665,8 +772,10 @@ function testDelegate_backBurstOnDozeAlarmKeepsGuarding(logger as Test.Logger) a
     r.startAndDoze();
     var alarmed = r.detector.getAlarmReason() == SleepDetector.ALARM_DOZE;
     r.key(WatchUi.KEY_ESC);
-    var afterOne = !r.alarm.isAlarming() && r.detector.getState() == SleepDetector.STATE_MONITORING
-        && r.view.isInputLocked();
+    var stillRinging = r.alarm.isAlarming() && r.detector.getState() == SleepDetector.STATE_ALARM;
+    r.key(WatchUi.KEY_ESC);
+    var afterOne = stillRinging && !r.alarm.isAlarming()
+        && r.detector.getState() == SleepDetector.STATE_MONITORING && r.view.isInputLocked();
     for (var i = 0; i < 4; i++) {
         r.key(WatchUi.KEY_ESC);                  // inside the lock: swallowed
     }
@@ -682,29 +791,33 @@ function testDelegate_backBurstOnDozeAlarmKeepsGuarding(logger as Test.Logger) a
 }
 
 //! The input lock never traps the user. BACK every 700 ms from the alarm:
-//! the 1st press stops the alarm and goes back to the start screen, the 2nd
-//! and 3rd (0.7 s and 1.4 s into the 1.5 s lock) are swallowed without
-//! extending it, the 4th (2.1 s) shows "Press BACK again to exit" and the
-//! 5th leaves the app. START every 700 ms: stops at the 2nd press, the 3rd
-//! and 4th are swallowed, the 5th starts a new nap set-up.
+//! the 1st press arms, the 2nd stops the alarm and goes back to the start
+//! screen, the 3rd and 4th (0.7 s and 1.4 s into the 1.5 s lock) are
+//! swallowed without extending it, the 5th (2.1 s) shows "Press BACK again
+//! to exit" and the 6th leaves the app. START every 700 ms: stops at the 2nd
+//! press, the 3rd and 4th are swallowed, the 5th starts a new nap set-up.
 (:test)
 function testDelegate_lockDoesNotTrapRepeatedPresses(logger as Test.Logger) as Boolean {
     var r = new DelegateRig(10);
     r.startAndRing();
     var ok = true;
     var exitAt = -1;
-    for (var i = 1; i <= 8 && exitAt < 0; i++) {
+    for (var i = 1; i <= 9 && exitAt < 0; i++) {
         r.key(WatchUi.KEY_ESC);
-        if (i == 1 && (r.view.isStarted() || r.alarm.isAlarming())) {
-            logger.debug("the 1st BACK must stop the alarm and go back to the start screen");
+        if (i == 1 && (!r.alarm.isAlarming() || !r.view.testIsHintShowing())) {
+            logger.debug("the 1st BACK must only arm, alarming " + r.alarm.isAlarming());
             ok = false;
         }
-        if ((i == 2 || i == 3) && (r.view.isStarted() || r.view.testIsHintShowing())) {
+        if (i == 2 && (r.view.isStarted() || r.alarm.isAlarming())) {
+            logger.debug("the 2nd BACK must stop the alarm and go back to the start screen");
+            ok = false;
+        }
+        if ((i == 3 || i == 4) && (r.view.isStarted() || r.view.testIsHintShowing())) {
             logger.debug("BACK " + i + " falls inside the lock and must be swallowed");
             ok = false;
         }
-        if (i == 4 && !r.view.testIsHintShowing()) {
-            logger.debug("the 4th BACK (after the lock) must show the exit hint");
+        if (i == 5 && !r.view.testIsHintShowing()) {
+            logger.debug("the 5th BACK (after the lock) must show the exit hint");
             ok = false;
         }
         if (r.delegate.testExitRequested()) {
@@ -712,8 +825,8 @@ function testDelegate_lockDoesNotTrapRepeatedPresses(logger as Test.Logger) as B
         }
         r.view.testAdvanceMs(700);
     }
-    if (exitAt != 5) {
-        logger.debug("BACK every 700 ms from the alarm must leave the app at the 5th press, got " + exitAt);
+    if (exitAt != 6) {
+        logger.debug("BACK every 700 ms from the alarm must leave the app at the 6th press, got " + exitAt);
         ok = false;
     }
     r.cleanup();
@@ -978,7 +1091,7 @@ function testDelegate_pressBeforeAlarmDoesNotPairWithAlarmPress(logger as Test.L
     r.detector.testForceSleep();
     r.detector.testAdvanceClock(10 * 60 - 3);
     r.detector.testTick();
-    r.key(WatchUi.KEY_ESC);                      // ends the nap 3 s before the alarm
+    r.backTwice();                               // ends the nap 3 s before the alarm
     r.detector.testAdvanceClock(5);
     r.detector.testTick();
     if (r.view.isStarted() || r.alarm.isAlarming() || r.detector.testIsRunning() || r.delegate.testExitRequested()
@@ -1042,18 +1155,18 @@ function testDelegate_peekDoesNotSurviveDozeDismissal(logger as Test.Logger) as 
 
 // -- BACK walks back to the start screen, and only there leaves ---------------
 
-//! The owner's rule end to end: from the nap alarm one BACK goes to the
-//! start screen and BACK x2 there leaves; from the doze alarm one BACK goes
-//! back on guard, one more to the start screen, and BACK x2 leaves. Nothing
-//! before the start screen leaves the app or shows a popup.
+//! The owner's rule end to end, in pairs: from the nap alarm BACK x2 goes to
+//! the start screen and BACK x2 there leaves; from the doze alarm BACK x2
+//! goes back on guard, BACK x2 to the start screen, BACK x2 leaves. Nothing
+//! before the start screen leaves the app, and no single press acts.
 (:test)
 function testDelegate_backWalksBackToStartThenExits(logger as Test.Logger) as Boolean {
     var ok = true;
     var r = new DelegateRig(10);
     r.startAndRing();
-    r.key(WatchUi.KEY_ESC);
+    r.backTwice();
     if (r.view.isStarted() || r.alarm.isAlarming() || r.delegate.testExitRequested() || r.view.testIsHintShowing()) {
-        logger.debug("nap alarm: one BACK must reach the start screen without leaving");
+        logger.debug("nap alarm: BACK x2 must reach the start screen without leaving");
         ok = false;
     }
     r.view.testExpireInputLock();
@@ -1071,16 +1184,16 @@ function testDelegate_backWalksBackToStartThenExits(logger as Test.Logger) as Bo
 
     r = new DelegateRig(0);
     r.startAndDoze();
-    r.key(WatchUi.KEY_ESC);
+    r.backTwice();
     if (r.detector.getState() != SleepDetector.STATE_MONITORING || !r.view.isStarted() || r.alarm.isAlarming()
         || r.view.testIsHintShowing()) {
-        logger.debug("doze alarm: one BACK must go back on guard, state " + r.detector.getState());
+        logger.debug("doze alarm: BACK x2 must go back on guard, state " + r.detector.getState());
         ok = false;
     }
     r.view.testExpireInputLock();
-    r.key(WatchUi.KEY_ESC);
+    r.backTwice();
     if (r.view.isStarted() || r.detector.testIsRunning() || r.delegate.testExitRequested() || r.view.testIsHintShowing()) {
-        logger.debug("guard: one BACK must reach the start screen without leaving");
+        logger.debug("guard: BACK x2 must reach the start screen without leaving");
         ok = false;
     }
     r.view.testExpireInputLock();
@@ -1098,9 +1211,12 @@ function testDelegate_backWalksBackToStartThenExits(logger as Test.Logger) as Bo
     return ok;
 }
 
-//! A right swipe is the touch BACK: on the start screen the first one shows
-//! the exit hint and the second leaves; on the summary it goes back to the
-//! start screen; during a nap and on the alarm every swipe is ignored.
+//! A right swipe is the touch BACK, but outside a session only: on the start
+//! screen the first one shows the exit hint and the second leaves; on the
+//! summary it goes back to the start screen. During a nap and on the alarm
+//! every swipe does nothing at all - it does not even arm the BACK pair, so
+//! no number of swipes can end a nap or stop an alarm. That is the one
+//! exception to "a right swipe is BACK".
 (:test)
 function testDelegate_swipeRightIsBackOutsideTheNap(logger as Test.Logger) as Boolean {
     var ok = true;
@@ -1131,13 +1247,19 @@ function testDelegate_swipeRightIsBackOutsideTheNap(logger as Test.Logger) as Bo
     }
     r.detector.testAdvanceClock(31 * 60);
     r.detector.testTick();
-    r.delegate.handleSwipe(WatchUi.SWIPE_RIGHT);
-    r.delegate.handleSwipe(WatchUi.SWIPE_RIGHT);
-    if (!r.alarm.isAlarming() || !r.view.isStarted()) {
-        logger.debug("alarm: swipes must be ignored");
+    for (var i = 0; i < 3; i++) {
+        if (!r.delegate.handleSwipe(WatchUi.SWIPE_RIGHT)) {
+            logger.debug("alarm: a swipe must be consumed");
+            ok = false;
+        }
+    }
+    if (!r.alarm.isAlarming() || !r.view.isStarted()
+        || r.detector.getState() != SleepDetector.STATE_ALARM || r.view.testIsHintShowing()) {
+        logger.debug("alarm: swipes must do nothing, not even arm the BACK pair; alarming "
+            + r.alarm.isAlarming() + " hint " + r.view.testIsHintShowing());
         ok = false;
     }
-    r.key(WatchUi.KEY_ENTER);
+    r.key(WatchUi.KEY_ENTER);                    // the buttons still work
     r.key(WatchUi.KEY_ENTER);                    // summary
     r.view.testExpireInputLock();
     r.delegate.handleSwipe(WatchUi.SWIPE_RIGHT);
@@ -1163,5 +1285,188 @@ function testDelegate_previewForgetsArmedExit(logger as Test.Logger) as Boolean 
         logger.debug("previewing " + r.alarm.isPreviewing() + " exit " + r.delegate.testExitRequested());
     }
     r.cleanup();
+    return ok;
+}
+
+// -- The BACK contract, over every screen -------------------------------------
+//
+// The owner's rule, written down in CLAUDE.md and CONTRIBUTING.md:
+//   * BACK goes back one level and never leaves the app below the start
+//     screen; pressed again it walks on to the start screen;
+//   * wherever that step would END something - a nap, a ringing alarm, a
+//     Stay Awake session - it takes two presses inside the 4 s window, after
+//     a popup saying what the second one does, and the first press changes
+//     nothing at all;
+//   * where nothing is lost it acts on one press: the alarm preview, the
+//     first two minutes (calibrating) and the summary;
+//   * only the start screen leaves, on a second BACK inside that window,
+//     after "Press BACK again to exit";
+//   * a right swipe is that same BACK outside a session only.
+// The tests below walk the rule over EVERY screen rather than one path at a
+// time, so a screen added later has to be added to BACK_SCREENS and cannot
+// quietly get a BACK of its own. The wording of the pair on the start screen
+// is covered by testDelegate_startScreenBackTwiceExits, the swipe by
+// testDelegate_swipeRightIsBackOutsideTheNap.
+
+//! Every screen the app can show below the start screen.
+(:debug)
+const BACK_SCREENS = ["alarm preview", "calibrating", "monitoring", "sleeping", "nap peek",
+                      "nap alarm", "stay awake guard", "stay awake peek", "doze alarm",
+                      "nap summary", "no-sleep summary", "stay awake summary"] as Array<String>;
+
+//! Which popup that screen's first BACK shows (PowerNapView.BACK_HINT_*),
+//! or -1 where BACK acts on a single press.
+(:debug)
+const BACK_HINTS = [-1, -1, 0, 0, 0, 1, 2, 2, 1, -1, -1, -1] as Array<Number>;
+
+//! How many BACK presses that screen is away from the start screen: one
+//! where nothing is lost, two where the pair is asked for, and four from the
+//! doze alarm, which sits on top of the Stay Awake guard and so takes the
+//! guard's pair too.
+(:debug)
+const BACK_STEPS = [1, 1, 2, 2, 2, 2, 2, 2, 4, 1, 1, 1] as Array<Number>;
+
+//! A rig sitting on BACK_SCREENS[i], with the input lock already expired so
+//! the next press is the one under test.
+(:debug)
+function delegateHelperOpenScreen(i as Number) as DelegateRig {
+    var r = new DelegateRig((i >= 6 && i <= 8) || i == 11 ? 0 : 30);
+    if (i == 0) {                                     // alarm preview ("Test alarm")
+        r.view.startPreview();
+    } else if (i == 1) {                              // calibrating
+        r.startCalibrating();
+    } else if (i == 2) {                              // monitoring
+        r.startNap();
+        r.detector.testRunMinutes(3, 70, 10.0f);
+    } else if (i == 3) {                              // sleeping
+        r.startNap();
+        r.detector.testForceSleep();
+    } else if (i == 4) {                              // peek card over the nap
+        r.startNap();
+        r.detector.testForceSleep();
+        r.key(WatchUi.KEY_UP);
+    } else if (i == 5) {                              // the nap alarm, ringing
+        r.startAndRing();
+    } else if (i == 6) {                              // Stay Awake, on guard
+        r.key(WatchUi.KEY_ENTER);
+        r.detector.testRunMinutes(2, 70, 10.0f);
+    } else if (i == 7) {                              // peek card over the guard
+        r.key(WatchUi.KEY_ENTER);
+        r.detector.testRunMinutes(2, 70, 10.0f);
+        r.key(WatchUi.KEY_UP);
+    } else if (i == 8) {                              // the doze alarm, ringing
+        r.startAndDoze();
+    } else if (i == 9) {                              // summary of a finished nap
+        r.startAndRing();
+        r.key(WatchUi.KEY_ENTER);
+        r.key(WatchUi.KEY_ENTER);
+    } else if (i == 10) {                             // summary without any sleep
+        r.startNap();
+        r.key(WatchUi.KEY_ENTER);
+        r.key(WatchUi.KEY_ENTER);
+    } else {                                          // Stay Awake summary
+        r.key(WatchUi.KEY_ENTER);
+        r.detector.testRunMinutes(2, 70, 10.0f);
+        r.key(WatchUi.KEY_ENTER);
+        r.key(WatchUi.KEY_ENTER);
+    }
+    r.view.testExpireInputLock();
+    return r;
+}
+
+//! True when the rig is back on the start screen (no session, no preview).
+(:debug)
+function delegateHelperOnStartScreen(r as DelegateRig) as Boolean {
+    return !r.view.isStarted() && !r.alarm.isPreviewing();
+}
+
+//! No screen below the start screen may leave the app on one BACK. Where the
+//! contract asks for a pair, that one press must also have ENDED nothing -
+//! the session is still running and the popup names what would be lost;
+//! where it does not, BACK acts at once and shows no popup. Only the start
+//! screen shows the exit popup.
+(:test)
+function testDelegate_backNeverLeavesBelowTheStartScreen(logger as Test.Logger) as Boolean {
+    var ok = true;
+    for (var i = 0; i < BACK_SCREENS.size(); i++) {
+        var r = delegateHelperOpenScreen(i);
+        if (delegateHelperOnStartScreen(r) && i != 0) {
+            logger.debug(BACK_SCREENS[i] + ": the test did not reach that screen");
+            ok = false;
+        }
+        var running = r.detector.testIsRunning();
+        var alarming = r.alarm.isAlarming();
+        r.key(WatchUi.KEY_ESC);
+        if (r.delegate.testExitRequested()) {
+            logger.debug(BACK_SCREENS[i] + ": one BACK left the app");
+            ok = false;
+        }
+        if (BACK_HINTS[i] < 0) {
+            if (r.view.testIsHintShowing()) {
+                logger.debug(BACK_SCREENS[i] + ": BACK must act at once, not ask for a second press");
+                ok = false;
+            }
+        } else {
+            if (!r.view.testIsHintShowing() || !r.view.testHintIsFor(BACK_HINTS[i])) {
+                logger.debug(BACK_SCREENS[i] + ": the first BACK must show the popup for "
+                    + BACK_HINTS[i] + ", showing " + r.view.testIsHintShowing());
+                ok = false;
+            }
+            if (r.detector.testIsRunning() != running || r.alarm.isAlarming() != alarming
+                || !r.view.isStarted() || r.view.isInputLocked()) {
+                logger.debug(BACK_SCREENS[i] + ": the first BACK must end nothing - running " + running
+                    + " -> " + r.detector.testIsRunning() + ", alarming " + alarming
+                    + " -> " + r.alarm.isAlarming() + ", started " + r.view.isStarted());
+                ok = false;
+            }
+        }
+        r.cleanup();
+    }
+    return ok;
+}
+
+//! From every screen, BACK pressed again and again walks to the start screen
+//! in the documented number of presses, without leaving on the way; and once
+//! there it takes two more presses to leave, never one.
+(:test)
+function testDelegate_backReachesTheStartScreenFromEveryScreen(logger as Test.Logger) as Boolean {
+    var ok = true;
+    for (var i = 0; i < BACK_SCREENS.size(); i++) {
+        var r = delegateHelperOpenScreen(i);
+        var steps = 0;
+        while (!delegateHelperOnStartScreen(r) && steps < 8) {
+            r.key(WatchUi.KEY_ESC);
+            steps++;
+            r.view.testExpireInputLock();
+            if (r.delegate.testExitRequested()) {
+                logger.debug(BACK_SCREENS[i] + ": left the app after " + steps + " BACK press(es)");
+                ok = false;
+                break;
+            }
+        }
+        if (!delegateHelperOnStartScreen(r)) {
+            logger.debug(BACK_SCREENS[i] + ": BACK never reached the start screen");
+            ok = false;
+        } else if (steps != BACK_STEPS[i]) {
+            logger.debug(BACK_SCREENS[i] + ": took " + steps + " BACK press(es), expected " + BACK_STEPS[i]);
+            ok = false;
+        }
+        if (!r.delegate.testExitRequested()) {
+            r.key(WatchUi.KEY_ESC);               // on the start screen: arms only
+            if (r.delegate.testExitRequested()) {
+                logger.debug(BACK_SCREENS[i] + ": the first BACK on the start screen left the app");
+                ok = false;
+            } else if (!r.view.testIsHintShowing()) {
+                logger.debug(BACK_SCREENS[i] + ": the start screen must show the exit hint");
+                ok = false;
+            }
+            r.key(WatchUi.KEY_ESC);               // and the second one leaves
+            if (!r.delegate.testExitRequested()) {
+                logger.debug(BACK_SCREENS[i] + ": BACK twice on the start screen did not leave");
+                ok = false;
+            }
+        }
+        r.cleanup();
+    }
     return ok;
 }
