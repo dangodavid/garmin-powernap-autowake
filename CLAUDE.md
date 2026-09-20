@@ -462,7 +462,7 @@ nothing is lost, one press is enough. Implemented in
 | Menu (Test alarm), preview | closes / ends it -> start screen (1 press) | select / nothing | nothing | right swipe = BACK |
 | Calibrating (nap or Stay Awake) | 1 press -> `goBack`: `resetToStart()` + lock (no summary, no popup) | x2 -> `stopNap()`; 1st -> peek card | peek card | ignored |
 | Nap running (monitoring, sleeping), peek card | x2 -> `goBack`: `resetToStart()` + lock (nap ended, no summary); 1st -> popup "Press BACK again to end nap" | x2 -> `stopNap()` (cancel -> summary, also before any sleep); 1st -> peek card, footer "START again: stop + stats" | peek card | ignored |
-| Stay Awake guard, its peek | x2 -> start screen (session ended, no summary); 1st -> popup "Press BACK again to end session" | x2 -> summary | peek card | ignored |
+| Stay Awake guard, its peek | x2 -> start screen (session ended, no summary); 1st -> popup "Press BACK again to end Stay Awake" | x2 -> summary | peek card | ignored |
 | Alarm ringing (nap) | x2 -> alarm off, start screen (no summary); 1st -> popup "Press BACK again to stop alarm" | x2 -> alarm off, summary; 1st -> `HINT_STOP` | consumed, nothing | ignored |
 | Doze alarm (Stay Awake) | x2 -> alarm off, back on guard (`dismissAlarm`); 1st -> "...to stop alarm" | x2 -> alarm off, back on guard | consumed | ignored |
 | Summary | start screen (`resetToStart` + lock, 1 press) | start screen (new nap, same) | nothing | right swipe = BACK |
@@ -534,10 +534,14 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   width at its rows (`boundsAtRows`, round chord, octagon, lens). Variants:
   `HINT_EXIT` `["Press BACK again to exit", "BACK again to exit", "BACK again: exit"]`,
   `HINT_STOP` `["Press START again to stop", "START again to stop", "START again: stop"]`,
-  and from the resources `BackAgainNap` / `BackAgainAlarm` / `BackAgainSession`
-  ("Press BACK again to end nap / to stop alarm / to end session") with
-  their Short, Tiny and Tiniest variants down to "BACK x2: end" / "BACK x2:
-  stop", which is what the 176 px Instinct shows. The armed alarm footer
+  and from the resources `BackAgainNap` / `BackAgainAlarm` /
+  `BackAgainStayAwake` ("Press BACK again to end nap / to stop alarm / to end
+  Stay Awake") with their Short, Tiny and Tiniest variants down to
+  "BACK x2: end" / "BACK x2: stop", which is what the 176 px Instinct shows.
+  Each names the thing the way its own screen names it - "Stay Awake", never
+  "session", a word the app shows nowhere else - and only the last Stay Awake
+  variant drops the name, because nothing longer fits the Instinct's banner
+  and that screen already says STAY AWAKE at the top. The armed alarm footer
   repeats the stop hint in red; the BACK popups are carried by the banner
   alone, over a footer that already says both pairs. A first START belongs
   to the screen it was made on (`_armedState`): if the alarm starts inside

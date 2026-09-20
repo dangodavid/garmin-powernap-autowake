@@ -53,7 +53,7 @@ to exit".
 the peek over them, on both alarms, and on the Stay Awake guard and its peek,
 BACK takes two presses inside that same 4 s window. The first press shows a
 popup naming what the second one would end - "Press BACK again to end nap",
-"...to stop alarm", "...to end session", from
+"...to stop alarm", "...to end Stay Awake", from
 `resources/strings/strings.xml` - and changes **nothing else**: the nap keeps
 running, the alarm keeps ringing exactly as loudly as it had got (it is not
 paused and not quietened), the guard keeps guarding. Where nothing is lost,

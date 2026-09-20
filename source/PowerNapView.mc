@@ -69,11 +69,11 @@ class PowerNapView extends WatchUi.View {
     enum {
         BACK_HINT_NAP = 0,       // the nap screens and the peek over them
         BACK_HINT_ALARM = 1,     // a ringing alarm, either kind
-        BACK_HINT_SESSION = 2    // the Stay Awake guard and its peek
+        BACK_HINT_STAY_AWAKE = 2 // the Stay Awake guard and its peek
     }
     private var _backHintNap as Array<String>? = null;
     private var _backHintAlarm as Array<String>? = null;
-    private var _backHintSession as Array<String>? = null;
+    private var _backHintStayAwake as Array<String>? = null;
     private var _hintTexts as Array<String>? = null;
     private var _hintContext as Number = ConfirmPress.CONTEXT_NONE;
     private var _hintStartMs as Number = 0;          // when the popup was shown
@@ -1019,14 +1019,14 @@ class PowerNapView extends WatchUi.View {
             }
             return _backHintAlarm as Array<String>;
         }
-        if (kind == BACK_HINT_SESSION) {
-            if (_backHintSession == null) {
-                _backHintSession = [loadText(Rez.Strings.BackAgainSession),
-                    loadText(Rez.Strings.BackAgainSessionShort),
-                    loadText(Rez.Strings.BackAgainSessionTiny),
-                    loadText(Rez.Strings.BackAgainSessionTiniest)] as Array<String>;
+        if (kind == BACK_HINT_STAY_AWAKE) {
+            if (_backHintStayAwake == null) {
+                _backHintStayAwake = [loadText(Rez.Strings.BackAgainStayAwake),
+                    loadText(Rez.Strings.BackAgainStayAwakeShort),
+                    loadText(Rez.Strings.BackAgainStayAwakeTiny),
+                    loadText(Rez.Strings.BackAgainStayAwakeTiniest)] as Array<String>;
             }
-            return _backHintSession as Array<String>;
+            return _backHintStayAwake as Array<String>;
         }
         if (_backHintNap == null) {
             _backHintNap = [loadText(Rez.Strings.BackAgainNap),

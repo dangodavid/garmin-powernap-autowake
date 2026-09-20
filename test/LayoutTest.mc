@@ -967,7 +967,7 @@ function testLayout_stopHintBanner(logger as Test.Logger) as Boolean {
 //! The popup of the BACK pair fits every screen that can show it, on this
 //! device: the nap screens and the peek over them ("...to end nap"), both
 //! alarms ("...to stop alarm") and the Stay Awake guard and its peek
-//! ("...to end session"). These texts are longer than the exit hint, so the
+//! ("...to end Stay Awake"). These texts are longer than the exit hint, so the
 //! banner falls back to a shorter variant on a narrow screen - which is
 //! exactly what this checks, on whatever device it runs.
 (:test)
@@ -984,7 +984,7 @@ function testLayout_backHintBanner(logger as Test.Logger) as Boolean {
     d.testRunMinutes(3, 68, 10.0f);              // monitoring
     var nap = v.backHintTexts(PowerNapView.BACK_HINT_NAP);
     var alarm = v.backHintTexts(PowerNapView.BACK_HINT_ALARM);
-    var session = v.backHintTexts(PowerNapView.BACK_HINT_SESSION);
+    var stayAwake = v.backHintTexts(PowerNapView.BACK_HINT_STAY_AWAKE);
     ok = layoutHelperBanner("monitoring back", v, dc, ConfirmPress.CONTEXT_EXIT, nap, false, logger) && ok;
     d.testForceSleep();
     ok = layoutHelperBanner("sleeping back", v, dc, ConfirmPress.CONTEXT_EXIT, nap, false, logger) && ok;
@@ -1005,9 +1005,9 @@ function testLayout_backHintBanner(logger as Test.Logger) as Boolean {
     d.testStartStayAwake();
     v = layoutHelperView(d, a);
     d.testRunMinutes(3, 70, 200.0f);             // on guard, awake
-    ok = layoutHelperBanner("stay awake back", v, dc, ConfirmPress.CONTEXT_EXIT, session, false, logger) && ok;
+    ok = layoutHelperBanner("stay awake back", v, dc, ConfirmPress.CONTEXT_EXIT, stayAwake, false, logger) && ok;
     v.showPeek();
-    ok = layoutHelperBanner("stay awake peek back", v, dc, ConfirmPress.CONTEXT_EXIT, session, false, logger) && ok;
+    ok = layoutHelperBanner("stay awake peek back", v, dc, ConfirmPress.CONTEXT_EXIT, stayAwake, false, logger) && ok;
     d.testRunMinutes(5, 70, 10.0f);              // doze alarm
     ok = layoutHelperBanner("doze alarm back", v, dc, ConfirmPress.CONTEXT_EXIT, alarm, false, logger) && ok;
     a.stop();

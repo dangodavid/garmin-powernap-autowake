@@ -27,8 +27,12 @@
     <string id="StartHintButtonShort">START</string>
 
     <!-- What a second BACK does, shown as a popup after the first one. One
-         per thing that would be lost: the nap, the ringing alarm, the Stay
-         Awake session. Longest first, as above. -->
+         per thing that would be lost: the nap, the ringing alarm, Stay
+         Awake. Longest first, as above. Each one names the thing the way
+         the screen names it, so the last variant of the Stay Awake set
+         drops the name rather than invent a word for it: on the 176 px
+         Instinct nothing longer fits, and that screen says STAY AWAKE at
+         the top anyway. -->
     <string id="BackAgainNap">Press BACK again to end nap</string>
     <string id="BackAgainNapShort">BACK again to end nap</string>
     <string id="BackAgainNapTiny">BACK again: end</string>
@@ -37,8 +41,8 @@
     <string id="BackAgainAlarmShort">BACK again to stop alarm</string>
     <string id="BackAgainAlarmTiny">BACK again: stop</string>
     <string id="BackAgainAlarmTiniest">BACK x2: stop</string>
-    <string id="BackAgainSession">Press BACK again to end session</string>
-    <string id="BackAgainSessionShort">BACK again to end session</string>
-    <string id="BackAgainSessionTiny">BACK again: end</string>
-    <string id="BackAgainSessionTiniest">BACK x2: end</string>
+    <string id="BackAgainStayAwake">Press BACK again to end Stay Awake</string>
+    <string id="BackAgainStayAwakeShort">BACK again to end Stay Awake</string>
+    <string id="BackAgainStayAwakeTiny">BACK x2: end Stay Awake</string>
+    <string id="BackAgainStayAwakeTiniest">BACK x2: end</string>
 </strings>

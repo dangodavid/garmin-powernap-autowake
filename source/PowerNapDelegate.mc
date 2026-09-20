@@ -44,7 +44,7 @@ import Toybox.System;
 //!                                  "...again to end nap"
 //!   Stay Awake guard / peek        x2: end, start     x2: stop, summary  peek card
 //!                                  screen; 1st:
-//!                                  "...again to end session"
+//!                                  "...again to end Stay Awake"
 //!   Alarm (nap)                    x2: alarm off,     x2: alarm off,     nothing
 //!                                  start screen;      summary
 //!                                  1st: "...again to
@@ -325,7 +325,7 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
         if (state == SleepDetector.STATE_ALARM) {
             return PowerNapView.BACK_HINT_ALARM;
         }
-        return _detector.isStayAwake() ? PowerNapView.BACK_HINT_SESSION : PowerNapView.BACK_HINT_NAP;
+        return _detector.isStayAwake() ? PowerNapView.BACK_HINT_STAY_AWAKE : PowerNapView.BACK_HINT_NAP;
     }
 
     //! BACK on a session screen: one level back. The Stay Awake doze alarm

@@ -470,7 +470,7 @@ function testDelegate_startTwiceOnDozeAlarmResumesGuard(logger as Test.Logger) a
 
 //! BACK twice on the Stay Awake guard screen (here during the drowsiness
 //! warning) goes back to the start screen: the session ends, no summary, no
-//! exit. The first press only shows the "end session" popup - and, as any
+//! exit. The first press only shows the "end Stay Awake" popup - and, as any
 //! press in Stay Awake does, counts as proof of being awake.
 (:test)
 function testDelegate_backInStayAwakeGoesToStart(logger as Test.Logger) as Boolean {
@@ -482,8 +482,8 @@ function testDelegate_backInStayAwakeGoesToStart(logger as Test.Logger) as Boole
     r.key(WatchUi.KEY_ESC);
     var ok = warned;
     if (!r.detector.testIsRunning() || !r.view.isStarted() || !r.view.testIsHintShowing()
-        || !r.view.testHintIsFor(PowerNapView.BACK_HINT_SESSION)) {
-        logger.debug("the first BACK must keep the session and show the 'end session' popup, running "
+        || !r.view.testHintIsFor(PowerNapView.BACK_HINT_STAY_AWAKE)) {
+        logger.debug("the first BACK must keep the session and show the 'end Stay Awake' popup, running "
             + r.detector.testIsRunning() + " hint " + r.view.testIsHintShowing());
         ok = false;
     }
