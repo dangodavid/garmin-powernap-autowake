@@ -517,7 +517,7 @@ function testDelegate_startScreenTaps(logger as Test.Logger) as Boolean {
     }
     r.cleanup();
 
-    // A tap on the "TAP to begin" hint itself starts (it must not remove 5 min).
+    // A tap on the "TAP to start" hint itself starts (it must not remove 5 min).
     r = new DelegateRig(30);
     zones = r.view.testMeasureTapZones(layoutHelperDc());
     r.delegate.handleTap(zones[4] + 3);

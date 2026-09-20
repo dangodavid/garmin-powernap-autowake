@@ -87,6 +87,10 @@ class PowerNapView extends WatchUi.View {
     private var _peekStartMs as Number = 0;
     private const PEEK_MS = 5000;
 
+    // The start screen's footer hint, read from strings.xml on first use
+    // (it depends on the watch having a touchscreen, which never changes).
+    private var _startHint as Array<String>? = null;
+
     private var _forceBatteryPct as Number = -1;     // tests: >= 0 replaces the battery level
     private var _msOffset as Number = 0;             // tests: moves the millisecond clock
 
@@ -358,7 +362,7 @@ class PowerNapView extends WatchUi.View {
 
         buildLayout(dc).draw(dc, invert);
         if (showsClock() && hasSubscreen()) {
-            drawInLens(dc, clockString(), Graphics.COLOR_LT_GRAY, invert);
+            drawInLens(dc, clockString(), Palette.TEXT_SECONDARY, invert);
         }
     }
 
@@ -438,23 +442,23 @@ class PowerNapView extends WatchUi.View {
         // The big number shrinks one size only when a warning needs the room.
         var number = L.addText([_pendingDuration.toString()],
             [Graphics.FONT_NUMBER_MEDIUM, Graphics.FONT_NUMBER_MILD] as Array<Graphics.FontDefinition>,
-            Graphics.COLOR_WHITE, ScreenLayout.KEEP);
+            Palette.TEXT_PRIMARY, ScreenLayout.KEEP);
         number.gapAfter = 0;
         lines.add(number);
         // "min of sleep": the minutes count from falling asleep, not from now.
         lines.add(L.addText(stayAwake ? ["stay awake"] : ["min of sleep", "min"],
             [Graphics.FONT_SMALL, Graphics.FONT_TINY] as Array<Graphics.FontDefinition>,
-            stayAwake ? Graphics.COLOR_ORANGE : Graphics.COLOR_LT_GRAY, ScreenLayout.KEEP));
+            stayAwake ? Graphics.COLOR_ORANGE : Palette.TEXT_SECONDARY, ScreenLayout.KEEP));
         if (stayAwake) {
             L.addText(["Buzzes if you doze", "Buzz if you doze"],
-                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 90);
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Palette.TEXT_SECONDARY, 90);
         } else {
             // The same promise the nap screens show, from the same formula
             // (AlarmCap): a nap started in this minute keeps this time.
             // Recomputed on every draw, and the start screen redraws itself
             // at each minute change (startUiTimer).
-            L.addText(alarmByTexts(_detector.previewDeadlineSec(_pendingDuration)),
-                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_LT_GRAY, 90);
+            addAlarmByLine(L, _detector.previewDeadlineSec(_pendingDuration),
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, 90);
         }
         lines.add(L.addSpacer(arrowH + 1, ScreenLayout.KEEP));
         addWarnings(L, 97);
@@ -462,8 +466,7 @@ class PowerNapView extends WatchUi.View {
             L.addText([_debugLabel], [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
                 Graphics.COLOR_LT_GRAY, 10);
         }
-        L.setFooterTexts(hasTouch() ? ["TAP to begin", "TAP"] as Array<String> : ["START to begin", "START"] as Array<String>,
-            Graphics.COLOR_LT_GRAY);
+        L.setFooterTexts(startHintTexts(), Palette.TEXT_TERTIARY);
         return L;
     }
 
@@ -489,20 +492,22 @@ class PowerNapView extends WatchUi.View {
         // The time of day, as on the live screens: in the Instinct lens,
         // elsewhere in the margin above the block (see startClockBox).
         if (subscreenBox() != null) {
-            drawInLens(dc, clockString(), Graphics.COLOR_LT_GRAY, false);
+            drawInLens(dc, clockString(), Palette.TEXT_SECONDARY, false);
         } else {
             var box = startClockBox(dc, L, lines[0].y);
             if (box != null) {
                 var b = box as Array<Number>;
-                dc.setColor(Palette.fg(Graphics.COLOR_LT_GRAY, false), Graphics.COLOR_TRANSPARENT);
+                dc.setColor(Palette.fg(Palette.TEXT_SECONDARY, false), Graphics.COLOR_TRANSPARENT);
                 dc.drawText(b[0] + b[2] / 2, b[1], Graphics.FONT_XTINY, clockString(), Graphics.TEXT_JUSTIFY_CENTER);
             }
         }
 
         // Arrows: filled triangles centred in their spacer slots, drawn
-        // before the lines so the exit banner covers them.
+        // before the lines so the exit banner covers them. Same size and
+        // same centres as ever (the tap zones are measured off these
+        // slots), one step down in brightness so the duration leads.
         var cx = dc.getWidth() / 2;
-        dc.setColor(Palette.fg(Graphics.COLOR_GREEN, false), Graphics.COLOR_TRANSPARENT);
+        dc.setColor(Palette.fg(Palette.ACCENT_DIM, false), Graphics.COLOR_TRANSPARENT);
         var up = lines[0];
         var down = lines[3];
         var arrowH = up.slotH - 1;
@@ -567,10 +572,15 @@ class PowerNapView extends WatchUi.View {
         }
 
         // Before sleep: the guaranteed latest alarm time (the cap fixed at
-        // start, the very minute the start screen promised). After a
-        // wake episode: the fixed alarm time. Ranked above the stillness
-        // line: on the smallest screens the alarm promise must survive.
-        L.addText(alarmLineTexts(), fontsDetail(), Graphics.COLOR_LT_GRAY, 96);
+        // start, the very minute the start screen promised), in the two
+        // colours the start screen gave it. After a wake episode: the fixed
+        // alarm time. Ranked above the stillness line: on the smallest
+        // screens the alarm promise must survive.
+        if (_detector.getPlannedEndTime() != null) {
+            L.addText(alarmLineTexts(), fontsDetail(), Palette.TEXT_SECONDARY, 96);
+        } else {
+            addAlarmByLine(L, _detector.getDeadlineTime().value(), fontsDetail(), 96);
+        }
         if (!awake) {
             // Below the promise: on the smallest screens "Alarm by" wins;
             // the start screen already showed the warnings with room to spare.
@@ -953,6 +963,37 @@ class PowerNapView extends WatchUi.View {
         return ["Alarm by " + by, "By " + by] as Array<String>;
     }
 
+    //! The "Alarm by HH:MM" promise, added with the two colours it carries
+    //! everywhere it is shown: the words in secondary grey, the time itself
+    //! in primary white, so the time reads at a glance and the promise looks
+    //! the same on the start screen as during the nap.
+    private function addAlarmByLine(L as ScreenLayout, capSec as Number,
+                                    fonts as Array<Graphics.FontDefinition>,
+                                    priority as Number) as LayoutLine {
+        var line = L.addText(alarmByTexts(capSec), fonts, Palette.TEXT_SECONDARY, priority);
+        line.tailColor = Palette.TEXT_PRIMARY;
+        return line;
+    }
+
+    //! The start screen's footer: what starts a nap on this watch. Loaded
+    //! once from strings.xml (the wording lives in the resources, not here)
+    //! and listed longest first, so the layout can fall back to the short
+    //! variant on a narrow screen.
+    private function startHintTexts() as Array<String> {
+        if (_startHint == null) {
+            _startHint = hasTouch()
+                ? [loadText(Rez.Strings.StartHintTouch), loadText(Rez.Strings.StartHintTouchShort)]
+                    as Array<String>
+                : [loadText(Rez.Strings.StartHintButton), loadText(Rez.Strings.StartHintButtonShort)]
+                    as Array<String>;
+        }
+        return _startHint as Array<String>;
+    }
+
+    private function loadText(id as Lang.ResourceId) as String {
+        return WatchUi.loadResource(id) as String;
+    }
+
     //! The minute the planned alarm rings in ("--:--" before onset).
     private function alarmAtString() as String {
         var planned = _detector.getPlannedEndTime();
@@ -964,7 +1005,7 @@ class PowerNapView extends WatchUi.View {
     private function addClock(L as ScreenLayout) as Void {
         if (!hasSubscreen()) {
             L.addText([clockString()], [Graphics.FONT_TINY, Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
-                Graphics.COLOR_LT_GRAY, 92);
+                Palette.TEXT_SECONDARY, 92);
         }
     }
 

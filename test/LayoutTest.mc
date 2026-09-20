@@ -5,6 +5,7 @@ import Toybox.Math;
 import Toybox.System;
 import Toybox.Application;
 import Toybox.Time;
+import Toybox.WatchUi;
 
 // -----------------------------------------------------------------------------
 // Screen layout tests.
@@ -329,17 +330,21 @@ function testLayout_startScreenTapZones(logger as Test.Logger) as Boolean {
         logger.debug("tap zone mapping wrong around " + plusMax + ".." + minusMin);
         ok = false;
     }
-    // The hint at the bottom ("TAP to begin") starts; just above it removes.
+    // The hint at the bottom ("TAP to start") starts; just above it removes.
     var hintY = zones[4];
     if (hintY <= minusMin + 1 || v.tapActionAt(hintY) != 0 || v.tapActionAt(hintY + 5) != 0
         || v.tapActionAt(hintY - 1) != -1) {
         logger.debug("hint zone wrong: hint at " + hintY + ", label ends at " + minusMin);
         ok = false;
     }
-    // Touch watches say TAP, the others (FR255, Instinct 3) say START.
+    // Touch watches say TAP, the others (FR255, Instinct 3) say START -
+    // and the full wording fits every screen in the matrix. Read from the
+    // resources rather than repeated here: the wording lives in strings.xml,
+    // and a test that copies it only has to be edited when it improves.
     var touch = System.getDeviceSettings().isTouchScreen;
     var footer = v.testBuildLayout(dc).getFooterText();
-    var expected = touch ? "TAP to begin" : "START to begin";
+    var expected = WatchUi.loadResource(
+        touch ? Rez.Strings.StartHintTouch : Rez.Strings.StartHintButton) as String;
     if (footer == null || !(footer as String).equals(expected)) {
         logger.debug("hint '" + footer + "', expected '" + expected + "' (touch " + touch + ")");
         logger.debug(v.testBuildLayout(dc).testDescribe());
@@ -784,6 +789,52 @@ function testLayout_promiseValues(logger as Test.Logger) as Boolean {
     var after = s.testFormatMoment(new Time.Moment(sd.previewDeadlineSec(30)));
     if (!layout.showsFragment(before) && !layout.showsFragment(after)) {
         logger.debug("start preview must show the cap of 15 + 30 min: " + before);
+        ok = false;
+    }
+    return ok;
+}
+
+//! A line drawn in two colours (the "Alarm by HH:MM" promise: the words
+//! quiet, the time itself bright) is still one text. It is measured, fitted
+//! and centred as a whole, and the two parts it is drawn in put it back
+//! together exactly - for whichever wording variant the screen ended up
+//! with, because the split is the last inner space and not a second copy of
+//! the wording.
+(:test)
+function testLayout_promiseSplitsAtItsTime(logger as Test.Logger) as Boolean {
+    var ok = true;
+    var texts = ["Alarm by 14:35", "By 9:05", "Monitoring", " 9:05", ""] as Array<String>;
+    var cuts  = [9, 3, 0, 0, 0] as Array<Number>;
+    for (var i = 0; i < texts.size(); i++) {
+        var cut = ScreenLayout.tailStart(texts[i]);
+        if (cut != cuts[i]) {
+            logger.debug("'" + texts[i] + "' splits at " + cut + ", expected " + cuts[i]);
+            ok = false;
+        }
+    }
+
+    var dc = layoutHelperDc();
+    var s = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    s.testSetPendingDuration(30);
+    var line = s.testBuildLayout(dc).testTwoToneLine();
+    if (line == null) {
+        logger.debug("the start screen's promise must carry its own colour for the time");
+        return false;
+    }
+    var l = line as LayoutLine;
+    var cut = ScreenLayout.tailStart(l.drawText);
+    if (cut <= 0) {
+        logger.debug("'" + l.drawText + "' has no time to split off");
+        return false;
+    }
+    var label = l.drawText.substring(0, cut - 1) as String;
+    var value = l.drawText.substring(cut, l.drawText.length()) as String;
+    if (!(label + " " + value).equals(l.drawText)) {
+        logger.debug("'" + label + "' + '" + value + "' is not '" + l.drawText + "'");
+        ok = false;
+    }
+    if (value.find(":") == null) {
+        logger.debug("the part in its own colour must be the time, got '" + value + "'");
         ok = false;
     }
     return ok;
