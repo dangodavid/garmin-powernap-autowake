@@ -62,6 +62,18 @@ class PowerNapView extends WatchUi.View {
     // check it.
     static const HINT_EXIT = ["Press BACK again to exit", "BACK again to exit", "BACK again: exit"] as Array<String>;
     static const HINT_STOP = ["Press START again to stop", "START again to stop", "START again: stop"] as Array<String>;
+    // The same popup for the BACK pair on a session screen, one text per
+    // thing that press would end. These live in strings.xml (the wording a
+    // wearer reads belongs in the resources) and are loaded once, on the
+    // first BACK of a session.
+    enum {
+        BACK_HINT_NAP = 0,       // the nap screens and the peek over them
+        BACK_HINT_ALARM = 1,     // a ringing alarm, either kind
+        BACK_HINT_SESSION = 2    // the Stay Awake guard and its peek
+    }
+    private var _backHintNap as Array<String>? = null;
+    private var _backHintAlarm as Array<String>? = null;
+    private var _backHintSession as Array<String>? = null;
     private var _hintTexts as Array<String>? = null;
     private var _hintContext as Number = ConfirmPress.CONTEXT_NONE;
     private var _hintStartMs as Number = 0;          // when the popup was shown
@@ -930,15 +942,15 @@ class PowerNapView extends WatchUi.View {
                 : (["START again: stop + stats", "START again: stop", "Again: stop"] as Array<String>),
                 Graphics.COLOR_RED);
         } else if (alarm) {
-            // One BACK stops the ringing (a nap goes back to the start
-            // screen, the doze alarm back on guard); START x2 stops it too
-            // and shows a nap's stats. Kept short: a longer hint climbs over
+            // Either pair stops the ringing: BACK x2 (a nap goes back to the
+            // start screen, the doze alarm back on guard) or START x2, which
+            // also shows a nap's stats. Kept short: a longer hint climbs over
             // "ALARM x/4" on the 260 px round screens.
-            L.setFooterTexts(["BACK or START x2: stop", "BACK to stop"] as Array<String>, color);
+            L.setFooterTexts(["BACK x2 or START x2: stop", "BACK x2: stop"] as Array<String>, color);
         } else {
-            // On the smallest screens only "BACK to end" fits; there the
+            // On the smallest screens only "BACK x2: end" fits; there the
             // first START press teaches its pair (the peek card's footer).
-            L.setFooterTexts(["BACK: end, START x2: stats", "BACK end, START x2 stats", "BACK to end"]
+            L.setFooterTexts(["BACK x2: end, START x2: stats", "BACK x2 end, START x2 stats", "BACK x2: end"]
                 as Array<String>, color);
         }
     }
@@ -992,6 +1004,37 @@ class PowerNapView extends WatchUi.View {
         } else {
             addAlarmByLine(L, _detector.getDeadlineTime().value(), fonts, priority);
         }
+    }
+
+    //! What a second BACK does on this screen, longest variant first (the
+    //! banner falls back to a shorter one on a narrow screen). Loaded from
+    //! strings.xml on first use and kept, like the start hint.
+    function backHintTexts(kind as Number) as Array<String> {
+        if (kind == BACK_HINT_ALARM) {
+            if (_backHintAlarm == null) {
+                _backHintAlarm = [loadText(Rez.Strings.BackAgainAlarm),
+                    loadText(Rez.Strings.BackAgainAlarmShort),
+                    loadText(Rez.Strings.BackAgainAlarmTiny),
+                    loadText(Rez.Strings.BackAgainAlarmTiniest)] as Array<String>;
+            }
+            return _backHintAlarm as Array<String>;
+        }
+        if (kind == BACK_HINT_SESSION) {
+            if (_backHintSession == null) {
+                _backHintSession = [loadText(Rez.Strings.BackAgainSession),
+                    loadText(Rez.Strings.BackAgainSessionShort),
+                    loadText(Rez.Strings.BackAgainSessionTiny),
+                    loadText(Rez.Strings.BackAgainSessionTiniest)] as Array<String>;
+            }
+            return _backHintSession as Array<String>;
+        }
+        if (_backHintNap == null) {
+            _backHintNap = [loadText(Rez.Strings.BackAgainNap),
+                loadText(Rez.Strings.BackAgainNapShort),
+                loadText(Rez.Strings.BackAgainNapTiny),
+                    loadText(Rez.Strings.BackAgainNapTiniest)] as Array<String>;
+        }
+        return _backHintNap as Array<String>;
     }
 
     //! The start screen's footer: what starts a nap on this watch. Loaded
@@ -1485,6 +1528,17 @@ class PowerNapView extends WatchUi.View {
     (:debug)
     function testExpireInputLock() as Void {
         _locked = false;
+    }
+
+    //! Whether the popup showing is the BACK hint of `kind` (BACK_HINT_*).
+    //! Compared against the resource, so a reworded string does not have to
+    //! be repeated in a test.
+    (:debug)
+    function testHintIsFor(kind as Number) as Boolean {
+        if (_hintTexts == null) {
+            return false;
+        }
+        return (_hintTexts as Array<String>)[0].equals(backHintTexts(kind)[0]);
     }
 
     (:debug)

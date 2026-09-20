@@ -42,21 +42,53 @@ from `main` at any moment without first repairing it.
 
 ## The BACK contract
 
-The owner's rule, and not a session's to change: on every screen below the
-start screen one BACK goes back one level and never leaves the app, so
-pressing it again walks to the start screen; only the start screen exits, on a
-second BACK within 4 s, after the popup "Press BACK again to exit". A right
-swipe outside a session is that same BACK.
+The owner's rule, and not a session's to change.
+
+**Going back.** BACK goes back one level and never leaves the app below the
+start screen, so pressing it again walks to the start screen. Only the start
+screen exits, on a second BACK within 4 s, after the popup "Press BACK again
+to exit".
+
+**Where something would be lost, BACK asks first.** On the nap screens and
+the peek over them, on both alarms, and on the Stay Awake guard and its peek,
+BACK takes two presses inside that same 4 s window. The first press shows a
+popup naming what the second one would end - "Press BACK again to end nap",
+"...to stop alarm", "...to end session", from
+`resources/strings/strings.xml` - and changes **nothing else**: the nap keeps
+running, the alarm keeps ringing exactly as loudly as it had got (it is not
+paused and not quietened), the guard keeps guarding. Where nothing is lost,
+one press is enough: the first two minutes (calibrating), the summary, the
+menu and the "Test alarm" preview.
+
+**Swipes.** A right swipe is that same BACK outside a session: the start
+screen, the summary, the preview. During a nap and during its alarm every
+swipe is consumed and does nothing at all, not even arm the pair - there only
+the buttons act. That is the single exception to "a right swipe is BACK", and
+it is deliberate: a sleeve must not be able to end a nap, and a hand reaching
+for a ringing watch must not silence it by brushing the glass.
+
+One gesture cannot be refused: on some touch watches the system BACK gesture
+(a swipe from the left edge) reaches the app as `KEY_ESC`, not as a swipe, so
+it is indistinguishable from the button and goes through the pair exactly like
+one. That is now the protection: before, a single edge swipe ended a nap.
 
 Guarded by `testDelegate_backNeverLeavesBelowTheStartScreen` and
 `testDelegate_backReachesTheStartScreenFromEveryScreen`, which walk every
-screen in `BACK_SCREENS` (add a new screen there), plus
+screen in `BACK_SCREENS` (add a new screen there, with its entry in
+`BACK_HINTS` and `BACK_STEPS`), plus
 `testDelegate_backWalksBackToStartThenExits`,
-`testDelegate_startScreenBackTwiceExits` and
-`testDelegate_swipeRightIsBackOutsideTheNap`. The rule has already been broken
-twice - once by BACK leaving the app from a nap screen, once by asking for
-BACK twice at every level - so these tests are the reason it cannot happen a
-third time quietly.
+`testDelegate_startScreenBackTwiceExits`,
+`testDelegate_swipeRightIsBackOutsideTheNap` and, for the popups themselves,
+`testLayout_backHintBanner`. The rule has already been broken three times -
+once by BACK leaving the app from a nap screen, once by asking for BACK twice
+at every level including where nothing was at stake, and once by ending a nap
+on a single unguarded press - so these tests are the reason it cannot happen a
+fourth time quietly.
+
+Check them by mutation, not by reading: make the nap, or the alarm, or both
+give way to a single BACK, or let a swipe act during a nap, and the suite must
+name the screen. On 2026-09-20 those four mutations failed 6, 8, 9 and 1 test
+respectively.
 
 ## Building
 
@@ -255,6 +287,23 @@ Build the package from `main`, at the commit you are publishing. An `.iq` left
 over from an earlier attempt is not republished: it was built from whatever the
 tree held that day, which is not what `main` holds now.
 
+Any other build that is going to reach a wrist - a sideload to try something
+out - is a `.prg`, and carries its commit in its file name, so that a week
+later it still says what it is:
+
+```bash
+monkeyc -o "bin/PowerNap-1.1.0-$(git rev-parse --short HEAD)-fenix8pro47mm.prg" \
+  -f monkey.jungle -d fenix8pro47mm -y ~/developer_key.der -r -l 3
+```
+
+Not an `.iq`: `monkeyc -e` ignores `-d` and packs every device in the
+manifest, so an `.iq` named after one watch is a store package wearing the
+wrong name.
+
+The one time this was not done, an `.iq` built 108 minutes before the commit
+that fixed the BACK key was sideloaded and tested as if it were `main`, and
+the bug report that came back described a behaviour no commit had.
+
 ### New tests are for logic
 
 A new test earns its place when it pins behaviour that can be wrong in a way no
@@ -318,9 +367,9 @@ can be carrying more assertions than a file with thirty functions.
 | `AlarmManagerTest.mc` | The escalation ramp: the owner's constraints (at least 8 steps below full, a gentle first step, intensity and pulse never decreasing, the wait never growing, full strength reached in 100-130 s), the exact ring schedule, the persistent phase, the tone melodies, the nudge, the backlight rule and the "Test alarm" preview. Tuning the table is safe only because these tests fail when a change leaves the approved envelope. |
 | `SummaryTest.mc` | Finish and cancel from every state, the statistics (planned completion, sleep efficiency, actual sleep, wake episodes, average and minimum sleep HR), that they freeze once the nap has ended, and `RingMath`'s angle maths for the progress ring. |
 | `RegressionTest.mc` | One test per confirmed review finding: HR-plateau wake ping-pong, the sleep-HR fold exclusion, frozen settings and clamping, the app lifecycle (`onInactive`/`onActive`), the alarm channel fallback, the per-phase vibration patterns, `ringNow()`, and the two-press guard. These exist so that a fixed bug cannot come back quietly. |
-| `LayoutTest.mc` | Every screen state - start, calibrating, monitoring, sleeping, alarm, summary, Stay Awake, peek card, alarm preview - laid out against a `Dc` of the running device. It asserts that no text is truncated, that nothing leaves the screen or the round chord, and that the layout stays inside its work budget, because every screen redraws at 1 Hz and the Instinct watchdog is 240k bytecodes per event. |
+| `LayoutTest.mc` | Every screen state - start, calibrating, monitoring, sleeping, alarm, summary, Stay Awake, peek card, alarm preview - laid out against a `Dc` of the running device, each also with the popup it can show over it. It asserts that no text is truncated, that nothing leaves the screen or the round chord, and that the layout stays inside its work budget, because every screen redraws at 1 Hz and the Instinct watchdog is 240k bytecodes per event. Its inputs are its own: it forces the battery level and pins the clock, so a screen never passes or fails on what the simulator happened to be that day. |
 | `StayAwakeTest.mc` | Stay Awake mode: no deadline and no timed alarm at all, the doze rules measured against the rolling HR reference rather than the calibration baseline, the single nudge at 3 still minutes, `noteUserAwake()` ending the still run, and the return to the guard after a doze alarm. |
-| `DelegateTest.mc` | The real delegate, view and detector wired together and driven through `handleKey()`/`handleTap()` - the code paths `onKey` and `onTap` run. It owns the key model: BACK walks back one level at a time and only the start screen's BACK x2 exits, START x2 stops, the 1.5 s input lock never traps a burst of presses, and a first START made on one screen never pairs with a second made on another. Two of its tests walk [the BACK contract](#the-back-contract) over **every** screen in `BACK_SCREENS` rather than one path at a time, so a screen added later cannot quietly get a BACK of its own. |
+| `DelegateTest.mc` | The real delegate, view and detector wired together and driven through `handleKey()`/`handleTap()` - the code paths `onKey` and `onTap` run. It owns the key model: BACK walks back one level at a time, taking a pair wherever that step would end a nap, an alarm or a Stay Awake session and one press where nothing is lost; only the start screen's BACK x2 exits; START x2 stops; the 1.5 s input lock never traps a burst of presses; and a first press made on one screen never pairs with a second made on another, nor a START with a BACK. Two of its tests walk [the BACK contract](#the-back-contract) over **every** screen in `BACK_SCREENS` rather than one path at a time, so a screen added later cannot quietly get a BACK of its own. |
 | `QuietOnsetTest.mc` | The QUIET ONSET RULE, with the real `AlarmManager`: nothing vibrates, sounds or lights up at onset, at a wake, at re-entry, at the end of calibration, on a sensor dropout or on resume. Every second of every scenario asserts that the manager's blocked-delivery counter is still zero. The rule is non-negotiable, so it is guarded structurally rather than by review. |
 | `MotionTest.mc` | `MotionMath.batchMotion` on raw 25-sample accelerometer batches and the path that turns one batch into one motion second: null axes skipped, ragged arrays, too few usable samples, and above all that a constant sensor offset changes nothing. The old measure read a watch with a +40 mg offset as permanently moving, so a still sleeper was never still on the High setting. |
 | `InvariantTest.mc` | Seeded random naps from a small Markov model (awake -> drowsy -> asleep, with wakes, stirs, HR dropouts and minutes with no accelerometer data), checked after every simulated second against the rules that must hold whatever the sensors say - above all that the alarm always fires and never after the deadline. Plus negative tests. A failure prints its seed, so the case replays exactly. |

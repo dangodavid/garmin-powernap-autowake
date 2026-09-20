@@ -25,4 +25,20 @@
     <string id="StartHintTouchShort">TAP</string>
     <string id="StartHintButton">START to begin</string>
     <string id="StartHintButtonShort">START</string>
+
+    <!-- What a second BACK does, shown as a popup after the first one. One
+         per thing that would be lost: the nap, the ringing alarm, the Stay
+         Awake session. Longest first, as above. -->
+    <string id="BackAgainNap">Press BACK again to end nap</string>
+    <string id="BackAgainNapShort">BACK again to end nap</string>
+    <string id="BackAgainNapTiny">BACK again: end</string>
+    <string id="BackAgainNapTiniest">BACK x2: end</string>
+    <string id="BackAgainAlarm">Press BACK again to stop alarm</string>
+    <string id="BackAgainAlarmShort">BACK again to stop alarm</string>
+    <string id="BackAgainAlarmTiny">BACK again: stop</string>
+    <string id="BackAgainAlarmTiniest">BACK x2: stop</string>
+    <string id="BackAgainSession">Press BACK again to end session</string>
+    <string id="BackAgainSessionShort">BACK again to end session</string>
+    <string id="BackAgainSessionTiny">BACK again: end</string>
+    <string id="BackAgainSessionTiniest">BACK x2: end</string>
 </strings>
