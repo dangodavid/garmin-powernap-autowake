@@ -91,6 +91,11 @@ class PowerNapView extends WatchUi.View {
     // (it depends on the watch having a touchscreen, which never changes).
     private var _startHint as Array<String>? = null;
 
+    // The widest "HH:MM" this watch can draw, measured once per 12/24 h
+    // format: what the start screen's clock is shown or hidden on.
+    private var _clockWidth as Number = -1;
+    private var _clockWidth24 as Boolean = false;
+
     private var _forceBatteryPct as Number = -1;     // tests: >= 0 replaces the battery level
     private var _msOffset as Number = 0;             // tests: moves the millisecond clock
 
@@ -1024,10 +1029,13 @@ class PowerNapView extends WatchUi.View {
     }
 
     //! Where the start screen's clock goes (owner request: "Alarm by HH:MM"
-    //! reads against it): [x, y, w, h] of the text at FONT_XTINY, centred
-    //! in the room above the first line of the block (`firstY`), or null
-    //! when that room is too small or the text does not fit the visible
-    //! width at those rows (the narrow top of a round screen). Not a line
+    //! reads against it): [x, y, w, h] at FONT_XTINY, centred in the room
+    //! above the first line of the block (`firstY`), or null when that room
+    //! is too small or the WIDEST time of day this watch can show does not
+    //! fit the visible width at those rows (the narrow top of a round
+    //! screen). Sized and decided on that widest time, never on the current
+    //! one, so the clock cannot appear at 9:59 and vanish at 10:00; the
+    //! time is drawn centred in the box, so it sits where it always did. Not a line
     //! of the block on purpose: on the 454 px fenix 8 the band's slack is
     //! 26 px and a clock line would need 47, so the engine dropped it (or
     //! would have shrunk the number). The round-screen analogue of the
@@ -1043,7 +1051,10 @@ class PowerNapView extends WatchUi.View {
             return null;
         }
         var y = (room - fh) / 2;
-        var tw = dc.getTextWidthInPixels(clockString(), font);
+        // The widest time of day, not the current one: the clock must not
+        // come and go with the hour. The box is centred on the same point
+        // either way, so the time itself is drawn exactly where it was.
+        var tw = widestClockWidth(dc, font);
         var b = L.visibleInkBounds(y, fh);
         if (tw > b[1] - b[0]) {
             return null;
@@ -1323,13 +1334,53 @@ class PowerNapView extends WatchUi.View {
     //! HH:MM, or h:mm when the watch is set to the 12-hour clock.
     private function formatMoment(moment as Time.Moment) as String {
         var info = Gregorian.info(moment, Time.FORMAT_SHORT);
-        var hour = info.hour as Number;
-        var min = formatTwoDigits(info.min as Number);
+        return formatHourMin(info.hour as Number, info.min as Number);
+    }
+
+    //! A time of day in the watch's own format (12 h: "h:mm", no am/pm).
+    //! Takes the hour and minute rather than a Moment, so the start screen
+    //! can also ask how wide the widest time of day would be.
+    private function formatHourMin(hour as Number, min as Number) as String {
+        var mm = formatTwoDigits(min);
         if (is24Hour()) {
-            return formatTwoDigits(hour) + ":" + min;
+            return formatTwoDigits(hour) + ":" + mm;
         }
-        hour = hour % 12;
-        return ((hour == 0) ? 12 : hour).toString() + ":" + min;
+        var h = hour % 12;
+        return ((h == 0) ? 12 : h).toString() + ":" + mm;
+    }
+
+    //! How wide the WIDEST time of day this watch can show is, in `font`.
+    //! The start screen decides whether the clock fits on this, never on the
+    //! time it happens to be: deciding on the current time would show the
+    //! clock at 9:59 and take it away at 10:00, in front of someone who is
+    //! looking at the screen. Widths add up, so the widest "HH:MM" is the
+    //! widest hour beside the widest minute; measured once per 12/24 h
+    //! format and kept (the Instinct never gets here - its clock is in the
+    //! lens).
+    private function widestClockWidth(dc as Graphics.Dc, font as Graphics.FontDefinition) as Number {
+        var is24 = is24Hour();
+        if (_clockWidth >= 0 && _clockWidth24 == is24) {
+            return _clockWidth;
+        }
+        var minute = 0;
+        var widest = -1;
+        for (var m = 0; m < 60; m++) {
+            var w = dc.getTextWidthInPixels(formatTwoDigits(m), font);
+            if (w > widest) {
+                widest = w;
+                minute = m;
+            }
+        }
+        widest = -1;
+        for (var h = 0; h < 24; h++) {
+            var w = dc.getTextWidthInPixels(formatHourMin(h, minute), font);
+            if (w > widest) {
+                widest = w;
+            }
+        }
+        _clockWidth = widest;
+        _clockWidth24 = is24;
+        return widest;
     }
 
     private function is24Hour() as Boolean {

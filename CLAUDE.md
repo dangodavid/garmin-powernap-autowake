@@ -561,18 +561,26 @@ it), but NOT as a line of the block: on the 454 px fenix 8 the band's slack
 is 26 px and a clock line needs 47, so the engine dropped it (a priority
 above IMPORTANT would have shrunk the number instead). `drawStartScreen`
 draws it at FONT_XTINY in the margin above the block (`startClockBox`:
-centred in the room above the first line, only if the text fits the chord
-there, `ScreenLayout.visibleInkBounds`), the round-screen analogue of the
-Instinct lens, which shows the clock instead of "NAP" on the start screen
-now (`testLayout_clockOnStartScreen`: box present on every non-lens device,
-and with the low-battery warning from 260 px, on screen, clear of the first
-line, inside the chord; the promise stays and the number keeps its size).
-Below 260 px the warning takes the clock's room, which is the right way
-round: a watch that dies mid-nap never rings at all. That test reads
-neither the battery nor the wall clock from the simulator - it forces the
-battery and pins the widest time of day the device can draw, because
-"12:30" is a glyph wider than "3:32" and at 240 px that glyph is the whole
-difference between a clock and no clock. The wording "Latest
+centred in the room above the first line, only if the WIDEST time of day
+this watch can show fits the chord there, `ScreenLayout.visibleInkBounds`),
+the round-screen analogue of the Instinct lens, which shows the clock
+instead of "NAP" on the start screen now. **The decision is taken on the
+widest time, never on the current one** (`widestClockWidth`: the widest
+minute beside the widest hour in the watch's own 12/24 h format, measured
+once per format and kept): "12:30" is a glyph wider than "3:32", and on a
+240 px screen with the low-battery warning that glyph is the whole
+difference, so deciding per draw would show the clock at 9:59 and take it
+away at 10:00 while someone was looking at it. The box is centred on the
+same point either way, so the time is drawn exactly where it was.
+`testLayout_clockOnStartScreen`: the box is the SAME box at the narrowest
+and at the widest time of day (or absent at both), on every duration and
+both battery states; it is present on every non-lens device, and with the
+low-battery warning from 260 px, on screen, clear of the first line, inside
+the chord; the promise stays and the number keeps its size. Below 260 px
+the warning takes the clock's room - stably, now - which is the right way
+round: a watch that dies mid-nap never rings at all. The test reads neither
+the battery nor the wall clock from the simulator: it forces one and pins
+the other. The wording "Latest
 alarm" was replaced by "Alarm by" (the owner: "latest" reads as "most
 recent", and the 26-minute gap to a 10-minute nap looked wrong without the
 clock); the short variant stays "By HH:MM".
