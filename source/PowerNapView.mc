@@ -55,11 +55,11 @@ class PowerNapView extends WatchUi.View {
     private const CONFIRM_WINDOW_MS = 4000;
 
     // Popup hint after the first press of a pair (BACK on the start screen,
-    // START on the alarm), drawn as a banner over the screen (on the alarm
-    // also repeated by the footer in red) while that press is armed. It
-    // says what the second press does. WatchUi.showToast is not used: its
-    // look and timing differ per device and the layout tests could not
-    // check it.
+    // START on the alarm), drawn as a sheet over the bottom of the screen
+    // (on the alarm also repeated by the footer in red) while that press is
+    // armed. It says what the second press does. WatchUi.showToast is not
+    // used: its look and timing differ per device and the layout tests could
+    // not check it.
     static const HINT_EXIT = ["Press BACK again to exit", "BACK again to exit", "BACK again: exit"] as Array<String>;
     static const HINT_STOP = ["Press START again to stop", "START again to stop", "START again: stop"] as Array<String>;
     // The same popup for the BACK pair on a session screen, one text per
@@ -75,6 +75,8 @@ class PowerNapView extends WatchUi.View {
     private var _backHintAlarm as Array<String>? = null;
     private var _backHintStayAwake as Array<String>? = null;
     private var _hintTexts as Array<String>? = null;
+    // The font of every popup, the exit popup's (popupFont), measured once.
+    private var _popupFont as Graphics.FontDefinition? = null;
     private var _hintContext as Number = ConfirmPress.CONTEXT_NONE;
     private var _hintStartMs as Number = 0;          // when the popup was shown
     private var _lastPressContext as Number = ConfirmPress.CONTEXT_NONE;
@@ -426,16 +428,23 @@ class PowerNapView extends WatchUi.View {
             layout = _detector.hasSleptAtLeastOnce() ? summaryLayout(dc) : noSleepLayout(dc);
         }
         if (isHintShowing() && state != SleepDetector.STATE_SUMMARY) {
-            layout.setBanner(_hintTexts as Array<String>, bannerFonts());
+            layout.setBanner(_hintTexts as Array<String>, popupFont(layout, dc));
         }
         layout.solve(dc);
         return layout;
     }
 
-    //! Fonts the popup banner may use, largest first.
-    private function bannerFonts() as Array<Graphics.FontDefinition> {
-        return [Graphics.FONT_MEDIUM, Graphics.FONT_SMALL, Graphics.FONT_TINY, Graphics.FONT_XTINY]
-            as Array<Graphics.FontDefinition>;
+    //! The font of every popup on this watch: the exit popup's, the largest
+    //! of these at which "Press BACK again to exit" fits across the middle of
+    //! the display (ScreenLayout.popupFont). Measured once: the display does
+    //! not change.
+    private function popupFont(L as ScreenLayout, dc as Graphics.Dc) as Graphics.FontDefinition {
+        if (_popupFont == null) {
+            _popupFont = L.popupFont(dc, HINT_EXIT[0],
+                [Graphics.FONT_MEDIUM, Graphics.FONT_SMALL, Graphics.FONT_TINY, Graphics.FONT_XTINY]
+                    as Array<Graphics.FontDefinition>);
+        }
+        return _popupFont as Graphics.FontDefinition;
     }
 
     // -- Screen 0: Start / Duration Picker -----------------------------
@@ -537,7 +546,7 @@ class PowerNapView extends WatchUi.View {
         var L = startLayout(dc, lines, titleStep);
         if (isHintShowing()) {
             // "Press BACK again to exit" over the start screen.
-            L.setBanner(_hintTexts as Array<String>, bannerFonts());
+            L.setBanner(_hintTexts as Array<String>, popupFont(L, dc));
         }
         L.solve(dc);
         return L;

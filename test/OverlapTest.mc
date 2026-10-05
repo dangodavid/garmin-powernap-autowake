@@ -32,9 +32,24 @@ import Toybox.WatchUi;
 // fits text with.
 //
 // The popup ("Press BACK again to ...", "Press START again to stop") is a
-// layer over the screen. It covers what is under it by design, so it is
-// checked as a layer of its own: its box inside the display and clear of
-// the lens, its text inside its box.
+// layer over the screen: a sheet from the top edge of one of the screen's
+// rows down past the bottom of the display, whose outline cuts its corners.
+// It covers what is under it by design, so it is checked as a layer of its
+// own - its text inside the sheet and inside the display, its two lines
+// clear of each other - and by the rules it is placed by, on every screen
+// that shows one:
+//   * it covers whole rows only: its top edge is the top edge of a row,
+//     every row lies entirely above that edge or entirely under the sheet,
+//     the sheet runs across the whole width down to the bottom edge, and it
+//     starts no higher than its text needs (one row lower, it would not
+//     fit; on one line where one line fits);
+//   * its font is the exit popup's on every screen: the largest at which
+//     "Press BACK again to exit" fits across the middle of the display;
+//   * its text is the longest variant that fits, on one line or on two
+//     broken at a space: the next longer one fits under no row of the
+//     screen in that font, not even on two lines.
+// "Fits" is the layout's own measure: each line inside the visible width
+// at its ink rows, 6 px clear of the edge and of the Instinct's lens.
 //
 // The start screen's menu ("Test alarm") is a Menu2, drawn by the watch's
 // firmware and not by the app: there is no box of it to check here.
@@ -75,10 +90,10 @@ function testOverlap_startScreen(logger as Test.Logger) as Boolean {
         for (var i = 0; i < durations.size(); i++) {
             v.testSetPendingDuration(durations[i]);
             var name = "start " + durations[i] + " min" + build;
-            ok = overlapHelperStart(name, v, d, dc, times, false, logger) && ok;
+            ok = overlapHelperStart(name, v, d, dc, times, null, logger) && ok;
             v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
             v.showHint(PowerNapView.HINT_EXIT);
-            ok = overlapHelperStart(name + " + exit popup", v, d, dc, times, true, logger) && ok;
+            ok = overlapHelperStart(name + " + exit popup", v, d, dc, times, PowerNapView.HINT_EXIT, logger) && ok;
             v.testAdvanceMs(4100);
         }
     }
@@ -289,7 +304,7 @@ function testOverlap_previewScreen(logger as Test.Logger) as Boolean {
     a.startPreview();
     var steps = a.getPreviewSteps();
     for (var s = 1; s <= steps; s++) {
-        ok = overlapHelperCheck("preview step " + s, v, dc, times, false, logger) && ok;
+        ok = overlapHelperCheck("preview step " + s, v, dc, times, null, logger) && ok;
         a.testPreviewTick();
     }
     a.stop();
@@ -340,32 +355,33 @@ function overlapHelperWholeNap() as SleepDetector {
 function overlapHelperScreen(name as String, d as SleepDetector, dc as Graphics.Dc, times as Array<Number>,
                              backHint as Number, peek as Boolean, logger as Test.Logger) as Boolean {
     var v = layoutHelperView(d, new AlarmManager());
-    var ok = overlapHelperCheck(name, v, dc, times, false, logger);
+    var ok = overlapHelperCheck(name, v, dc, times, null, logger);
     if (backHint >= 0) {
         v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
         v.showHint(v.backHintTexts(backHint));
-        ok = overlapHelperCheck(name + " + BACK popup", v, dc, times, true, logger) && ok;
+        ok = overlapHelperCheck(name + " + BACK popup", v, dc, times, v.backHintTexts(backHint), logger) && ok;
         v.testAdvanceMs(4100);
     }
     if (d.isActiveState()) {
         v.pressConfirm(ConfirmPress.CONTEXT_STOP);
-        ok = overlapHelperCheck(name + " + START armed", v, dc, times, false, logger) && ok;
+        ok = overlapHelperCheck(name + " + START armed", v, dc, times, null, logger) && ok;
         v.testAdvanceMs(4100);
         if (peek) {
             v.showPeek();
-            ok = overlapHelperCheck(name + ", peek", v, dc, times, false, logger) && ok;
+            ok = overlapHelperCheck(name + ", peek", v, dc, times, null, logger) && ok;
             v.pressConfirm(ConfirmPress.CONTEXT_STOP);
-            ok = overlapHelperCheck(name + ", peek + START armed", v, dc, times, false, logger) && ok;
+            ok = overlapHelperCheck(name + ", peek + START armed", v, dc, times, null, logger) && ok;
             v.testAdvanceMs(4100);
             v.showPeek();
             v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
             v.showHint(v.backHintTexts(backHint));
-            ok = overlapHelperCheck(name + ", peek + BACK popup", v, dc, times, true, logger) && ok;
+            ok = overlapHelperCheck(name + ", peek + BACK popup", v, dc, times, v.backHintTexts(backHint), logger)
+                && ok;
             v.testAdvanceMs(5100);
         }
         d.noteInactive();
         v.pressConfirm(ConfirmPress.CONTEXT_STOP);
-        ok = overlapHelperCheck(name + " + Keep app open + START armed", v, dc, times, false, logger) && ok;
+        ok = overlapHelperCheck(name + " + Keep app open + START armed", v, dc, times, null, logger) && ok;
         v.testAdvanceMs(4100);
     }
     return ok;
@@ -393,14 +409,15 @@ function overlapHelperAlarm(name as String, d as SleepDetector, dc as Graphics.D
         }
         var v = layoutHelperView(d, a);
         var what = name + ((loud == 1) ? ", full strength" : ", calm");
-        ok = overlapHelperCheck(what, v, dc, times, false, logger) && ok;
+        ok = overlapHelperCheck(what, v, dc, times, null, logger) && ok;
+        var back = v.backHintTexts(PowerNapView.BACK_HINT_ALARM);
         v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
-        v.showHint(v.backHintTexts(PowerNapView.BACK_HINT_ALARM));
-        ok = overlapHelperCheck(what + " + BACK popup", v, dc, times, true, logger) && ok;
+        v.showHint(back);
+        ok = overlapHelperCheck(what + " + BACK popup", v, dc, times, back, logger) && ok;
         v.testAdvanceMs(4100);
         v.pressConfirm(ConfirmPress.CONTEXT_STOP);
         v.showHint(PowerNapView.HINT_STOP);
-        ok = overlapHelperCheck(what + " + START popup", v, dc, times, true, logger) && ok;
+        ok = overlapHelperCheck(what + " + START popup", v, dc, times, PowerNapView.HINT_STOP, logger) && ok;
         v.testAdvanceMs(4100);
         a.stop();
     }
@@ -411,10 +428,11 @@ function overlapHelperAlarm(name as String, d as SleepDetector, dc as Graphics.D
 
 //! The start screen in both formats and with both batteries, its clock and
 //! its "Alarm by" promise both at the widest time of day: the detector is
-//! pinned so that the promise lands on it.
+//! pinned so that the promise lands on it. `hint`: the texts of the popup
+//! showing over it, or null.
 (:debug)
 function overlapHelperStart(name as String, v as PowerNapView, d as SleepDetector, dc as Graphics.Dc,
-                            times as Array<Number>, popup as Boolean, logger as Test.Logger) as Boolean {
+                            times as Array<Number>, hint as Array<String>?, logger as Test.Logger) as Boolean {
     var nap = v.testGetPendingDuration();
     var ok = true;
     for (var f = 0; f < 2; f++) {
@@ -422,30 +440,32 @@ function overlapHelperStart(name as String, v as PowerNapView, d as SleepDetecto
         var widest = times[2 + f];
         d.testPinClock(widest - (1 + d.getFallAsleepAllowanceMin() + nap) * 60);
         v.testForceClockSec(widest);
-        ok = overlapHelperBatteries(name + ", " + ((f == 1) ? "24 h" : "12 h"), v, dc, popup, logger) && ok;
+        ok = overlapHelperBatteries(name + ", " + ((f == 1) ? "24 h" : "12 h"), v, dc, hint, logger) && ok;
     }
     return ok;
 }
 
 //! A screen in both formats and with both batteries, the clock at the
 //! widest time of day: the live screens' clock line starts at FONT_TINY,
-//! the lens draws it at FONT_XTINY.
+//! the lens draws it at FONT_XTINY. `hint`: the texts of the popup showing
+//! over it, or null.
 (:debug)
 function overlapHelperCheck(name as String, v as PowerNapView, dc as Graphics.Dc, times as Array<Number>,
-                            popup as Boolean, logger as Test.Logger) as Boolean {
+                            hint as Array<String>?, logger as Test.Logger) as Boolean {
     var font = v.testHasSubscreen() ? 2 : 0;
     var ok = true;
     for (var f = 0; f < 2; f++) {
         v.testForce24Hour(f == 1);
         v.testForceClockSec(times[font + f]);
-        ok = overlapHelperBatteries(name + ", " + ((f == 1) ? "24 h" : "12 h"), v, dc, popup, logger) && ok;
+        ok = overlapHelperBatteries(name + ", " + ((f == 1) ? "24 h" : "12 h"), v, dc, hint, logger) && ok;
     }
     return ok;
 }
 
-//! The screen with a full and with a low battery.
+//! The screen with a full and with a low battery; with a popup (`hint`, its
+//! texts) also the rules the popup is placed by.
 (:debug)
-function overlapHelperBatteries(name as String, v as PowerNapView, dc as Graphics.Dc, popup as Boolean,
+function overlapHelperBatteries(name as String, v as PowerNapView, dc as Graphics.Dc, hint as Array<String>?,
                                 logger as Test.Logger) as Boolean {
     var ok = true;
     var levels = [100, OVERLAP_LOW_BATTERY] as Array<Number>;
@@ -453,9 +473,13 @@ function overlapHelperBatteries(name as String, v as PowerNapView, dc as Graphic
         v.testForceBattery(levels[b]);
         var what = name + ", battery " + levels[b] + "%, clock " + v.testClockString();
         var boxes = v.testScreenBoxes(dc);
-        if (popup && !overlapHelperHasPopup(boxes)) {
-            logger.debug(overlapHelperDevice() + " " + what + ": the popup is not on screen");
-            ok = false;
+        if (hint != null) {
+            if (overlapHelperHasPopup(boxes)) {
+                ok = overlapHelperPopup(what, boxes, hint, v, dc, logger) && ok;
+            } else {
+                logger.debug(overlapHelperDevice() + " " + what + ": the popup is not on screen");
+                ok = false;
+            }
         }
         ok = overlapHelperRules(what, boxes, v.testRingInnerRadius(dc), dc, logger) && ok;
     }
@@ -530,9 +554,10 @@ function overlapHelperRules(what as String, boxes as Array<Array>, ringR as Numb
             if (popupA != overlapHelperIsPopup(b)) {
                 continue;                        // the popup covers the screen under it
             }
-            if (popupA) {
-                var box = ((a[4] as Number) == ScreenLayout.BOX_BANNER) ? a : b;
-                var text = ((a[4] as Number) == ScreenLayout.BOX_BANNER) ? b : a;
+            var sheetA = ((a[4] as Number) == ScreenLayout.BOX_BANNER);
+            if (popupA && sheetA != ((b[4] as Number) == ScreenLayout.BOX_BANNER)) {
+                var box = sheetA ? a : b;
+                var text = sheetA ? b : a;
                 if (!overlapHelperContains(box, text)) {
                     logger.debug(overlapHelperDevice() + " " + what + ": " + overlapHelperName(text)
                         + " does not fit inside its " + overlapHelperName(box));
@@ -540,6 +565,7 @@ function overlapHelperRules(what as String, boxes as Array<Array>, ringR as Numb
                 }
                 continue;
             }
+            // Two lines of the screen, or the popup's two lines of text.
             if (overlapHelperIntersect(a, b)) {
                 logger.debug(overlapHelperDevice() + " " + what + ": " + overlapHelperName(a) + " overlaps "
                     + overlapHelperName(b));
@@ -548,6 +574,227 @@ function overlapHelperRules(what as String, boxes as Array<Array>, ringR as Numb
         }
     }
     return ok;
+}
+
+// -- The popup ------------------------------------------------------------------
+
+//! How far text keeps from the display edge and from the lens: ScreenLayout's
+//! default edge margin, the measure "fits" is taken with.
+(:debug)
+const OVERLAP_EDGE_MARGIN = 6;
+
+//! The rules a popup is placed by (see the header), on one screen: `boxes`
+//! as drawn, `hint` the texts the popup chooses from.
+(:debug)
+function overlapHelperPopup(what as String, boxes as Array<Array>, hint as Array<String>, v as PowerNapView,
+                            dc as Graphics.Dc, logger as Test.Logger) as Boolean {
+    var where = overlapHelperDevice() + " " + what + ": ";
+    var sheet = [] as Array;
+    var lines = [] as Array<Array>;
+    var rows = [] as Array<Array>;
+    for (var i = 0; i < boxes.size(); i++) {
+        var kind = boxes[i][4] as Number;
+        if (kind == ScreenLayout.BOX_BANNER) {
+            sheet = boxes[i];
+        } else if (kind == ScreenLayout.BOX_BANNER_TEXT) {
+            lines.add(boxes[i]);
+        } else if (kind != ScreenLayout.BOX_LENS_TEXT) {
+            rows.add(boxes[i]);
+        }
+    }
+    var ok = true;
+    var top = sheet[1] as Number;
+
+    // Whole rows only, the footer and everything down to the bottom edge.
+    if ((sheet[0] as Number) > 0 || (sheet[0] as Number) + (sheet[2] as Number) < dc.getWidth()
+        || top + (sheet[3] as Number) < dc.getHeight()) {
+        logger.debug(where + overlapHelperName(sheet) + " does not run across the whole width to the bottom edge");
+        ok = false;
+    }
+    var onRow = false;
+    for (var i = 0; i < rows.size(); i++) {
+        var ry = rows[i][1] as Number;
+        if (ry == top) {
+            onRow = true;
+        } else if (ry < top && ry + (rows[i][3] as Number) > top) {
+            logger.debug(where + "the popup's top edge, row " + top + ", cuts " + overlapHelperName(rows[i])
+                + " in half");
+            ok = false;
+        }
+    }
+    if (!onRow) {
+        logger.debug(where + "the popup's top edge, row " + top + ", is not the top edge of any row");
+        ok = false;
+    }
+
+    // The exit popup's font.
+    var font = overlapHelperPopupFont(dc);
+    var layout = v.testBuildLayout(dc);
+    var used = layout.testBannerFont();
+    if (used == null || (used as Graphics.FontDefinition) != font) {
+        logger.debug(where + "the popup is in " + overlapHelperFontName(used) + ", the exit popup in "
+            + overlapHelperFontName(font));
+        ok = false;
+    }
+
+    // The longest text that fits, as low as it fits.
+    var text = layout.getBannerText();
+    var index = -1;
+    for (var i = 0; i < hint.size(); i++) {
+        if (text != null && hint[i].equals(text as String)) {
+            index = i;
+        }
+    }
+    if (index < 0) {
+        logger.debug(where + "the popup shows '" + text + "', which is not one of its texts");
+        return false;
+    }
+    if (index > 0) {
+        var at = overlapHelperPopupLowest(hint[index - 1], rows, font, dc);
+        if (at >= 0) {
+            logger.debug(where + "'" + hint[index - 1] + "' would fit under the row at " + at
+                + " in the same font, the popup shows '" + text + "'");
+            ok = false;
+        }
+    }
+    var lowest = overlapHelperPopupLowest(text as String, rows, font, dc);
+    if (lowest != top) {
+        logger.debug(where + "the popup starts at row " + top + ", its text fits under the row at " + lowest
+            + " (-1: under none)");
+        ok = false;
+    }
+    if (lines.size() > 1 && overlapHelperPopupFitsAt([dc.getTextWidthInPixels(text as String, font)] as Array<Number>,
+            top, dc.getFontHeight(font), dc)) {
+        logger.debug(where + "'" + text + "' is on two lines where one fits");
+        ok = false;
+    }
+    return ok;
+}
+
+//! The exit popup's font, which every popup is drawn in: the largest of
+//! MEDIUM, SMALL, TINY and XTINY at which "Press BACK again to exit" fits on
+//! one line across the middle of the display, in a box a font height wider
+//! than the text and two thirds of one taller; XTINY where none does.
+(:debug)
+function overlapHelperPopupFont(dc as Graphics.Dc) as Graphics.FontDefinition {
+    var fonts = [Graphics.FONT_MEDIUM, Graphics.FONT_SMALL, Graphics.FONT_TINY, Graphics.FONT_XTINY]
+        as Array<Graphics.FontDefinition>;
+    for (var i = 0; i < fonts.size(); i++) {
+        var fh = dc.getFontHeight(fonts[i]);
+        var h = fh + (fh * 2) / 3;
+        var top = dc.getHeight() / 2 - h / 2;
+        var b = overlapHelperBounds(top, top + h, dc);
+        if (dc.getTextWidthInPixels(PowerNapView.HINT_EXIT[0], fonts[i]) + fh <= b[1] - b[0]) {
+            return fonts[i];
+        }
+    }
+    return Graphics.FONT_XTINY;
+}
+
+//! The lowest of `rows` under whose top edge a popup sheet leaves `text`
+//! room in `font` - on one line, or broken at a space onto two - or -1
+//! under none.
+(:debug)
+function overlapHelperPopupLowest(text as String, rows as Array<Array>, font as Graphics.FontDefinition,
+                                  dc as Graphics.Dc) as Number {
+    var fh = dc.getFontHeight(font);
+    var forms = [[dc.getTextWidthInPixels(text, font)] as Array<Number>] as Array<Array<Number> >;
+    var chars = text.toCharArray();
+    for (var i = 1; i < chars.size() - 1; i++) {
+        if (chars[i] == ' ') {
+            forms.add([dc.getTextWidthInPixels(text.substring(0, i) as String, font),
+                dc.getTextWidthInPixels(text.substring(i + 1, chars.size()) as String, font)] as Array<Number>);
+        }
+    }
+    var lowest = -1;
+    for (var r = 0; r < rows.size(); r++) {
+        var t = rows[r][1] as Number;
+        for (var f = 0; f < forms.size() && t > lowest; f++) {
+            if (overlapHelperPopupFitsAt(forms[f], t, fh, dc)) {
+                lowest = t;
+            }
+        }
+    }
+    return lowest;
+}
+
+//! Whether popup text of these line widths, in a font fh high, fits under a
+//! sheet from row t, placed as the layout places it: on the sheet's widest
+//! rows - centred on the middle of the display where the sheet reaches it,
+//! else a third of a line under its top edge - each line inside the visible
+//! width at its ink rows.
+(:debug)
+function overlapHelperPopupFitsAt(widths as Array<Number>, t as Number, fh as Number, dc as Graphics.Dc) as Boolean {
+    var n = widths.size();
+    var y = t + fh / 3;
+    if (dc.getHeight() / 2 - (n * fh) / 2 > y) {
+        y = dc.getHeight() / 2 - (n * fh) / 2;
+    }
+    if (y + n * fh > dc.getHeight()) {
+        return false;
+    }
+    for (var k = 0; k < n; k++) {
+        var ly = y + k * fh;
+        var b = overlapHelperBounds(ly + fh * 15 / 100, ly + fh * 85 / 100, dc);
+        if (widths[k] > b[1] - b[0]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+//! The visible [left, right] on every row from y0 to y1 as the layout
+//! measures it: the display (round chord, the Instinct's octagon),
+//! OVERLAP_EDGE_MARGIN in from its edge and clear of the lens.
+(:debug)
+function overlapHelperBounds(y0 as Number, y1 as Number, dc as Graphics.Dc) as Array<Number> {
+    var cx = dc.getWidth() / 2;
+    var h0 = overlapHelperHalfWidth(y0, 0, dc);
+    var h1 = overlapHelperHalfWidth(y1, 0, dc);
+    var hw = (h0 < h1) ? h0 : h1;
+    var left = cx - hw + OVERLAP_EDGE_MARGIN;
+    var right = cx + hw - OVERLAP_EDGE_MARGIN;
+    var lens = overlapHelperLens();
+    if (lens != null) {
+        var l = lens as Array<Number>;
+        var ry = (l[1] < y0) ? y0 : ((l[1] > y1) ? y1 : l[1]);
+        var dy = (ry - l[1]).abs();
+        if (dy < l[2]) {
+            var half = Math.sqrt((l[2] * l[2] - dy * dy).toFloat()).toNumber();
+            if (l[0] >= cx) {
+                var limit = l[0] - half - OVERLAP_EDGE_MARGIN;
+                if (right > limit) {
+                    right = limit;
+                }
+            } else {
+                var limit = l[0] + half + OVERLAP_EDGE_MARGIN;
+                if (left < limit) {
+                    left = limit;
+                }
+            }
+        }
+    }
+    if (right < left) {
+        right = left;
+    }
+    return [left, right] as Array<Number>;
+}
+
+//! "XTINY": a font in a failure message.
+(:debug)
+function overlapHelperFontName(font as Graphics.FontDefinition?) as String {
+    if (font == null) {
+        return "no font";
+    }
+    var fonts = [Graphics.FONT_XTINY, Graphics.FONT_TINY, Graphics.FONT_SMALL, Graphics.FONT_MEDIUM]
+        as Array<Graphics.FontDefinition>;
+    var names = ["XTINY", "TINY", "SMALL", "MEDIUM"] as Array<String>;
+    for (var i = 0; i < fonts.size(); i++) {
+        if (fonts[i] == font) {
+            return names[i];
+        }
+    }
+    return "font " + font;
 }
 
 //! Why `box` is not inside the visible display, or null when it is.
@@ -564,6 +811,9 @@ function overlapHelperOutside(box as Array, ringR as Number, dc as Graphics.Dc) 
     var sw = dc.getWidth();
     if (x < 0 || y < 0 || x + w > sw || y + h > dc.getHeight()) {
         return "is off the screen";
+    }
+    if (kind == ScreenLayout.BOX_BANNER) {
+        return null;                             // the popup's sheet: the display's outline cuts its corners
     }
     var lens = overlapHelperLens();
     if (kind == ScreenLayout.BOX_LENS_TEXT) {

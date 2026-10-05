@@ -133,9 +133,11 @@ class LayoutLine {
 //! * A divider belongs to the line above it and is clipped to its row.
 //! * Each text line then picks the largest font/text variant whose ink fits
 //!   the visible width at its own rows (round chord, Instinct subscreen).
-//! * A banner (the "Press BACK again to exit" popup) is a filled rounded box
-//!   centred on the screen, drawn over the lines, with the longest text
-//!   variant at the largest font that fits the box at its rows.
+//! * A banner (the "Press BACK again to ..." popup) is a sheet over the
+//!   bottom of the screen: from the top edge of one of its rows down past
+//!   the display's bottom edge, over the footer and every row in between,
+//!   never across half a row. Its text is the longest variant that fits, on
+//!   one line or on two, in the one font every popup uses (popupFont).
 class ScreenLayout {
 
     static const KEEP = 100;
@@ -176,15 +178,14 @@ class ScreenLayout {
     private var _footerY as Number = 0;
     private var _footerFits as Boolean = true;
 
-    // Banner (popup hint) drawn over the lines, see setBanner().
+    // Banner (popup hint) over the bottom rows, see setBanner().
     private var _bannerTexts as Array<String>? = null;
-    private var _bannerFonts as Array<Graphics.FontDefinition>? = null;
-    private var _bannerText as String = "";
     private var _bannerFont as Graphics.FontDefinition = Graphics.FONT_XTINY;
-    private var _bannerX as Number = 0;
-    private var _bannerY as Number = 0;
-    private var _bannerW as Number = 0;
-    private var _bannerH as Number = 0;
+    private var _bannerText as String = "";          // the variant shown, whole
+    private var _bannerLines as Array<String> = [] as Array<String>;   // it, on one line or two
+    private var _bannerX as Array<Number> = [] as Array<Number>;       // the centre of each line
+    private var _bannerY as Number = 0;              // the sheet's top edge: the top edge of a row
+    private var _bannerTextY as Number = 0;          // the top of its first line
     private var _bannerFits as Boolean = true;
 
     private var _bandTop as Number = 0;
@@ -284,12 +285,35 @@ class ScreenLayout {
         _footerPreferBottom = true;
     }
 
-    //! A popup box centred on the screen, drawn over everything else: the
-    //! longest of `texts` at the largest of `fonts` whose box fits the
-    //! visible width at the box's rows (round chord, octagon corners, lens).
-    function setBanner(texts as Array<String>, fonts as Array<Graphics.FontDefinition>) as Void {
+    //! The popup ("Press BACK again to ..."), the long version of the
+    //! footer: a sheet in the screen's negative from the top edge of one of
+    //! its rows down past the bottom of the display, whose outline cuts the
+    //! corners. It covers the footer and every row in between, whole, and
+    //! starts at the lowest row that leaves its text room. The text is the
+    //! longest of `texts` that fits in `font` (popupFont, the same for
+    //! every popup), on one line or broken at a space onto two.
+    function setBanner(texts as Array<String>, font as Graphics.FontDefinition) as Void {
         _bannerTexts = texts;
-        _bannerFonts = fonts;
+        _bannerFont = font;
+    }
+
+    //! The one font every popup is drawn in on this watch: the size the
+    //! exit popup has always had, the largest of `fonts` at which `text`
+    //! ("Press BACK again to exit") fits on one line across the middle of
+    //! the display, in a box a font height wider than the text and two
+    //! thirds of one taller; the smallest when none does (the Instinct,
+    //! whose lens reaches down to the middle rows).
+    function popupFont(dc as Graphics.Dc, text as String, fonts as Array<Graphics.FontDefinition>)
+            as Graphics.FontDefinition {
+        for (var i = 0; i < fonts.size(); i++) {
+            var fh = dc.getFontHeight(fonts[i]);
+            var h = fh + (fh * 2) / 3;
+            var b = boundsAtRows(_cy - h / 2, _cy - h / 2 + h);
+            if (dc.getTextWidthInPixels(text, fonts[i]) + fh <= b[1] - b[0]) {
+                return fonts[i];
+            }
+        }
+        return fonts[fonts.size() - 1];
     }
 
     //! Extra clearance from the display edge.
@@ -451,80 +475,152 @@ class ScreenLayout {
         restoreHidden(dc);
     }
 
-    //! Place the banner: padding of a third of the font height above and
-    //! below and half of it left and right; the box must fit the visible
-    //! width at all of its rows. Full text first, at the largest font that
-    //! fits, shorter variants only when even the smallest font is too wide.
-    //! The box is centred on the screen; next to the Instinct lens (which
-    //! reaches down to the middle rows) it moves down, 4 px at a time, to
-    //! the first position above the footer where the text fits. Each text
-    //! is measured once per font (one fit call); the positions cost only
-    //! arithmetic, and are probed only for a text that fits at the lowest,
-    //! widest position at all.
+    //! Place the banner (see setBanner): the texts longest first, each at
+    //! the lowest row whose top edge leaves it room - on one line, else on
+    //! two, broken at the space that keeps the lines most even and still
+    //! fits. A shorter text only when a longer one fits under no row, not
+    //! even on two lines; never a smaller font. Each text, and each way of
+    //! breaking it, is measured once (one fit call per measurement); the
+    //! rows cost only arithmetic.
     private function solveBanner(dc as Graphics.Dc) as Void {
-        if (_bannerTexts == null || _bannerFonts == null) {
+        if (_bannerTexts == null) {
             return;
         }
         var texts = _bannerTexts as Array<String>;
-        var fonts = _bannerFonts as Array<Graphics.FontDefinition>;
+        var fh = dc.getFontHeight(_bannerFont);
+        var tops = rowTops();
         for (var ti = 0; ti < texts.size(); ti++) {
-            for (var fi = 0; fi < fonts.size(); fi++) {
-                var fh = dc.getFontHeight(fonts[fi]);
-                var h = fh + (fh * 2) / 3;
-                var w = dc.getTextWidthInPixels(texts[ti], fonts[fi]) + fh;
-                _fitCalls += 1;
-                var top = _cy - h / 2;
-                var lowest = ((_footerText != null) ? _footerY - 2 : _h - _gap) - h;
-                if (!_hasSub || lowest < top) {
-                    if (placeBanner(texts[ti], fonts[fi], w, h, top)) {
+            var one = [dc.getTextWidthInPixels(texts[ti], _bannerFont)] as Array<Number>;
+            _fitCalls += 1;
+            var breaks = [] as Array<Array>;
+            var measured = false;
+            for (var k = 0; k < tops.size(); k++) {
+                var spot = bannerSpot(one, tops[k], fh);
+                if (spot != null) {
+                    storeBanner(texts[ti], [texts[ti]] as Array<String>, tops[k], spot);
+                    return;
+                }
+                if (!measured) {
+                    breaks = bannerBreaks(dc, texts[ti]);
+                    measured = true;
+                }
+                for (var j = 0; j < breaks.size(); j++) {
+                    var br = breaks[j];
+                    spot = bannerSpot([br[2] as Number, br[3] as Number] as Array<Number>, tops[k], fh);
+                    if (spot != null) {
+                        storeBanner(texts[ti], [br[0] as String, br[1] as String] as Array<String>, tops[k], spot);
                         return;
                     }
-                    continue;
                 }
-                // Next to the lens: the lowest position is the widest one.
-                // Only a text that fits there is worth probing from the top.
-                if (!placeBanner(texts[ti], fonts[fi], w, h, lowest)) {
-                    continue;
-                }
-                for (var y = top; y < lowest; y += 4) {
-                    if (placeBanner(texts[ti], fonts[fi], w, h, y)) {
-                        return;
-                    }
-                }
-                placeBanner(texts[ti], fonts[fi], w, h, lowest);
-                return;
             }
         }
-        // Nothing fits: smallest font, shortest text, the box clipped to the
-        // visible width and kept above the footer (flagged, so the tests
-        // catch it).
-        var last = fonts[fonts.size() - 1];
-        var lh = dc.getFontHeight(last);
-        var lhBox = lh + (lh * 2) / 3;
-        var yTop = _cy - lhBox / 2;
-        var yLow = ((_footerText != null) ? _footerY - 2 : _h - _gap) - lhBox;
-        placeBanner(texts[texts.size() - 1], last, dc.getTextWidthInPixels(texts[texts.size() - 1], last) + lh,
-            lhBox, (yLow < yTop) ? yLow : yTop);
-        _fitCalls += 1;
+        // Nothing fits under any row: the shortest text on one line under a
+        // sheet over every row (flagged, so the tests catch it).
+        var last = texts[texts.size() - 1];
+        var t = (tops.size() > 0) ? tops[tops.size() - 1] : 0;
+        var y = t + fh / 3;
+        if (_cy - fh / 2 > y) {
+            y = _cy - fh / 2;
+        }
+        var b = inkBounds(y, fh);
+        storeBanner(last, [last] as Array<String>, t, [y, (b[0] + b[1]) / 2] as Array<Number>);
         _bannerFits = false;
     }
 
-    //! Try one text/font (box width w, height h) for the banner with its
-    //! box starting at row y; stores the box and returns whether it fits (a
-    //! box that does not fit is stored clipped to the width).
-    private function placeBanner(text as String, font as Graphics.FontDefinition, w as Number, h as Number,
-                                 y as Number) as Boolean {
-        var b = boundsAtRows(y, y + h);
-        var fits = (w <= b[1] - b[0]);
-        var bw = fits ? w : (b[1] - b[0]);
+    //! The top edge of every row this screen draws - its visible lines as
+    //! they are drawn, the arrows' slots, and the footer - lowest first:
+    //! where a popup's sheet may start.
+    private function rowTops() as Array<Number> {
+        var tops = [] as Array<Number>;
+        if (_footerText != null) {
+            tops.add(_footerY);
+        }
+        for (var i = _lines.size() - 1; i >= 0; i--) {
+            var line = _lines[i];
+            if (!line.visible) {
+                continue;
+            }
+            if (line.spacerH > 0) {
+                tops.add(line.y);                    // the view draws into it
+            } else if (line.isDivider) {
+                if (line.drawX1 > line.drawX) {
+                    tops.add(line.y);
+                }
+            } else {
+                tops.add(line.drawY);
+            }
+        }
+        return tops;
+    }
+
+    //! Where the popup's text - `widths`, one line or two, in a font fh
+    //! high - goes under a sheet that starts at row t: [the top of its first
+    //! line, the centre of each line], or null when a line does not fit the
+    //! visible width at its ink rows. The text sits on the sheet's widest
+    //! rows: centred on the middle of the display where the sheet reaches
+    //! it, else a third of a line under the sheet's top edge.
+    private function bannerSpot(widths as Array<Number>, t as Number, fh as Number) as Array<Number>? {
+        var n = widths.size();
+        var y = t + fh / 3;
+        if (_cy - (n * fh) / 2 > y) {
+            y = _cy - (n * fh) / 2;
+        }
+        if (y + n * fh > _h) {
+            return null;
+        }
+        var spot = [y] as Array<Number>;
+        for (var k = 0; k < n; k++) {
+            var b = inkBounds(y + k * fh, fh);
+            if (widths[k] > b[1] - b[0]) {
+                return null;
+            }
+            spot.add((b[0] + b[1]) / 2);
+        }
+        return spot;
+    }
+
+    //! Every way of breaking `text` at a space onto two lines, the most even
+    //! first (the wider of the two lines as narrow as it gets, ties in
+    //! reading order): [first line, second line, their widths].
+    private function bannerBreaks(dc as Graphics.Dc, text as String) as Array<Array> {
+        var out = [] as Array<Array>;
+        var chars = text.toCharArray();
+        for (var i = 1; i < chars.size() - 1; i++) {
+            if (chars[i] != ' ') {
+                continue;
+            }
+            var a = text.substring(0, i) as String;
+            var b = text.substring(i + 1, chars.size()) as String;
+            var wa = dc.getTextWidthInPixels(a, _bannerFont);
+            var wb = dc.getTextWidthInPixels(b, _bannerFont);
+            _fitCalls += 2;
+            var wide = (wa > wb) ? wa : wb;
+            var at = out.size();
+            for (var j = 0; j < out.size(); j++) {
+                var o = out[j];
+                var ow = ((o[2] as Number) > (o[3] as Number)) ? (o[2] as Number) : (o[3] as Number);
+                if (wide < ow) {
+                    at = j;
+                    break;
+                }
+            }
+            var head = out.slice(0, at);
+            head.add([a, b, wa, wb] as Array);
+            head.addAll(out.slice(at, null));
+            out = head;
+        }
+        return out;
+    }
+
+    //! Keep the popup: `text` shown as `lines`, the sheet from row t, the
+    //! text where bannerSpot put it.
+    private function storeBanner(text as String, lines as Array<String>, t as Number, spot as Array<Number>) as Void {
         _bannerText = text;
-        _bannerFont = font;
-        _bannerX = (b[0] + b[1]) / 2 - bw / 2;
-        _bannerY = y;
-        _bannerW = bw;
-        _bannerH = h;
-        _bannerFits = fits;
-        return fits;
+        _bannerLines = lines;
+        _bannerY = t;
+        _bannerTextY = spot[0];
+        _bannerX = spot.slice(1, null);
+        _bannerFits = true;
     }
 
     //! A line hidden because it did not fit its row at an intermediate block
@@ -1090,17 +1186,21 @@ class ScreenLayout {
                 Graphics.TEXT_JUSTIFY_CENTER);
         }
         if (_bannerTexts != null) {
-            // The popup is the screen's negative: a light box with dark text
-            // on the dark screens, dark on light when the alarm flashes (and
-            // on the 1-bit Instinct these are the only two colours anyway).
+            // The popup is the screen's negative: a light sheet with dark
+            // text on the dark screens, dark on light when the alarm flashes
+            // (and on the 1-bit Instinct these are the only two colours
+            // anyway). It runs across the whole width and to the bottom
+            // edge; the outline of the display cuts its corners.
             var fill = invert ? Graphics.COLOR_BLACK : Graphics.COLOR_WHITE;
             var ink = invert ? Graphics.COLOR_WHITE : Graphics.COLOR_BLACK;
             dc.setColor(fill, fill);
-            dc.fillRoundedRectangle(_bannerX, _bannerY, _bannerW, _bannerH, _bannerH / 3);
+            dc.fillRectangle(0, _bannerY, _w, _h - _bannerY);
             dc.setColor(ink, Graphics.COLOR_TRANSPARENT);
             var fh = dc.getFontHeight(_bannerFont);
-            dc.drawText(_bannerX + _bannerW / 2, _bannerY + (_bannerH - fh) / 2, _bannerFont, _bannerText,
-                Graphics.TEXT_JUSTIFY_CENTER);
+            for (var k = 0; k < _bannerLines.size(); k++) {
+                dc.drawText(_bannerX[k], _bannerTextY + k * fh, _bannerFont, _bannerLines[k],
+                    Graphics.TEXT_JUSTIFY_CENTER);
+            }
         }
     }
 
@@ -1213,9 +1313,15 @@ class ScreenLayout {
         return (_bannerTexts == null) ? null : _bannerText;
     }
 
-    //! The banner box [x, y, w, h] (tests), or null when no banner is set.
+    //! The banner's sheet [x, y, w, h] (tests), or null when no banner is set.
     function getBannerBox() as Array<Number>? {
-        return (_bannerTexts == null) ? null : [_bannerX, _bannerY, _bannerW, _bannerH] as Array<Number>;
+        return (_bannerTexts == null) ? null : [0, _bannerY, _w, _h - _bannerY] as Array<Number>;
+    }
+
+    //! The font the banner's text is drawn in, or null when no banner is set.
+    (:debug)
+    function testBannerFont() as Graphics.FontDefinition? {
+        return (_bannerTexts == null) ? null : _bannerFont;
     }
 
     //! Work done by the last solve(): [solveOnce passes, fitLine calls].
@@ -1274,7 +1380,7 @@ class ScreenLayout {
 
     //! What a box from testBoxes() is (tests): a text drawn at its font
     //! height, a divider, a shape the view draws (the start screen's
-    //! arrows), the banner's filled box, and the text inside the banner.
+    //! arrows), the banner's sheet, and each line of text on the sheet.
     (:debug) static const BOX_TEXT = 0;
     (:debug) static const BOX_DIVIDER = 1;
     (:debug) static const BOX_SHAPE = 2;
@@ -1285,8 +1391,9 @@ class ScreenLayout {
     //! Every box this layout draws, as draw() draws it (tests): one
     //! [x, y, w, h, kind, label] per visible text line (its text at the font
     //! it is drawn in, the full font height), per divider, for the footer,
-    //! and for the banner's box and its text. Spacers are left out: the view
-    //! draws into them and adds what it draws there.
+    //! and for the banner's sheet (the whole width, down to the bottom edge)
+    //! and each line of its text. Spacers are left out: the view draws into
+    //! them and adds what it draws there.
     (:debug)
     function testBoxes(dc as Graphics.Dc) as Array<Array> {
         var out = [] as Array<Array>;
@@ -1310,11 +1417,13 @@ class ScreenLayout {
                 "footer '" + text + "'"] as Array);
         }
         if (_bannerTexts != null) {
-            out.add([_bannerX, _bannerY, _bannerW, _bannerH, BOX_BANNER, "banner box"] as Array);
+            out.add([0, _bannerY, _w, _h - _bannerY, BOX_BANNER, "popup sheet"] as Array);
             var fh = dc.getFontHeight(_bannerFont);
-            var w = dc.getTextWidthInPixels(_bannerText, _bannerFont);
-            out.add([_bannerX + _bannerW / 2 - w / 2, _bannerY + (_bannerH - fh) / 2, w, fh, BOX_BANNER_TEXT,
-                "banner '" + _bannerText + "'"] as Array);
+            for (var k = 0; k < _bannerLines.size(); k++) {
+                var w = dc.getTextWidthInPixels(_bannerLines[k], _bannerFont);
+                out.add([_bannerX[k] - w / 2, _bannerTextY + k * fh, w, fh, BOX_BANNER_TEXT,
+                    "popup '" + _bannerLines[k] + "'"] as Array);
+            }
         }
         return out;
     }
