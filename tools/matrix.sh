@@ -17,14 +17,22 @@
 #   --permissive   warnings are printed but do not fail the run
 #   --release      build mode: compile the release build (-r), the one the
 #                  store package is made of; the default is the debug build
+#   --protocol     the protocol set instead of every product: the products
+#                  the suite runs on in every pull request (protocol_set)
 #   -h, --help     print this text
 #
 # Device ids given as arguments limit the run to those devices; every id must
 # appear in the manifest.
 #
+# A test run that covers the whole protocol set (--protocol, or every product)
+# then checks the set itself: it must hold a product whose popups are drawn in
+# TINY and one whose popups are drawn in XTINY, each font as the suite
+# measured it on that product, or the run fails and names the product missing.
+#
 # Exit codes
 #   0  every device passed; devices that were skipped are named in the summary
-#   1  a device failed: its full output was printed and the run stopped there
+#   1  a device failed: its full output was printed and the run stopped there;
+#      or the protocol set has no product left for one of the popup fonts
 #   2  the run never started (bad usage, or no manifest / SDK / developer key)
 #
 # Environment
@@ -51,6 +59,22 @@ jungle="$proj/monkey.jungle"
 out=${OUT_DIR:-/tmp/powernap-matrix}
 test_timeout=${TEST_TIMEOUT:-420}
 test_attempts=${TEST_ATTEMPTS:-3}
+
+# The protocol set: the products the whole suite runs on in every pull request
+# (CONTRIBUTING.md, "Every pull request", says what each one stands for). This
+# is its one definition: --protocol runs it and `list --protocol` prints it.
+protocol_set="fenix847mm fr255s instinct3solar45mm venu3s vivoactive6"
+
+# Every popup is drawn in the exit popup's font, TINY on some products and
+# XTINY on the others, and a change that moved every popup to one of them
+# fails only where the other is the exit font. So the set holds a product of
+# each, and a test run over the whole set fails when one of these fonts is
+# drawn by none of its products. A product's font is the one its suite
+# printed (protocol_font_test: the test's own geometry, never the view's);
+# the product paired with a font here is the set's product for it, the one a
+# failure names when the font goes missing.
+protocol_fonts="TINY:vivoactive6 XTINY:fenix847mm"
+protocol_font_test="testOverlap_exitPopupFontForTheProtocolSet"
 
 usage() { sed -e '1d' -e '/^[^#]/,$d' -e 's/^# \{0,1\}//' "$0"; }
 die()   { printf '%s: %s\n' "$self" "$1" >&2; exit "$EXIT_USAGE"; }
@@ -249,10 +273,75 @@ run_suite() {
     test_fail="no result from the simulator after $test_attempts attempts"
 }
 
+# ------------------------------------------------------------ protocol set --
+# The exit popup's font a passed suite printed, empty when it printed none.
+font_in_log() { tr -d '\r' < "$1" | sed -n 's/^EXIT_POPUP_FONT \([A-Z][A-Z]*\)$/\1/p' | tail -1; }
+
+in_protocol_set() { case " $protocol_set " in *" $1 "*) return 0 ;; esac; return 1; }
+
+# Whether this run asked for every product of the protocol set.
+covers_protocol_set() {
+    local dev
+    for dev in $protocol_set; do
+        printf '%s\n' "$devices" | grep -qx -- "$dev" || return 1
+    done
+}
+
+# A device's exit popup font in this run: what its suite printed, "skipped"
+# for a device that was skipped, empty when its suite printed none.
+font_of() {
+    if printf '%s\n' "$skipped_list" | grep -q "^  $1  "; then printf 'skipped'; return; fi
+    printf '%s\n' "$fonts_seen" | awk -v dev="$1" '$1 == dev { font = $2 } END { printf "%s", font }'
+}
+
+# Prints the font of every product of the set, grouped by font, and sets
+# protocol_fail when a product printed none or when a font of protocol_fonts
+# is drawn by no product of the set; then it names the set's product for it.
+check_protocol_set() {
+    local dev font pair want holder other table=""
+    protocol_fail=""
+    for dev in $protocol_set; do
+        font=$(font_of "$dev")
+        if [ -z "$font" ]; then
+            font="none"
+            [ -z "$protocol_fail" ] && protocol_fail="the suite printed no exit popup font on $dev (is $protocol_font_test still there?)"
+        fi
+        table="$table
+$font $dev"
+    done
+    printf 'protocol the exit popup font, as the suite measured it on each product of the set\n'
+    printf '%s\n' "$table" | LC_ALL=C sort | awk '
+        NF == 0 { next }
+        $1 != font { if (font != "") printf "\n"; font = $1; printf "         %-8s %s", font, $2; next }
+        { printf " %s", $2 }
+        END { if (font != "") printf "\n" }'
+    [ -n "$protocol_fail" ] && return
+    for pair in $protocol_fonts; do
+        want=${pair%%:*}
+        holder=${pair#*:}
+        printf '%s\n' "$table" | grep -q "^$want " && continue
+        for other in $protocol_fonts; do
+            other=${other%%:*}
+            [ "$other" != "$want" ] && break
+        done
+        printf '         %-8s none, so a change that moved every popup to %s would pass every pull request\n' \
+            "$want" "$other"
+        if ! in_protocol_set "$holder"; then
+            protocol_fail="no product of it draws the popups in $want: $holder, its product for $want, is not in it"
+        elif [ "$(font_of "$holder")" = skipped ]; then
+            protocol_fail="no product of it draws the popups in $want: $holder, its product for $want, was skipped"
+        else
+            protocol_fail="no product of it draws the popups in $want: $holder, its product for $want, draws them in $(font_of "$holder")"
+        fi
+        return
+    done
+}
+
 # ------------------------------------------------------------------- flags --
 mode=""
 strict=1
 release=0
+protocol=0
 wanted=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -262,6 +351,7 @@ while [ $# -gt 0 ]; do
         --strict)                strict=1 ;;
         --permissive|--no-strict) strict=0 ;;
         --release)               release=1 ;;
+        --protocol)              protocol=1 ;;
         -h|--help)               usage; exit "$EXIT_OK" ;;
         -*)                      die "unknown option '$1' (try --help)" ;;
         *)                       wanted="$wanted $1" ;;
@@ -270,6 +360,10 @@ while [ $# -gt 0 ]; do
 done
 mode=${mode:-build}
 [ "$release" -eq 1 ] && [ "$mode" != build ] && die "--release only applies to the build mode"
+if [ "$protocol" -eq 1 ]; then
+    [ -n "$wanted" ] && die "--protocol runs the protocol set; give it no device ids"
+    wanted=" $protocol_set"
+fi
 
 build_flags="-l 3 -w"
 [ "$release" -eq 1 ] && build_flags="-r $build_flags"
@@ -319,7 +413,11 @@ else what="debug build"; fi
 
 printf '%s %s - %s, %s\n' "$self" "$mode" "$what" "$strictness"
 printf 'manifest %s: %s product(s)' "${manifest#$proj/}" "$in_manifest"
-[ "$total" != "$in_manifest" ] && printf ', %s of them asked for' "$total"
+if [ "$protocol" -eq 1 ]; then
+    printf ', the %s of the protocol set' "$total"
+elif [ "$total" != "$in_manifest" ]; then
+    printf ', %s of them asked for' "$total"
+fi
 printf '\n'
 printf 'SDK      %s\n' "${sdk##*/}"
 printf 'logs     %s\n' "$out"
@@ -347,6 +445,7 @@ warn_distinct=0
 warn_seen=""
 skipped=0
 skipped_list=""
+fonts_seen=""
 failed_device=""
 failed_reason=""
 started=$SECONDS
@@ -404,6 +503,8 @@ for dev in $devices; do
     [ "$build_warnings" -gt 0 ] && printf ', %s build warning(s)' "$build_warnings"
     printf '\n'
     note_warnings "$build_log" "$build_warnings"
+    fonts_seen="$fonts_seen
+$dev $(font_in_log "$test_log")"
     compiled=$((compiled + 1))
 done
 
@@ -419,6 +520,16 @@ if [ -n "$failed_device" ]; then
     [ "$skipped" -gt 0 ] && printf '%s device(s) skipped:%s\n' "$skipped" "$skipped_list"
     printf 'Total %s.\n' "$(fmt_secs "$elapsed")"
     exit "$EXIT_FAILED"
+fi
+if [ "$mode" = test ] && covers_protocol_set; then
+    check_protocol_set
+    if [ -n "$protocol_fail" ]; then
+        printf '%s of %s devices %s, then the protocol set FAILED: %s.\n' \
+            "$compiled" "$total" "$did" "$protocol_fail"
+        [ "$skipped" -gt 0 ] && printf '%s device(s) skipped:%s\n' "$skipped" "$skipped_list"
+        printf 'Total %s.\n' "$(fmt_secs "$elapsed")"
+        exit "$EXIT_FAILED"
+    fi
 fi
 printf '%s of %s devices %s, 0 failed' "$compiled" "$total" "$did"
 [ "$skipped" -gt 0 ] && printf ', %s skipped' "$skipped"

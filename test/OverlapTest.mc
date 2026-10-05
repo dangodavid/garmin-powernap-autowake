@@ -311,6 +311,20 @@ function testOverlap_previewScreen(logger as Test.Logger) as Boolean {
     return ok;
 }
 
+//! The exit popup's font on this product, which every popup is drawn in:
+//! recomputed from its definition by the test's own geometry
+//! (overlapHelperPopupFont), never read from the view, and printed on a
+//! line of its own for tools/matrix.sh. It is TINY on some products and
+//! XTINY on the others, and a change that moved every popup to one of them
+//! fails only where the other is the exit font, so a run over the protocol
+//! set fails unless these lines show a product of each (CONTRIBUTING.md,
+//! "Every pull request"). The check is the script's: this test only measures.
+(:test)
+function testOverlap_exitPopupFontForTheProtocolSet(logger as Test.Logger) as Boolean {
+    System.println("EXIT_POPUP_FONT " + overlapHelperFontName(overlapHelperPopupFont(layoutHelperDc())));
+    return true;
+}
+
 // -- Scenarios ----------------------------------------------------------------
 
 //! A nap (napMin > 0) or Stay Awake session (0) started at
