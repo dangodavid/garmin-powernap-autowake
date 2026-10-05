@@ -107,6 +107,9 @@ class PowerNapView extends WatchUi.View {
     // format: what the start screen's clock is shown or hidden on.
     private var _clockWidth as Number = -1;
     private var _clockWidth24 as Boolean = false;
+    // Where the last solved start screen draws its clock (solveStartScreen),
+    // or null: none fits, or the clock is in the Instinct lens.
+    private var _startClock as Array<Number>? = null;
 
     private var _forceBatteryPct as Number = -1;     // tests: >= 0 replaces the battery level
     private var _force24Hour as Number = -1;         // tests: 0 = 12 h, 1 = 24 h, -1 = the watch's own
@@ -442,8 +445,9 @@ class PowerNapView extends WatchUi.View {
     //! ("Alarm by", or what Stay Awake does) and the low-battery warning. Adds the
     //! arrow spacers, the number and its label to `lines` for the caller.
     //! Everything above the number adds 5 min, everything below the label
-    //! removes 5 min, the number and the label start.
-    private function startLayout(dc as Graphics.Dc, lines as Array<LayoutLine>) as ScreenLayout {
+    //! removes 5 min, the number and the label start. The title starts
+    //! `titleStep` font sizes down (see solveStartScreen).
+    private function startLayout(dc as Graphics.Dc, lines as Array<LayoutLine>, titleStep as Number) as ScreenLayout {
         var w = dc.getWidth();
         var L = new ScreenLayout(w, dc.getHeight(), 8);
         var stayAwake = (_pendingDuration == STAY_AWAKE);
@@ -455,7 +459,7 @@ class PowerNapView extends WatchUi.View {
         if (!hasSubscreen()) {
             // With a subscreen (Instinct) the lens holds the clock; the
             // title is left out there.
-            L.addText(["POWER NAP"], fontsBody(), Graphics.COLOR_BLUE, 50);
+            L.addText(["POWER NAP"], fontsBody().slice(titleStep, null), Graphics.COLOR_BLUE, 50);
         }
         lines.add(L.addSpacer(arrowH + 1, ScreenLayout.KEEP));
         // The big number shrinks one size only when a warning needs the room.
@@ -489,18 +493,53 @@ class PowerNapView extends WatchUi.View {
         return L;
     }
 
-    //! Solve the start screen and record its tap zones from the number and
-    //! label lines (`lines` receives [upArrow, number, label, downArrow]).
+    //! Solve the start screen, decide where its clock goes (_startClock)
+    //! and record its tap zones from the number and label lines (`lines`
+    //! receives [upArrow, number, label, downArrow]).
+    //!
+    //! The clock goes in the margin above the block, centred (startClockBox).
+    //! Where the block's first line is the title - the screens with room for
+    //! it, which are most of them from 260 px up - and the clock does not fit
+    //! centred above it, the clock first moves down within that margin, and
+    //! only where that is not enough either does the title step down one
+    //! font size at a time, until the clock fits. Everywhere else (no title,
+    //! or a clock that fits centred) the screen is laid out once, as ever.
     private function solveStartScreen(dc as Graphics.Dc, lines as Array<LayoutLine>) as ScreenLayout {
-        var L = startLayout(dc, lines);
+        var parts = [] as Array<LayoutLine>;
+        var L = solveStartLayout(dc, parts, 0);
+        _startClock = startClockBox(dc, L, false);
+        if (_startClock == null && L.getBlockTop() < parts[0].y) {
+            var first = L;
+            var firstParts = parts;
+            for (var step = 0; step < fontsBody().size() && _startClock == null; step++) {
+                if (step > 0) {
+                    parts = [] as Array<LayoutLine>;
+                    L = solveStartLayout(dc, parts, step);
+                }
+                _startClock = startClockBox(dc, L, true);
+            }
+            if (_startClock == null) {
+                // Not even the smallest title leaves the clock room: the
+                // screen as it was, without the clock.
+                L = first;
+                parts = firstParts;
+            }
+        }
+        lines.addAll(parts);
+        _tapPlusMaxY = lines[1].y;
+        _tapMinusMinY = lines[2].y + lines[2].slotH;
+        _tapStartMinY = L.getFooterY();
+        return L;
+    }
+
+    //! The start screen laid out once, its title `titleStep` font sizes down.
+    private function solveStartLayout(dc as Graphics.Dc, lines as Array<LayoutLine>, titleStep as Number) as ScreenLayout {
+        var L = startLayout(dc, lines, titleStep);
         if (isHintShowing()) {
             // "Press BACK again to exit" over the start screen.
             L.setBanner(_hintTexts as Array<String>, bannerFonts());
         }
         L.solve(dc);
-        _tapPlusMaxY = lines[1].y;
-        _tapMinusMinY = lines[2].y + lines[2].slotH;
-        _tapStartMinY = L.getFooterY();
         return L;
     }
 
@@ -513,9 +552,8 @@ class PowerNapView extends WatchUi.View {
         if (subscreenBox() != null) {
             drawInLens(dc, clockString(), Palette.TEXT_SECONDARY, false);
         } else {
-            var box = startClockBox(dc, L, lines[0].y);
-            if (box != null) {
-                var b = box as Array<Number>;
+            if (_startClock != null) {
+                var b = _startClock as Array<Number>;
                 dc.setColor(Palette.fg(Palette.TEXT_SECONDARY, false), Graphics.COLOR_TRANSPARENT);
                 dc.drawText(b[0] + b[2] / 2, b[1], Graphics.FONT_XTINY, clockString(), Graphics.TEXT_JUSTIFY_CENTER);
             }
@@ -1075,36 +1113,43 @@ class PowerNapView extends WatchUi.View {
 
     //! Where the start screen's clock goes (owner request: "Alarm by HH:MM"
     //! reads against it): [x, y, w, h] at FONT_XTINY, centred in the room
-    //! above the first line of the block (`firstY`), or null when that room
-    //! is too small or the WIDEST time of day this watch can show does not
-    //! fit the visible width at those rows (the narrow top of a round
-    //! screen). Sized and decided on that widest time, never on the current
-    //! one, so the clock cannot appear at 9:59 and vanish at 10:00; the
-    //! time is drawn centred in the box, so it sits where it always did. Not a line
+    //! above the first line of the block - the title where it is on screen,
+    //! else the up arrow (L.getBlockTop) - or null when that room is too
+    //! small or the WIDEST time of day this watch can show does not fit the
+    //! visible width at those rows (the narrow top of a round screen).
+    //! `lower`: where it does not fit centred, also try every row below the
+    //! centre down to the bottom of the room, where a round screen's chord
+    //! is wider (solveStartScreen asks for this only above the title). Sized
+    //! and decided on that widest time, never on the current one, so the
+    //! clock cannot appear at 9:59 and vanish at 10:00; the time is drawn
+    //! centred in the box, so it sits where it always did. Not a line
     //! of the block on purpose: on the 454 px fenix 8 the band's slack is
     //! 26 px and a clock line would need 47, so the engine dropped it (or
     //! would have shrunk the number). The round-screen analogue of the
     //! Instinct lens, which shows the clock on every screen.
-    private function startClockBox(dc as Graphics.Dc, L as ScreenLayout, firstY as Number) as Array<Number>? {
+    private function startClockBox(dc as Graphics.Dc, L as ScreenLayout, lower as Boolean) as Array<Number>? {
         if (hasSubscreen()) {
             return null;
         }
         var font = Graphics.FONT_XTINY;
         var fh = dc.getFontHeight(font);
-        var room = firstY - 2;                       // 2 px clear of the first line
+        var room = L.getBlockTop() - 2;              // 2 px clear of the block's first line
         if (room < fh) {
             return null;
         }
-        var y = (room - fh) / 2;
         // The widest time of day, not the current one: the clock must not
         // come and go with the hour. The box is centred on the same point
         // either way, so the time itself is drawn exactly where it was.
         var tw = widestClockWidth(dc, font);
-        var b = L.visibleInkBounds(y, fh);
-        if (tw > b[1] - b[0]) {
-            return null;
+        var y = (room - fh) / 2;
+        var last = lower ? room - fh : y;
+        for (; y <= last; y++) {
+            var b = L.visibleInkBounds(y, fh);
+            if (tw <= b[1] - b[0]) {
+                return [(b[0] + b[1]) / 2 - tw / 2, y, tw, fh] as Array<Number>;
+            }
         }
-        return [(b[0] + b[1]) / 2 - tw / 2, y, tw, fh] as Array<Number>;
+        return null;
     }
 
     private function clockString() as String {
@@ -1574,18 +1619,18 @@ class PowerNapView extends WatchUi.View {
         return [_tapPlusMaxY, _tapMinusMinY, lines[1].slotH, lines[2].slotH, _tapStartMinY] as Array<Number>;
     }
 
-    //! The start screen's clock box [x, y, w, h, firstLineY] (drawn in the
-    //! top margin on devices without a lens), or null when it is not drawn.
+    //! The start screen's clock box [x, y, w, h, blockTop] (drawn in the
+    //! top margin on devices without a lens, above the block's first line
+    //! at blockTop), or null when it is not drawn.
     (:debug)
     function testStartClockBox(dc as Graphics.Dc) as Array<Number>? {
         var lines = [] as Array<LayoutLine>;
         var L = solveStartScreen(dc, lines);
-        var box = startClockBox(dc, L, lines[0].y);
-        if (box == null) {
+        if (_startClock == null) {
             return null;
         }
-        var b = box as Array<Number>;
-        return [b[0], b[1], b[2], b[3], lines[0].y] as Array<Number>;
+        var b = _startClock as Array<Number>;
+        return [b[0], b[1], b[2], b[3], L.getBlockTop()] as Array<Number>;
     }
 
     //! Pretend the watch is set to the 24-hour clock (true) or the 12-hour
@@ -1629,9 +1674,8 @@ class PowerNapView extends WatchUi.View {
             if (subscreenBox() != null) {
                 lensClock = true;
             } else {
-                var box = startClockBox(dc, L, lines[0].y);
-                if (box != null) {
-                    var b = box as Array<Number>;
+                if (_startClock != null) {
+                    var b = _startClock as Array<Number>;
                     boxes.add([b[0], b[1], b[2], b[3], ScreenLayout.BOX_TEXT, "clock '" + clockString() + "'"] as Array);
                 }
             }

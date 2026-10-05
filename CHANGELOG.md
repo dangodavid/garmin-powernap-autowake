@@ -7,6 +7,14 @@ is only a claim about the code, not about what anyone has installed.
 
 This file starts at 1.1.0; it is not filled in backwards.
 
+## 1.2.0 - unreleased
+
+- **Fix**: on the start screen, the time at the top no longer runs into the
+  "POWER NAP" title. It sits above the title now, on the fēnix 7 and on every
+  other watch where both are shown; on the fēnix 7, fēnix 7 Pro, Enduro 3,
+  fēnix 8 Solar 51 mm and vívoactive 5 the title is one size smaller to make
+  room for it.
+
 ## 1.1.0 - unreleased
 
 The five notes the store page carries, and then the rest of what changed for

@@ -645,10 +645,27 @@ it), but NOT as a line of the block: on the 454 px fenix 8 the band's slack
 is 26 px and a clock line needs 47, so the engine dropped it (a priority
 above IMPORTANT would have shrunk the number instead). `drawStartScreen`
 draws it at FONT_XTINY in the margin above the block (`startClockBox`:
-centred in the room above the first line, only if the WIDEST time of day
-this watch can show fits the chord there, `ScreenLayout.visibleInkBounds`),
-the round-screen analogue of the Instinct lens, which shows the clock
-instead of "NAP" on the start screen now. **The decision is taken on the
+centred in the room above the block's FIRST VISIBLE line,
+`ScreenLayout.getBlockTop`, only if the WIDEST time of day this watch can
+show fits the chord there, `ScreenLayout.visibleInkBounds`), the
+round-screen analogue of the Instinct lens, which shows the clock instead
+of "NAP" on the start screen now. That first line is the "POWER NAP" title
+wherever the band has room for it (25 of the 43 products, all with a full
+battery), else the up arrow. Until 1.2.0 the clock was centred above the
+up arrow whatever was there, so on those 25 it was drawn over the title
+(the fenix 7 Solar report of 2026-10-05, on 1.1.0). Where the title is
+the first line and the clock does not fit centred above it,
+`solveStartScreen` first moves it down within that margin (where a round
+chord is wider) and only then steps the title down a font size at a time
+until it fits. Measured on 2026-10-05 (every box of the start screen, 4
+durations x 12/24 h x both batteries, before and after): 18 products
+unchanged to the pixel, 19 with only the clock moved, and on five the title
+is drawn one size smaller - fenix7, fenix7pro, enduro3, fenix8solar51mm
+(FONT_TINY) and vivoactive5 (FONT_XTINY: SMALL never fitted the title's
+width there, TINY was what it drew) - while venu3s keeps the font it drew,
+its slot 4 px shorter. The clock then sits 0-7 px from the top and at least
+2 px above the title. The decision is taken once per solve (`_startClock`) and read by
+the drawing and by every test hook. **The decision is taken on the
 widest time, never on the current one** (`widestClockWidth`: the widest
 minute beside the widest hour in the watch's own 12/24 h format, measured
 once per format and kept): "12:30" is a glyph wider than "3:32", and on a

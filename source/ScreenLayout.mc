@@ -1260,6 +1260,18 @@ class ScreenLayout {
     }
     function getFooterY() as Number { return _footerY; }
 
+    //! The top row of the block: the slot of its first visible line, the
+    //! row text drawn above the block (the start screen's clock) has to
+    //! stay clear of. The band's top when no line is visible.
+    function getBlockTop() as Number {
+        for (var i = 0; i < _lines.size(); i++) {
+            if (_lines[i].visible) {
+                return _lines[i].y;
+            }
+        }
+        return _bandTop;
+    }
+
     //! What a box from testBoxes() is (tests): a text drawn at its font
     //! height, a divider, a shape the view draws (the start screen's
     //! arrows), the banner's filled box, and the text inside the banner.
