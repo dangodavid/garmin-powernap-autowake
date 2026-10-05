@@ -18,8 +18,8 @@ import Toybox.WatchUi;
 //     (round bezel, octagon corners, Instinct subscreen),
 //   * the last line ends above the footer,
 //   * the key information of that screen is still shown.
-// Run the suite on several devices (fenix847mm, instinct3solar45mm, fenix7s,
-// fr255s, venu3s) to cover 176-454 px screens.
+// Run the suite on the protocol set (tools/matrix.sh test --protocol) to
+// cover 176-454 px screens.
 // -----------------------------------------------------------------------------
 
 //! Screen-sized Dc for measuring.

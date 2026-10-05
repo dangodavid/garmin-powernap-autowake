@@ -3,7 +3,7 @@
 ## Rules
 
 - One branch per PR; merge into `main` when the checks pass, then delete the branch. `main` stays publishable.
-- Before a merge: `tools/matrix.sh build` (strict, every product) plus `tools/matrix.sh test` on the protocol set.
+- Before a merge: `tools/matrix.sh build` (strict, every product) plus `tools/matrix.sh test --protocol` (the protocol set, defined once in that script).
 - A PR that changes text, colours or layout also needs simulator screenshots: `instinct3solar45mm` (smallest, and the only 1-bit), `fenix847mm` (largest), `fr255s` (smallest colour screen, so the three shots do not prove the same thing twice).
 - States that need real time are captured on ONE device; for the rest the test speaks (owner, 2026-10-05). Asleep, the alarm and the summary only exist after a nap played in real time through a FIT recording: one run, on `fenix847mm`, before publishing and only when those screens changed - never in a pull request, never a sweep of several devices. The proof across devices is the layout test on every product of the manifest; how many screenshots a change gets, and the 15-minute budget of a pull request, are the verification levels of CONTRIBUTING.md.
 - Supported devices are read from `manifest.xml`, never from a hardcoded list.
@@ -166,7 +166,8 @@ test/
                         #   another, none outside the display (chord, octagon, lens),
                         #   12/24 h x full/low battery, widest time, longest content;
                         #   the popup: whole rows only, the exit popup's font, the
-                        #   longest text that fits on one or two lines
+                        #   longest text that fits on one or two lines; and that
+                        #   font, recomputed, printed for the protocol-set check
   StayAwakeTest.mc      # doze rules, rolling HR reference, nudge, back on guard
   DelegateTest.mc       # buttons/taps through the real delegate + view + detector
   QuietOnsetTest.mc     # QUIET ONSET RULE: the real AlarmManager is silent every second until the alarm
@@ -192,7 +193,11 @@ tools/
                         #   one device at a time, stop at the first failure; --strict
                         #   (default: a WARNING fails the device) / --permissive,
                         #   --release; exit 0 ok, 1 a device failed, 2 could not start;
-                        #   device ids as arguments narrow the run (CONTRIBUTING.md)
+                        #   device ids as arguments narrow the run (CONTRIBUTING.md);
+                        #   --protocol: the protocol set (`protocol_set`, its one
+                        #   definition), and a test run over the whole set fails,
+                        #   naming the product, unless it shows a TINY and an XTINY
+                        #   exit popup (`protocol_fonts`)
   runtests.sh           # build (-t -l 3 -w) + monkeydo -t per device, log per device,
                         #   simulator restart + 3 attempts; PROJ_DIR/OUT_DIR overrides
                         #   (no device list of its own: tools/matrix.sh list feeds it)
@@ -793,9 +798,14 @@ in that font, not even on two lines. Checked by mutation on 2026-10-05: a
 sheet starting on any pixel row, a text never broken onto two lines, and
 the font of the shortest exit text each fail the four OverlapTest functions
 that show a popup, on fenix847mm; every popup in XTINY fails them on
-epix2pro42mm and passes on fenix847mm, where XTINY is the exit font - no
-device of the protocol set has TINY, so only the sweep over all 43 sees that
-one. The Menu2 of "Test alarm" is drawn by the
+epix2pro42mm and passes on fenix847mm, where XTINY is the exit font. Until
+then no device of the protocol set had TINY, so only the sweep over all 43
+saw that one; since 2026-10-05 the set holds vivoactive6 (TINY) in place of
+vivoactive5 (XTINY), and `tools/matrix.sh` fails a test run over the whole
+set, naming the product, unless the set shows both fonts
+(`testOverlap_exitPopupFontForTheProtocolSet` prints each product's,
+recomputed by the test's own geometry, never read from the view). The
+Menu2 of "Test alarm" is drawn by the
 firmware and has no boxes; the contact sheets of a layout PR are its check.
 `Palette.fg()` maps every colour to white on the 1-bit Instinct 3
 Solar (detected by its semi-octagon screen shape).
@@ -846,11 +856,12 @@ frozen, assert exact values. All helpers are `(:debug)` and excluded from
 release builds.
 
 **What to run and when** - the per-PR pair (strict build on every product plus
-the suite on the protocol set), the screenshots a text/colour/layout PR needs,
-the pre-release sweep, the store package, and why `--permissive` is a
-diagnostic only: `CONTRIBUTING.md`. The device list always comes from
-`manifest.xml` through `tools/matrix.sh list`; `tools/runtests.sh <device> ...`
-stays for ad-hoc runs on one or two devices.
+`tools/matrix.sh test --protocol`, the suite on the protocol set), the
+screenshots a text/colour/layout PR needs, the pre-release sweep, the store
+package, and why `--permissive` is a diagnostic only: `CONTRIBUTING.md`. The
+device list always comes from `manifest.xml` through `tools/matrix.sh list`,
+the protocol set from `tools/matrix.sh list --protocol`;
+`tools/runtests.sh <device> ...` stays for ad-hoc runs on one or two devices.
 
 **Layout work budget:** the bytecode-replay watchdog harness that measured the
 87k worst Instinct frame on the pre-1.1.0 code cannot run the 1.1.0 code:
