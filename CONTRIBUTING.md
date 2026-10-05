@@ -265,16 +265,45 @@ The smallest screen in the matrix is also the only 1-bit one, so those two
 requirements land on the same device; `fr255s` is the third shot because two
 pictures of `instinct3solar45mm` would prove the same thing twice.
 
+### Three levels of verification
+
+Every check in this section belongs to one of three levels, and each level
+has its budget.
+
+**Per pull request - under 15 minutes.**
+
+- `tools/matrix.sh build`, strict, on every product of the manifest.
+- `tools/matrix.sh test` on the protocol set, plus the watch of the user
+  report the pull request answers, if there is one.
+- Screenshots of instant states only - anything a key press reaches: the
+  start screen, its menu, a popup, the alarm preview - on at most three
+  representatives of the class table below. All 21 only when a screen the
+  firmware draws has changed (the menu): the tests cannot see those.
+- No real-time run.
+
+**Before publishing.**
+
+- The full suite on every product of the manifest, and the release build
+  (the commands and the store package are below).
+- One real-time run on `fenix847mm` - a nap played from a FIT recording - and
+  only if the asleep or the alarm screens changed.
+
+**An audit on every device - only for a bug from production.** Once, for that
+bug, with its estimate said before it starts: the layout tests and the
+screenshots over every product, the way the start screen's clock was traced
+on 2026-10-05 (pull request #4).
+
+**Estimate first.** At the start of every pull request, say how long its
+verification will take. Over 15 minutes, stop and ask before running it.
+
 ### Screenshots are taken per screen class, never per product
 
 One product for each combination of resolution, screen shape and family -
 fēnix, Forerunner, Venu, vívoactive, Instinct, epix, MARQ - and never all the
 products of the manifest: there the tests speak (`LayoutTest` and
 `OverlapTest` lay out every screen on every product). The three shots above
-are three of these classes; a fix is shown on the classes of the products
-where the layout test found something, each through its representative; and
-a state that needs real time (asleep, the alarm, the summary: a nap played
-through a FIT recording) is captured once, on `fenix847mm` (`CLAUDE.md`).
+are three of these classes; how many representatives a change is shown on,
+and when a real-time run is due, is set by the levels above.
 
 The D2, Descent and Enduro watches are built on another family's hardware and
 count with it - their screens measured box for box the same as their base

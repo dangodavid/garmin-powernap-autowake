@@ -5,7 +5,7 @@
 - One branch per PR; merge into `main` when the checks pass, then delete the branch. `main` stays publishable.
 - Before a merge: `tools/matrix.sh build` (strict, every product) plus `tools/matrix.sh test` on the protocol set.
 - A PR that changes text, colours or layout also needs simulator screenshots: `instinct3solar45mm` (smallest, and the only 1-bit), `fenix847mm` (largest), `fr255s` (smallest colour screen, so the three shots do not prove the same thing twice).
-- States that need real time are captured on ONE device; for the rest the test speaks (owner, 2026-10-05). Asleep, the alarm and the summary only exist after a nap played in real time through a FIT recording: one run, on `fenix847mm`, never a sweep of several devices. The proof across devices is the layout test on every product of the manifest; after a fix, screenshots are redone only for the screens the fix changed, on the devices where the test found something.
+- States that need real time are captured on ONE device; for the rest the test speaks (owner, 2026-10-05). Asleep, the alarm and the summary only exist after a nap played in real time through a FIT recording: one run, on `fenix847mm`, before publishing and only when those screens changed - never in a pull request, never a sweep of several devices. The proof across devices is the layout test on every product of the manifest; how many screenshots a change gets, and the 15-minute budget of a pull request, are the verification levels of CONTRIBUTING.md.
 - Supported devices are read from `manifest.xml`, never from a hardcoded list.
 - New tests are for logic, not for texts and colours.
 - Every build meant for a wrist carries its commit in its file name
