@@ -176,6 +176,9 @@ resources/
   properties/           # Default property values
   settings/             # Companion app settings UI definitions
   strings/              # Localized strings (English only), the on-screen hints included
+resources-semioctagon-176x176/
+                        # the 176 px Instinct's shorter menu title ("NAP"); the
+                        #   SDK adds the folder for that resolution by itself
 resources-launcher/     # LauncherIcon at each device's native size (40 MIP, 54, 56, 62 1-bit,
                         #   65, 70), wired per device in monkey.jungle; PNGs drawn by
                         #   generate_launcher_icons.py (outside every resource path)
@@ -608,9 +611,18 @@ is BACK". Opening the menu or the preview forgets an armed BACK
 - "Test alarm" (v1.1.0, first part of deferred #8): on the start screen
   `WatchUi.KEY_MENU` in `handleKey` (hold UP on 5-button watches, the system
   menu gesture elsewhere) and, on touch screens, `onHold` on the number/label/
-  hint zone (`tapActionAt == 0`) call `openMenu()`: a `WatchUi.Menu2` "Power
-  Nap" with one item "Test alarm" / "Feel the wake-up ramp" (`:testAlarm`,
-  `PowerNapMenuDelegate`, pushed with `pushView`). Selecting it calls
+  hint zone (`tapActionAt == 0`) call `openMenu()`: a `WatchUi.Menu2` titled
+  "POWER NAP" with one item "Test alarm" and no subtitle (`:testAlarm`,
+  `PowerNapMenuDelegate`, pushed with `pushView`). The firmware lays the
+  menu out, so its words are in strings.xml (`MenuTitle`, `MenuTestAlarm`)
+  and checked by screenshot on every product, not by OverlapTest. Since
+  1.2.0: capitals as on the start screen (venu3s's selection band cut the
+  descender of "Power Nap"); "NAP" on the 176 px Instinct, where the title
+  shares a row with the lens and broke onto two lines
+  (`resources-semioctagon-176x176`, picked by the SDK for that resolution);
+  the subtitle "Feel the wake-up ramp" is gone - the firmware cut it short on
+  enduro3, fenix8solar47mm and fenix8solar51mm, clipped it on the Instinct,
+  and the preview screen says it anyway. Selecting it calls
   `view.startPreview()` -> `AlarmManager.startPreview()`: every RAMP step but
   the persistent row once, 3 s apart (`_previewTimer`, `onPreviewTick`), the
   configured alarm type, the same backlight rule, no persistent phase, ends by

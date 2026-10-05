@@ -14,6 +14,9 @@ This file starts at 1.1.0; it is not filled in backwards.
   other watch where both are shown; on the fēnix 7, fēnix 7 Pro, Enduro 3,
   fēnix 8 Solar 51 mm and vívoactive 5 the title is one size smaller to make
   room for it.
+- **The Test alarm menu** is titled POWER NAP, as the start screen is (NAP on
+  the Instinct 3 Solar, beside the lens), and its one item is just "Test
+  alarm": the line under it was cut short on some watches.
 
 ## 1.1.0 - unreleased
 

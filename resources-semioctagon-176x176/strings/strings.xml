@@ -1,0 +1,6 @@
+<strings>
+    <!-- 176x176 semi-octagon (the Instinct 3 Solar): the menu's title
+         shares its row with the lens, and "POWER NAP" breaks onto two
+         lines there. -->
+    <string id="MenuTitle">NAP</string>
+</strings>

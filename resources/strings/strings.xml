@@ -26,6 +26,17 @@
     <string id="StartHintButton">START to begin</string>
     <string id="StartHintButtonShort">START</string>
 
+    <!-- The start screen's menu, a Menu2 the watch's firmware lays out:
+         nothing here is measured or fitted by the app. The title reads as
+         the start screen's does (and has no descender for a selection band
+         to cut). The 176 px Instinct, where the title shares its row with
+         the lens, has a shorter one in resources-semioctagon-176x176. The
+         item has no subtitle: the firmware cut "Feel the wake-up ramp"
+         short on several watches, and the preview it opens says so on its
+         own screen. -->
+    <string id="MenuTitle">POWER NAP</string>
+    <string id="MenuTestAlarm">Test alarm</string>
+
     <!-- What a second BACK does, shown as a popup after the first one. One
          per thing that would be lost: the nap, the ringing alarm, Stay
          Awake. Longest first, as above. Each one names the thing the way

@@ -351,7 +351,8 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     }
 
     //! The start-screen menu (MENU key, or a long press on a touch screen):
-    //! "Test alarm" plays the wake-up ramp once. Never during a nap.
+    //! "Test alarm" plays the wake-up ramp once. Never during a nap. The
+    //! firmware draws it; its words are in the resources (strings.xml).
     private function openMenu() as Void {
         _menuRequests += 1;
         _view.cancelConfirm();
@@ -359,8 +360,9 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
             return;
         }
         try {
-            var menu = new WatchUi.Menu2({:title => "Power Nap"});
-            menu.addItem(new WatchUi.MenuItem("Test alarm", "Feel the wake-up ramp", :testAlarm, null));
+            var menu = new WatchUi.Menu2({:title => WatchUi.loadResource(Rez.Strings.MenuTitle) as String});
+            menu.addItem(new WatchUi.MenuItem(WatchUi.loadResource(Rez.Strings.MenuTestAlarm) as String, null,
+                :testAlarm, null));
             WatchUi.pushView(menu, new PowerNapMenuDelegate(_view), WatchUi.SLIDE_UP);
         } catch (e instanceof Lang.Exception) {
             // No menu on this device: nothing to do.
