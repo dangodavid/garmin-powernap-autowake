@@ -62,11 +62,13 @@ upload form - so the only authoritative answer to "what is live" is the app's
 own page in the Connect IQ store and its entry in the developer dashboard.
 Look there before trusting any number written down here.
 
-As of 2026-09-20: **published = 1.0.2 (internal 2)**. **1.1.0 is finished code
-on `main` that nobody has downloaded**: every "v1.1.0" and "since 1.1.0" note
-below means "since the unreleased 1.1.0", not "in the version users run". So
-Stay Awake, the ramp table, "Test alarm", the BACK key model and "Alarm by"
-are all unreleased.
+As of 2026-10-05: **published = 1.1.0**, approved in the Connect IQ store on
+2026-09-20: the code of `main` at `1d2c860`, tagged `v1.1.0`, with its GitHub
+release (notes = the 1.1.0 section of CHANGELOG.md). Stay Awake, the ramp
+table, "Test alarm", the BACK key model and "Alarm by" are what users run;
+every "v1.1.0" and "since 1.1.0" note below means that store version. 1.2.0
+is the next one (PR #4 so far: the start screen's clock above the title,
+the menu's words, OverlapTest).
 
 **Every build meant for a wrist carries its commit in its file name**:
 `PowerNap-<version>-<short sha>-<device>.prg` for a sideload (that is the

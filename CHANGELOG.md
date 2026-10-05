@@ -18,7 +18,7 @@ This file starts at 1.1.0; it is not filled in backwards.
   the Instinct 3 Solar, beside the lens), and its one item is just "Test
   alarm": the line under it was cut short on some watches.
 
-## 1.1.0 - unreleased
+## 1.1.0 - 2026-09-20
 
 The five notes the store page carries, and then the rest of what changed for
 the person wearing the watch.
