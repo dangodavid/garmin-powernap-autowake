@@ -265,6 +265,66 @@ The smallest screen in the matrix is also the only 1-bit one, so those two
 requirements land on the same device; `fr255s` is the third shot because two
 pictures of `instinct3solar45mm` would prove the same thing twice.
 
+### Screenshots are taken per screen class, never per product
+
+One product for each combination of resolution, screen shape and family -
+fēnix, Forerunner, Venu, vívoactive, Instinct, epix, MARQ - and never all the
+products of the manifest: there the tests speak (`LayoutTest` and
+`OverlapTest` lay out every screen on every product). The three shots above
+are three of these classes; a fix is shown on the classes of the products
+where the layout test found something, each through its representative; and
+a state that needs real time (asleep, the alarm, the summary: a nap played
+through a FIT recording) is captured once, on `fenix847mm` (`CLAUDE.md`).
+
+The D2, Descent and Enduro watches are built on another family's hardware and
+count with it - their screens measured box for box the same as their base
+watch's on 2026-10-05: D2 Mach 1 and Descent MK3 with epix, D2 Mach 2 and
+Enduro 3 with fēnix. Resolution and shape come from the SDK's device
+definition (`compiler.json`). The representative is the protocol device or
+the reported device where the class has one, else the class's base model.
+
+| Family | Screen | Representative |
+|--------|--------|----------------|
+| fēnix | 240 round | `fenix7s` |
+| fēnix | 260 round | `fenix7` |
+| fēnix | 280 round | `fenix7x` |
+| fēnix | 416 round | `fenix843mm` |
+| fēnix | 454 round | `fenix847mm` |
+| epix | 390 round | `epix2pro42mm` |
+| epix | 416 round | `epix2` |
+| epix | 454 round | `epix2pro51mm` |
+| Forerunner | 218 round | `fr255s` |
+| Forerunner | 260 round | `fr255` |
+| Forerunner | 360 round | `fr265s` |
+| Forerunner | 390 round | `fr57042mm` |
+| Forerunner | 416 round | `fr265` |
+| Forerunner | 454 round | `fr965` |
+| Venu | 390 round | `venu3s` |
+| Venu | 454 round | `venu3` |
+| vívoactive | 390 round | `vivoactive5` |
+| Instinct | 176 semi-octagon | `instinct3solar45mm` |
+| Instinct | 390 round | `instinct3amoled45mm` |
+| Instinct | 416 round | `instinct3amoled50mm` |
+| MARQ | 390 round | `marq2` |
+
+21 classes for the 43 products of `manifest.xml` on 2026-10-05. A product
+added to the manifest joins the class of its resolution, shape and family, or
+opens a new row with itself as the representative, in the same pull request.
+The table holds the representatives only: which products the app supports is
+still read from the manifest and nowhere else.
+
+A class is the rule for what to photograph, not a promise that its members
+draw alike - on 2026-10-05 the start screen showed its title on the Venu 3 and
+not on the Venu 4 45 mm, both Venu 454, and the fēnix 7X and the fēnix 8 Solar
+51 mm needed different fixes at 280. The screenshot shows the representative;
+the tests answer for the rest.
+
+### Screenshots never hold up a pull request
+
+Push the branch and report with the build and the tests first. The
+screenshots follow, in a message of their own, when they are taken; if they
+show a problem, the fix is one more commit on the same pull request.
+
 ### Before publishing
 
 The full sweep, all three strict, every product in the manifest:
