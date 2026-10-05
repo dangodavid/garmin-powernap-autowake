@@ -236,11 +236,11 @@ cannot break one of them while the other keeps working.
 
 ### Every pull request
 
-Two commands, together under seven minutes on a warm SDK:
+Two commands, together about eight minutes on a warm SDK:
 
 ```bash
 tools/matrix.sh build                          # strict, every product in the manifest, ~2 min
-tools/matrix.sh test --protocol                # the suite on the protocol set, ~5 min
+tools/matrix.sh test --protocol                # the suite on the protocol set, ~6 min
 ```
 
 The build is strict and covers **every** product, because a resource or a text
@@ -267,9 +267,10 @@ of the product it runs on, recomputed by the test's own geometry and never
 read from the view, and a test run that covered the whole set fails unless
 TINY and XTINY are both among them. The failure names the product the set
 holds for the missing font (`protocol_fonts`, beside `protocol_set`).
-Taking `vivoactive6` out of the set on 2026-10-05 failed the run with "no
-product of it draws the popups in TINY: vivoactive6, its product for TINY,
-is not in it".
+Checked by mutation on 2026-10-05: moving every popup to XTINY failed four
+OverlapTest functions on `vivoactive6` (172 popup screens), and taking
+`vivoactive6` out of the set failed the run with "no product of it draws
+the popups in TINY: vivoactive6, its product for TINY, is not in it".
 
 ### Pull requests that touch text, colours or layout
 

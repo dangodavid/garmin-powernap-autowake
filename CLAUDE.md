@@ -801,7 +801,8 @@ that show a popup, on fenix847mm; every popup in XTINY fails them on
 epix2pro42mm and passes on fenix847mm, where XTINY is the exit font. Until
 then no device of the protocol set had TINY, so only the sweep over all 43
 saw that one; since 2026-10-05 the set holds vivoactive6 (TINY) in place of
-vivoactive5 (XTINY), and `tools/matrix.sh` fails a test run over the whole
+vivoactive5 (XTINY), where every popup in XTINY fails the same four
+(172 popup screens), and `tools/matrix.sh` fails a test run over the whole
 set, naming the product, unless the set shows both fonts
 (`testOverlap_exitPopupFontForTheProtocolSet` prints each product's,
 recomputed by the test's own geometry, never read from the view). The
