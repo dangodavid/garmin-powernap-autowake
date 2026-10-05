@@ -148,7 +148,7 @@ Going back to sleep needs 2 still minutes, no heart-rate condition, and restarts
 export CIQ_HOME=~/connectiq-sdk
 
 $CIQ_HOME/bin/monkeyc \
-  -o bin/PowerNap.prg \
+  -o bin/PowerNap-<version>-<sha>-<device>.prg \
   -f monkey.jungle \
   -d fenix847mm \
   -y /path/to/developer_key.der
@@ -166,7 +166,7 @@ tools/matrix.sh build --release # the same devices, built as the store package i
 
 ```bash
 $CIQ_HOME/bin/connectiq &
-$CIQ_HOME/bin/monkeydo bin/PowerNap.prg fenix847mm
+$CIQ_HOME/bin/monkeydo bin/PowerNap-<version>-<sha>-<device>.prg fenix847mm
 ```
 
 ### Run unit tests
@@ -202,7 +202,7 @@ it and copy it across:
 
 1. Build the `.prg` for your specific device.
 2. Connect the watch to your computer via USB.
-3. Copy `bin/PowerNap.prg` to the `GARMIN/APPS/` folder on the watch.
+3. Copy `bin/PowerNap-<version>-<sha>-<device>.prg` to the `GARMIN/APPS/` folder on the watch.
 4. Eject and unplug. The app appears in your watch's app list immediately.
 
 ---

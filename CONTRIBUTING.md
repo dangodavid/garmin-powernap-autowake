@@ -97,7 +97,7 @@ respectively.
 **Command line:**
 ```bash
 export CIQ_HOME=~/connectiq-sdk
-$CIQ_HOME/bin/monkeyc -o bin/PowerNap.prg -f monkey.jungle -d fenix847mm -y dev_key.der
+$CIQ_HOME/bin/monkeyc -o bin/PowerNap-<version>-<sha>-<device>.prg -f monkey.jungle -d fenix847mm -y dev_key.der
 ```
 
 Every product in `manifest.xml`, one device at a time, stopping at the first
@@ -106,7 +106,7 @@ failure: `tools/matrix.sh` (see [The device matrix](#the-device-matrix-toolsmatr
 **Simulator:**
 ```bash
 $CIQ_HOME/bin/connectiq &
-$CIQ_HOME/bin/monkeydo bin/PowerNap.prg fenix847mm
+$CIQ_HOME/bin/monkeydo bin/PowerNap-<version>-<sha>-<device>.prg fenix847mm
 ```
 
 ## Running Tests
@@ -286,7 +286,7 @@ has its budget.
 - The full suite on every product of the manifest, and the release build
   (the commands and the store package are below).
 - One real-time run on `fenix847mm` - a nap played from a FIT recording - and
-  only if the asleep or the alarm screens changed.
+  only if the asleep, the alarm or the summary screens changed.
 
 **An audit on every device - only for a bug from production.** Once, for that
 bug, with its estimate said before it starts: the layout tests and the
@@ -294,14 +294,18 @@ screenshots over every product, the way the start screen's clock was traced
 on 2026-10-05 (pull request #4).
 
 **Estimate first.** At the start of every pull request, say how long its
-verification will take. Over 15 minutes, stop and ask before running it.
+verification will take. The 15 minutes are a limit on the time that passes,
+not only on the estimate. If the estimate is over 15 minutes, ask before
+starting. If a verification started under the limit reaches 15 minutes, stop
+it there, say what is done and what is left, and ask whether to go on. What
+has already finished is not redone from scratch.
 
 ### Screenshots are taken per screen class, never per product
 
 One product for each combination of resolution, screen shape and family -
 fēnix, Forerunner, Venu, vívoactive, Instinct, epix, MARQ - and never all the
-products of the manifest: there the tests speak (`LayoutTest` and
-`OverlapTest` lay out every screen on every product). The three shots above
+products of the manifest, outside an audit: there the tests speak (`LayoutTest`
+and `OverlapTest` lay out every screen on every product). The three shots above
 are three of these classes; how many representatives a change is shown on,
 and when a real-time run is due, is set by the levels above.
 
