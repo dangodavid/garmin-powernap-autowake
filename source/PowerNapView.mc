@@ -109,6 +109,8 @@ class PowerNapView extends WatchUi.View {
     private var _clockWidth24 as Boolean = false;
 
     private var _forceBatteryPct as Number = -1;     // tests: >= 0 replaces the battery level
+    private var _force24Hour as Number = -1;         // tests: 0 = 12 h, 1 = 24 h, -1 = the watch's own
+    private var _forceClockSec as Number = -1;       // tests: >= 0 replaces the time of day shown
     private var _msOffset as Number = 0;             // tests: moves the millisecond clock
 
     // Below this battery level (and not charging) the nap screens warn.
@@ -1106,7 +1108,8 @@ class PowerNapView extends WatchUi.View {
     }
 
     private function clockString() as String {
-        return formatMoment(new Time.Moment(_detector.getNowSec()));
+        var sec = (_forceClockSec >= 0) ? _forceClockSec : _detector.getNowSec();
+        return formatMoment(new Time.Moment(sec));
     }
 
     //! A short text centred in the Instinct's subscreen lens.
@@ -1121,6 +1124,19 @@ class PowerNapView extends WatchUi.View {
         dc.setColor(Palette.fg(color, invert), Graphics.COLOR_TRANSPARENT);
         dc.drawText(box[0] + box[2] / 2, box[1] + (box[3] - fh) / 2, Graphics.FONT_XTINY, text,
             Graphics.TEXT_JUSTIFY_CENTER);
+    }
+
+    //! The box drawInLens() draws `text` into: [x, y, w, h] (tests).
+    (:debug)
+    private function lensTextBox(dc as Graphics.Dc, text as String) as Array<Number>? {
+        var sub = subscreenBox();
+        if (sub == null) {
+            return null;
+        }
+        var box = sub as Array<Number>;
+        var fh = dc.getFontHeight(Graphics.FONT_XTINY);
+        var tw = dc.getTextWidthInPixels(text, Graphics.FONT_XTINY);
+        return [box[0] + box[2] / 2 - tw / 2, box[1] + (box[3] - fh) / 2, tw, fh] as Array<Number>;
     }
 
     //! Battery percentage when it is below LOW_BATTERY_PCT and the watch is
@@ -1427,6 +1443,9 @@ class PowerNapView extends WatchUi.View {
     }
 
     private function is24Hour() as Boolean {
+        if (_force24Hour >= 0) {
+            return _force24Hour == 1;
+        }
         try {
             return System.getDeviceSettings().is24Hour;
         } catch (e instanceof Lang.Exception) {
@@ -1567,5 +1586,79 @@ class PowerNapView extends WatchUi.View {
         }
         var b = box as Array<Number>;
         return [b[0], b[1], b[2], b[3], lines[0].y] as Array<Number>;
+    }
+
+    //! Pretend the watch is set to the 24-hour clock (true) or the 12-hour
+    //! one (false), whatever the simulator says.
+    (:debug)
+    function testForce24Hour(is24 as Boolean) as Void {
+        _force24Hour = is24 ? 1 : 0;
+    }
+
+    //! Show this time of day (seconds since the epoch) wherever a screen
+    //! shows the clock; -1 goes back to the detector's clock.
+    (:debug)
+    function testForceClockSec(sec as Number) as Void {
+        _forceClockSec = sec;
+    }
+
+    //! Lay the start screen out as a release build does: without the
+    //! "dev #..." label, which only debug builds carry.
+    (:debug)
+    function testHideDebugLabel() as Void {
+        _debugLabel = "";
+    }
+
+    //! Every box the current screen draws, exactly as onUpdate() draws it:
+    //! the layout's lines, footer and banner (ScreenLayout.testBoxes), plus
+    //! what the view draws by itself - the start screen's arrows and its
+    //! clock in the top margin, and the clock in the Instinct lens.
+    //! Entries are [x, y, w, h, kind, label] (kind: ScreenLayout.BOX_*).
+    (:debug)
+    function testScreenBoxes(dc as Graphics.Dc) as Array<Array> {
+        var boxes;
+        var lensClock = false;
+        if (!_started && !_alarm.isPreviewing()) {
+            var lines = [] as Array<LayoutLine>;
+            var L = solveStartScreen(dc, lines);
+            boxes = L.testBoxes(dc);
+            var cx = dc.getWidth() / 2;
+            var arrowH = lines[0].slotH - 1;
+            boxes.add([cx - arrowH, lines[0].y, 2 * arrowH + 1, arrowH + 1, ScreenLayout.BOX_SHAPE, "arrow up"] as Array);
+            boxes.add([cx - arrowH, lines[3].y, 2 * arrowH + 1, arrowH + 1, ScreenLayout.BOX_SHAPE, "arrow down"] as Array);
+            if (subscreenBox() != null) {
+                lensClock = true;
+            } else {
+                var box = startClockBox(dc, L, lines[0].y);
+                if (box != null) {
+                    var b = box as Array<Number>;
+                    boxes.add([b[0], b[1], b[2], b[3], ScreenLayout.BOX_TEXT, "clock '" + clockString() + "'"] as Array);
+                }
+            }
+        } else {
+            boxes = buildLayout(dc).testBoxes(dc);
+            lensClock = showsClock() && hasSubscreen();
+        }
+        if (lensClock) {
+            var text = clockString();
+            var lb = lensTextBox(dc, text);
+            if (lb != null) {
+                var b = lb as Array<Number>;
+                boxes.add([b[0], b[1], b[2], b[3], ScreenLayout.BOX_LENS_TEXT, "lens clock '" + text + "'"] as Array);
+            }
+        }
+        return boxes;
+    }
+
+    //! The summary's progress ring, when it is drawn: the radius inside
+    //! which every text has to stay (the ring's inner edge), else 0.
+    (:debug)
+    function testRingInnerRadius(dc as Graphics.Dc) as Number {
+        if (_started && _detector.getState() == SleepDetector.STATE_SUMMARY
+            && _detector.hasSleptAtLeastOnce() && isRoundScreen()) {
+            // drawRing: radius w/2 - 6, a 5 px pen centred on it.
+            return dc.getWidth() / 2 - 6 - 3;
+        }
+        return 0;
     }
 }

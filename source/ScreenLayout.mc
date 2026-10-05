@@ -1260,6 +1260,53 @@ class ScreenLayout {
     }
     function getFooterY() as Number { return _footerY; }
 
+    //! What a box from testBoxes() is (tests): a text drawn at its font
+    //! height, a divider, a shape the view draws (the start screen's
+    //! arrows), the banner's filled box, and the text inside the banner.
+    (:debug) static const BOX_TEXT = 0;
+    (:debug) static const BOX_DIVIDER = 1;
+    (:debug) static const BOX_SHAPE = 2;
+    (:debug) static const BOX_BANNER = 3;
+    (:debug) static const BOX_BANNER_TEXT = 4;
+    (:debug) static const BOX_LENS_TEXT = 5;      // the clock the view draws in the Instinct lens
+
+    //! Every box this layout draws, as draw() draws it (tests): one
+    //! [x, y, w, h, kind, label] per visible text line (its text at the font
+    //! it is drawn in, the full font height), per divider, for the footer,
+    //! and for the banner's box and its text. Spacers are left out: the view
+    //! draws into them and adds what it draws there.
+    (:debug)
+    function testBoxes(dc as Graphics.Dc) as Array<Array> {
+        var out = [] as Array<Array>;
+        for (var i = 0; i < _lines.size(); i++) {
+            var line = _lines[i];
+            if (!line.visible || line.spacerH > 0) { continue; }
+            if (line.isDivider) {
+                if (line.drawX1 > line.drawX) {
+                    out.add([line.drawX, line.y, line.drawX1 - line.drawX + 1, 1, BOX_DIVIDER, "divider"] as Array);
+                }
+                continue;
+            }
+            var w = dc.getTextWidthInPixels(line.drawText, line.drawFont);
+            out.add([line.drawX - w / 2, line.drawY, w, dc.getFontHeight(line.drawFont), BOX_TEXT,
+                "'" + line.drawText + "'"] as Array);
+        }
+        if (_footerText != null) {
+            var text = _footerText as String;
+            var w = dc.getTextWidthInPixels(text, _footerFont);
+            out.add([_footerX - w / 2, _footerY, w, dc.getFontHeight(_footerFont), BOX_TEXT,
+                "footer '" + text + "'"] as Array);
+        }
+        if (_bannerTexts != null) {
+            out.add([_bannerX, _bannerY, _bannerW, _bannerH, BOX_BANNER, "banner box"] as Array);
+            var fh = dc.getFontHeight(_bannerFont);
+            var w = dc.getTextWidthInPixels(_bannerText, _bannerFont);
+            out.add([_bannerX + _bannerW / 2 - w / 2, _bannerY + (_bannerH - fh) / 2, w, fh, BOX_BANNER_TEXT,
+                "banner '" + _bannerText + "'"] as Array);
+        }
+        return out;
+    }
+
     //! Visible [left, right] at the ink rows of a text box of font height
     //! fh starting at row y (display outline, clip circle, Instinct lens),
     //! for text drawn outside the band: the start screen's clock in the

@@ -159,6 +159,9 @@ test/
   SummaryTest.mc        # finish/cancel paths, statistics, RingMath
   RegressionTest.mc     # HR wake rules, frozen settings, lifecycle, channel fallback, timer wrap
   LayoutTest.mc         # every screen (start, nap, peek, Stay Awake) fits the running device
+  OverlapTest.mc        # every screen taken apart into the boxes it draws: none over
+                        #   another, none outside the display (chord, octagon, lens),
+                        #   12/24 h x full/low battery, widest time, longest content
   StayAwakeTest.mc      # doze rules, rolling HR reference, nudge, back on guard
   DelegateTest.mc       # buttons/taps through the real delegate + view + detector
   QuietOnsetTest.mc     # QUIET ONSET RULE: the real AlarmManager is silent every second until the alarm
@@ -715,7 +718,16 @@ After a wake episode the monitoring screen drops "Alarm N min after sleep"
 fits the round chord (or the Instinct subscreen) at its own rows.
 `ScreenLayout.testDescribe()` (debug) prints every line's visibility and position. `LayoutTest.mc` checks
 every nap-screen state on the device it runs on; run it on 176-454 px devices after
-any UI change. `Palette.fg()` maps every colour to white on the 1-bit Instinct 3
+any UI change. `OverlapTest.mc` checks what LayoutTest cannot see: things drawn
+OVER each other, including what the view draws outside the layout (the start
+screen's clock and arrows, the lens clock). `ScreenLayout.testBoxes()` and
+`PowerNapView.testScreenBoxes()` (debug) give every box a screen draws,
+`[x, y, w, h, kind, label]`; a text box is the full font height, held to the
+display at its ink rows (15-85 %, the engine's own model). The popup is a
+layer of its own (it covers what is under it by design): its box inside the
+display, its text inside its box. The Menu2 of "Test alarm" is drawn by the
+firmware and has no boxes; the contact sheets of a layout PR are its check.
+`Palette.fg()` maps every colour to white on the 1-bit Instinct 3
 Solar (detected by its semi-octagon screen shape).
 Colours come from `Palette`, never spelled out in a view: `TEXT_PRIMARY` /
 `TEXT_SECONDARY` / `TEXT_TERTIARY` (what the screen is about / the words
@@ -734,7 +746,7 @@ nap screen. It is still measured, fitted and centred as one text.
 Test names are global, so each file uses its own prefix (`testOnset_`, `testWake_`,
 `testTiming_`, `testAlarm_`, `testSummary_`, `testReg_`, `testLayout_`, `testStay_`,
 `testDelegate_`, `testQuiet_`, `testMotion_`, `testInv_`, `testTrace_`,
-`testStart_`). Alarm tests derive tone
+`testStart_`, `testOverlap_`). Alarm tests derive tone
 expectations from `Attention has :playTone` (vívoactive 5/6 have none) and must
 not build melodies without `Attention has :ToneProfile` (Symbol Not Found there).
 

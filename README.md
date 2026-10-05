@@ -241,6 +241,7 @@ test/
   SummaryTest.mc                Finish/cancel paths, statistics, RingMath
   RegressionTest.mc             HR wake rules, frozen settings, lifecycle, channel fallback
   LayoutTest.mc                 Every screen fits the running device
+  OverlapTest.mc                Nothing on any screen drawn over anything else or outside the display
   StayAwakeTest.mc              Stay Awake: doze rules, rolling HR reference, nudge, guard
   DelegateTest.mc               Buttons and taps through the real delegate and view
   QuietOnsetTest.mc             Quiet onset rule: no output before the alarm, every second, real alarm manager
