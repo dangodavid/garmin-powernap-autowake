@@ -103,16 +103,16 @@ its name, and it was sideloaded and tested by mistake. It was deleted on
 **Command-line (SDK lives under Library on macOS; `~/connectiq-sdk` is a symlink convention):**
 ```bash
 SDK="$HOME/Library/Application Support/Garmin/ConnectIQ/Sdks/<sdk-folder>"
-"$SDK/bin/monkeyc" -o bin/PowerNap.prg -f monkey.jungle -d fenix847mm -y ~/developer_key.der -r
+"$SDK/bin/monkeyc" -o bin/PowerNap-<version>-<sha>-<device>.prg -f monkey.jungle -d fenix847mm -y ~/developer_key.der -r
 ```
 
 **Simulator:**
 ```bash
 "$SDK/bin/connectiq" &
-"$SDK/bin/monkeydo" bin/PowerNap.prg fenix847mm
+"$SDK/bin/monkeydo" bin/PowerNap-<version>-<sha>-<device>.prg fenix847mm
 ```
 
-**Deploy to device:** Copy `bin/PowerNap.prg` to `GARMIN/APPS/` via USB.
+**Deploy to device:** Copy `bin/PowerNap-<version>-<sha>-<device>.prg` to `GARMIN/APPS/` via USB.
 
 **Run unit tests (VS Code):** `Ctrl+Shift+P` -> *Monkey C: Run Tests*
 
