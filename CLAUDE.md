@@ -164,7 +164,9 @@ test/
   LayoutTest.mc         # every screen (start, nap, peek, Stay Awake) fits the running device
   OverlapTest.mc        # every screen taken apart into the boxes it draws: none over
                         #   another, none outside the display (chord, octagon, lens),
-                        #   12/24 h x full/low battery, widest time, longest content
+                        #   12/24 h x full/low battery, widest time, longest content;
+                        #   the popup: whole rows only, the exit popup's font, the
+                        #   longest text that fits on one or two lines
   StayAwakeTest.mc      # doze rules, rolling HR reference, nudge, back on guard
   DelegateTest.mc       # buttons/taps through the real delegate + view + detector
   QuietOnsetTest.mc     # QUIET ONSET RULE: the real AlarmManager is silent every second until the alarm
@@ -485,8 +487,9 @@ The three texts live in `resources/strings/strings.xml`
 `PowerNapView.backHintTexts(BACK_HINT_NAP|ALARM|SESSION)`), not in the view -
 unlike the older `HINT_EXIT`/`HINT_STOP` consts, which stay where they are.
 `testLayout_backHintBanner` fits each of them on every screen it can appear
-on, on the device the suite runs on; the 176 px Instinct falls back to
-"BACK x2: end" / "BACK x2: stop".
+on, on the device the suite runs on. Since 1.2.0 the longest of them fits
+every popup screen of every product, on two lines where one is too narrow
+(measured on all 43 on 2026-10-05; see "Popup hint" below).
 
 So from the nap alarm the way out is BACK x2 (start screen), BACK x2 (exit);
 from the doze alarm BACK x2 (guard), BACK x2 (start), BACK x2 (exit)
@@ -536,23 +539,46 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   `showHint(backHintTexts(kind))` after a first BACK on a session screen;
   `isHintShowing()`
   while that press is armed on its screen. Drawn by
-  `ScreenLayout.setBanner(texts, fonts)` / `solveBanner`: a filled rounded box
-  centred on the screen (the screen's negative: white box + black text, or
-  black + white while the alarm flashes; 1-bit safe), the longest variant at
-  the largest of FONT_MEDIUM/SMALL/TINY/XTINY whose box fits the visible
-  width at its rows (`boundsAtRows`, round chord, octagon, lens). Variants:
+  `ScreenLayout.setBanner(texts, font)` / `solveBanner` (owner's rules of
+  2026-10-05, 1.2.0; until then a rounded box centred on the screen, which
+  cut lines in half - the countdown on the fēnix 8, "Wake at" on the
+  Instinct, "Time to wake up" on the FR255S): a sheet in the screen's
+  negative (white + black text, or black + white while the alarm flashes;
+  1-bit safe), the long version of the footer. It starts on the top edge of
+  one of the screen's rows (`rowTops`: the visible lines as drawn, the start
+  screen's arrow slots, the footer) and is filled across the whole width
+  down to the bottom edge - the display's outline cuts its corners, nothing
+  computes them - so it covers the footer and every row in between, whole,
+  never half of one, starting at the lowest row that leaves its text room.
+  The text sits on the sheet's widest rows (centred on the middle of the
+  display where the sheet reaches it, else a third of a line under its
+  edge), each line inside the visible width at its ink rows (`bannerSpot`).
+  Its font is the exit popup's on every screen, `ScreenLayout.popupFont`:
+  the largest of MEDIUM/SMALL/TINY/XTINY at which "Press BACK again to exit"
+  fits across the middle of the display in a box a font height wider and
+  two thirds of one taller - XTINY on 29 products, TINY on 14 (epix 2, D2
+  Mach 1, Descent MK3, MARQ 2, Venu 4 41 mm, vívoactive 6, Instinct 3 AMOLED,
+  FR570 42 mm) - measured once by the view (`_popupFont`). The text is the
+  longest variant that fits in that font on one line, else broken at a
+  space onto two (`bannerBreaks`: the most even break that fits); a shorter
+  variant only when a longer one fits under no row even on two lines, never
+  a smaller font. On 2026-10-05 the longest variant fitted every popup
+  screen of all 43 products, on two lines on most (fēnix 8 47 mm: "Press
+  BACK again" / "to end Stay Awake"). Variants:
   `HINT_EXIT` `["Press BACK again to exit", "BACK again to exit", "BACK again: exit"]`,
   `HINT_STOP` `["Press START again to stop", "START again to stop", "START again: stop"]`,
   and from the resources `BackAgainNap` / `BackAgainAlarm` /
   `BackAgainStayAwake` ("Press BACK again to end nap / to stop alarm / to end
   Stay Awake") with their Short, Tiny and Tiniest variants down to
-  "BACK x2: end" / "BACK x2: stop", which is what the 176 px Instinct shows.
-  Each names the thing the way its own screen names it - "Stay Awake", never
-  "session", a word the app shows nowhere else - and only the last Stay Awake
-  variant drops the name, because nothing longer fits the Instinct's banner
-  and that screen already says STAY AWAKE at the top. The armed alarm footer
-  repeats the stop hint in red; the BACK popups are carried by the banner
-  alone, over a footer that already says both pairs. A first START belongs
+  "BACK x2: end" / "BACK x2: stop", which the 176 px Instinct showed on the
+  one-line popup before 1.2.0. Each names the thing the way its own screen
+  names it - "Stay Awake", never "session", a word the app shows nowhere
+  else - and only the last Stay Awake variant drops the name: written for
+  that one-line popup, where nothing longer fitted the Instinct, whose
+  screen says STAY AWAKE at the top anyway. The armed alarm footer repeats
+  the stop hint in red, under the sheet while the START popup is up; the
+  BACK popups are carried by the sheet alone, over the footer that says
+  both pairs. A first START belongs
   to the screen it was made on (`_armedState`): if the alarm starts inside
   the 4 s window, the press on the alarm screen arms again instead of confirming
   (review finding: one press silenced the alarm;
@@ -715,10 +741,7 @@ the height pass would) picks the longest footer variant whose band drops as
 few protected lines as the shortest one would; titles (50-60) may still go
 for the full wording. So a long hint never drops an informative line
 (`testLayout_footerNeverStealsContent`: the Stay Awake screen after a doze on
-390-416 px watches lost "Awake h:mm:ss" to the long footer). Then the banner
-(`solveBanner`: one text measurement per text/font, counted in `_fitCalls`;
-next to the lens the lowest position is tried first and only a text that
-fits there is probed from the centre down). Then per pass: drop lines below IMPORTANT, shrink fonts,
+390-416 px watches lost "Awake h:mm:ss" to the long footer). Then per pass: drop lines below IMPORTANT, shrink fonts,
 drop IMPORTANT lines (fonts restart at full size after each), hide dividers
 whose title is hidden (`linkedTo`), place the block centred; on the Instinct
 (`_hasSub`), when a line misfits or had to use a shorter text variant, probe
@@ -728,7 +751,11 @@ line too wide for its row hides the lowest optional line and freezes the
 height-dropped ones (else they refill the space and the block never shrinks).
 At the end `restoreHidden()` brings back hidden lines highest priority first,
 hiding lower-priority lines to make room if needed; a failed last retry
-restores the accepted state from `snapshot()` instead of re-solving. Dividers
+restores the accepted state from `snapshot()` instead of re-solving. The
+banner comes last, on the rows the lines ended up on (`solveBanner`: each
+variant, and each way of breaking it onto two lines, measured once and
+counted in `_fitCalls`; trying the rows it may start at costs only
+arithmetic). Dividers
 are clipped to their row. `inkBounds()` results are cached per `solve()`
 (`_inkCache`, key `y * 1024 + fontHeight`). Status lines carry short variants
 ("Calibrating", "In mm:ss", "Smart", "Buzz if doze") so the Instinct does not
@@ -756,8 +783,19 @@ screen's clock and arrows, the lens clock). `ScreenLayout.testBoxes()` and
 `PowerNapView.testScreenBoxes()` (debug) give every box a screen draws,
 `[x, y, w, h, kind, label]`; a text box is the full font height, held to the
 display at its ink rows (15-85 %, the engine's own model). The popup is a
-layer of its own (it covers what is under it by design): its box inside the
-display, its text inside its box. The Menu2 of "Test alarm" is drawn by the
+layer of its own (it covers what is under it by design): its text inside
+its sheet and inside the display, and on every screen that shows one the
+three rules it is placed by (`overlapHelperPopup`): its top edge is the top
+edge of a row and cuts none, the sheet runs to the bottom edge and starts
+no higher than its text needs; its font is the exit popup's (recomputed by
+the test's own geometry); the next longer variant would fit under no row
+in that font, not even on two lines. Checked by mutation on 2026-10-05: a
+sheet starting on any pixel row, a text never broken onto two lines, and
+the font of the shortest exit text each fail the four OverlapTest functions
+that show a popup, on fenix847mm; every popup in XTINY fails them on
+epix2pro42mm and passes on fenix847mm, where XTINY is the exit font - no
+device of the protocol set has TINY, so only the sweep over all 43 sees that
+one. The Menu2 of "Test alarm" is drawn by the
 firmware and has no boxes; the contact sheets of a layout PR are its check.
 `Palette.fg()` maps every colour to white on the 1-bit Instinct 3
 Solar (detected by its semi-octagon screen shape).

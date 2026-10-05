@@ -17,6 +17,10 @@ This file starts at 1.1.0; it is not filled in backwards.
 - **The Test alarm menu** is titled POWER NAP, as the start screen is (NAP on
   the Instinct 3 Solar, beside the lens), and its one item is just "Test
   alarm": the line under it was cut short on some watches.
+- **Fix**: the "Press BACK again to ..." popup no longer cuts a line in half: it
+  rises from the bottom of the screen over whole lines only, in the same size
+  as the exit popup on every screen, and shows its whole sentence, on two lines
+  where one is too narrow.
 
 ## 1.1.0 - 2026-09-20
 
