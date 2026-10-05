@@ -182,7 +182,7 @@ tools/runtests.sh fenix847mm instinct3solar45mm fr255s venu3s vivoactive5
 tools/matrix.sh test                            # every product in the manifest
 ```
 
-The suite under `test/` (243 tests) covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
+The suite under `test/` covers calibration and onset, wake episodes and re-entry, wall-clock alarm and deadline timing for every nap length, the alarm escalation, melodies and channel fallback (including the AMOLED backlight regression), the summary statistics, Stay Awake mode, the buttons (the real delegate, view and detector together), raw accelerometer batches, the quiet onset rule (`test/QuietOnsetTest.mc`: the real alarm manager stays silent after every simulated second of a nap until the alarm is due), and the layout of every screen including the start screen. Tests simulate sensor input second by second against a frozen fake clock.
 
 - **Invariant tests** run seeded random naps (settings and a minute-by-minute story of dozing, stirring, waking and sensor dropouts) and check after every simulated second the rules that must always hold: the alarm always rings and never after the deadline, the planned end never moves, smart wake only inside its window, stats in range. A failure prints the seed to replay it.
 - **Negative tests** feed absurd heart rates, missing accelerometer data, a wall clock stepping back, lifecycle calls in every state and wrong-type settings.
@@ -194,9 +194,10 @@ The layout tests measure the real device fonts, so run the suite on a few screen
 
 ## Installing on a Watch
 
-This repository is ahead of the Connect IQ store: the store carries 1.0.2, and
-the version described above (Stay Awake, the crescendo ramp, "Test alarm", the
-"Alarm by" guarantee) is finished but not published yet. To use it today, build
+The Connect IQ store carries 1.1.0, published - Stay Awake, the crescendo ramp,
+"Test alarm" and the "Alarm by" guarantee included - and that is the way to
+install it. Before every release the test suite runs on all 43 watches the app
+supports. To try code from this repository before it reaches the store, build
 it and copy it across:
 
 1. Build the `.prg` for your specific device.
@@ -241,6 +242,7 @@ test/
   SummaryTest.mc                Finish/cancel paths, statistics, RingMath
   RegressionTest.mc             HR wake rules, frozen settings, lifecycle, channel fallback
   LayoutTest.mc                 Every screen fits the running device
+  OverlapTest.mc                Nothing on any screen drawn over anything else or outside the display
   StayAwakeTest.mc              Stay Awake: doze rules, rolling HR reference, nudge, guard
   DelegateTest.mc               Buttons and taps through the real delegate and view
   QuietOnsetTest.mc             Quiet onset rule: no output before the alarm, every second, real alarm manager

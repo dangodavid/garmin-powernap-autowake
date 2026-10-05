@@ -5,6 +5,7 @@
 - One branch per PR; merge into `main` when the checks pass, then delete the branch. `main` stays publishable.
 - Before a merge: `tools/matrix.sh build` (strict, every product) plus `tools/matrix.sh test` on the protocol set.
 - A PR that changes text, colours or layout also needs simulator screenshots: `instinct3solar45mm` (smallest, and the only 1-bit), `fenix847mm` (largest), `fr255s` (smallest colour screen, so the three shots do not prove the same thing twice).
+- States that need real time are captured on ONE device; for the rest the test speaks (owner, 2026-10-05). Asleep, the alarm and the summary only exist after a nap played in real time through a FIT recording: one run, on `fenix847mm`, before publishing and only when those screens changed - never in a pull request, never a sweep of several devices. The proof across devices is the layout test on every product of the manifest; how many screenshots a change gets, and the 15-minute budget of a pull request, are the verification levels of CONTRIBUTING.md.
 - Supported devices are read from `manifest.xml`, never from a hardcoded list.
 - New tests are for logic, not for texts and colours.
 - Every build meant for a wrist carries its commit in its file name
@@ -61,11 +62,13 @@ upload form - so the only authoritative answer to "what is live" is the app's
 own page in the Connect IQ store and its entry in the developer dashboard.
 Look there before trusting any number written down here.
 
-As of 2026-09-20: **published = 1.0.2 (internal 2)**. **1.1.0 is finished code
-on `main` that nobody has downloaded**: every "v1.1.0" and "since 1.1.0" note
-below means "since the unreleased 1.1.0", not "in the version users run". So
-Stay Awake, the ramp table, "Test alarm", the BACK key model and "Alarm by"
-are all unreleased.
+As of 2026-10-05: **published = 1.1.0**, approved in the Connect IQ store on
+2026-09-20: the code of `main` at `1d2c860`, tagged `v1.1.0`, with its GitHub
+release (notes = the 1.1.0 section of CHANGELOG.md). Stay Awake, the ramp
+table, "Test alarm", the BACK key model and "Alarm by" are what users run;
+every "v1.1.0" and "since 1.1.0" note below means that store version. 1.2.0
+is the next one (PR #4 so far: the start screen's clock above the title,
+the menu's words, OverlapTest).
 
 **Every build meant for a wrist carries its commit in its file name**:
 `PowerNap-<version>-<short sha>-<device>.prg` for a sideload (that is the
@@ -159,6 +162,9 @@ test/
   SummaryTest.mc        # finish/cancel paths, statistics, RingMath
   RegressionTest.mc     # HR wake rules, frozen settings, lifecycle, channel fallback, timer wrap
   LayoutTest.mc         # every screen (start, nap, peek, Stay Awake) fits the running device
+  OverlapTest.mc        # every screen taken apart into the boxes it draws: none over
+                        #   another, none outside the display (chord, octagon, lens),
+                        #   12/24 h x full/low battery, widest time, longest content
   StayAwakeTest.mc      # doze rules, rolling HR reference, nudge, back on guard
   DelegateTest.mc       # buttons/taps through the real delegate + view + detector
   QuietOnsetTest.mc     # QUIET ONSET RULE: the real AlarmManager is silent every second until the alarm
@@ -172,6 +178,9 @@ resources/
   properties/           # Default property values
   settings/             # Companion app settings UI definitions
   strings/              # Localized strings (English only), the on-screen hints included
+resources-semioctagon-176x176/
+                        # the 176 px Instinct's shorter menu title ("NAP"); the
+                        #   SDK adds the folder for that resolution by itself
 resources-launcher/     # LauncherIcon at each device's native size (40 MIP, 54, 56, 62 1-bit,
                         #   65, 70), wired per device in monkey.jungle; PNGs drawn by
                         #   generate_launcher_icons.py (outside every resource path)
@@ -604,9 +613,18 @@ is BACK". Opening the menu or the preview forgets an armed BACK
 - "Test alarm" (v1.1.0, first part of deferred #8): on the start screen
   `WatchUi.KEY_MENU` in `handleKey` (hold UP on 5-button watches, the system
   menu gesture elsewhere) and, on touch screens, `onHold` on the number/label/
-  hint zone (`tapActionAt == 0`) call `openMenu()`: a `WatchUi.Menu2` "Power
-  Nap" with one item "Test alarm" / "Feel the wake-up ramp" (`:testAlarm`,
-  `PowerNapMenuDelegate`, pushed with `pushView`). Selecting it calls
+  hint zone (`tapActionAt == 0`) call `openMenu()`: a `WatchUi.Menu2` titled
+  "POWER NAP" with one item "Test alarm" and no subtitle (`:testAlarm`,
+  `PowerNapMenuDelegate`, pushed with `pushView`). The firmware lays the
+  menu out, so its words are in strings.xml (`MenuTitle`, `MenuTestAlarm`)
+  and checked by screenshot on every product, not by OverlapTest. Since
+  1.2.0: capitals as on the start screen (venu3s's selection band cut the
+  descender of "Power Nap"); "NAP" on the 176 px Instinct, where the title
+  shares a row with the lens and broke onto two lines
+  (`resources-semioctagon-176x176`, picked by the SDK for that resolution);
+  the subtitle "Feel the wake-up ramp" is gone - the firmware cut it short on
+  enduro3, fenix8solar47mm and fenix8solar51mm, clipped it on the Instinct,
+  and the preview screen says it anyway. Selecting it calls
   `view.startPreview()` -> `AlarmManager.startPreview()`: every RAMP step but
   the persistent row once, 3 s apart (`_previewTimer`, `onPreviewTick`), the
   configured alarm type, the same backlight rule, no persistent phase, ends by
@@ -642,10 +660,27 @@ it), but NOT as a line of the block: on the 454 px fenix 8 the band's slack
 is 26 px and a clock line needs 47, so the engine dropped it (a priority
 above IMPORTANT would have shrunk the number instead). `drawStartScreen`
 draws it at FONT_XTINY in the margin above the block (`startClockBox`:
-centred in the room above the first line, only if the WIDEST time of day
-this watch can show fits the chord there, `ScreenLayout.visibleInkBounds`),
-the round-screen analogue of the Instinct lens, which shows the clock
-instead of "NAP" on the start screen now. **The decision is taken on the
+centred in the room above the block's FIRST VISIBLE line,
+`ScreenLayout.getBlockTop`, only if the WIDEST time of day this watch can
+show fits the chord there, `ScreenLayout.visibleInkBounds`), the
+round-screen analogue of the Instinct lens, which shows the clock instead
+of "NAP" on the start screen now. That first line is the "POWER NAP" title
+wherever the band has room for it (25 of the 43 products, all with a full
+battery), else the up arrow. Until 1.2.0 the clock was centred above the
+up arrow whatever was there, so on those 25 it was drawn over the title
+(the fenix 7 Solar report of 2026-10-05, on 1.1.0). Where the title is
+the first line and the clock does not fit centred above it,
+`solveStartScreen` first moves it down within that margin (where a round
+chord is wider) and only then steps the title down a font size at a time
+until it fits. Measured on 2026-10-05 (every box of the start screen, 4
+durations x 12/24 h x both batteries, before and after): 18 products
+unchanged to the pixel, 19 with only the clock moved, and on five the title
+is drawn one size smaller - fenix7, fenix7pro, enduro3, fenix8solar51mm
+(FONT_TINY) and vivoactive5 (FONT_XTINY: SMALL never fitted the title's
+width there, TINY was what it drew) - while venu3s keeps the font it drew,
+its slot 4 px shorter. The clock then sits 0-7 px from the top and at least
+2 px above the title. The decision is taken once per solve (`_startClock`) and read by
+the drawing and by every test hook. **The decision is taken on the
 widest time, never on the current one** (`widestClockWidth`: the widest
 minute beside the widest hour in the watch's own 12/24 h format, measured
 once per format and kept): "12:30" is a glyph wider than "3:32", and on a
@@ -715,7 +750,16 @@ After a wake episode the monitoring screen drops "Alarm N min after sleep"
 fits the round chord (or the Instinct subscreen) at its own rows.
 `ScreenLayout.testDescribe()` (debug) prints every line's visibility and position. `LayoutTest.mc` checks
 every nap-screen state on the device it runs on; run it on 176-454 px devices after
-any UI change. `Palette.fg()` maps every colour to white on the 1-bit Instinct 3
+any UI change. `OverlapTest.mc` checks what LayoutTest cannot see: things drawn
+OVER each other, including what the view draws outside the layout (the start
+screen's clock and arrows, the lens clock). `ScreenLayout.testBoxes()` and
+`PowerNapView.testScreenBoxes()` (debug) give every box a screen draws,
+`[x, y, w, h, kind, label]`; a text box is the full font height, held to the
+display at its ink rows (15-85 %, the engine's own model). The popup is a
+layer of its own (it covers what is under it by design): its box inside the
+display, its text inside its box. The Menu2 of "Test alarm" is drawn by the
+firmware and has no boxes; the contact sheets of a layout PR are its check.
+`Palette.fg()` maps every colour to white on the 1-bit Instinct 3
 Solar (detected by its semi-octagon screen shape).
 Colours come from `Palette`, never spelled out in a view: `TEXT_PRIMARY` /
 `TEXT_SECONDARY` / `TEXT_TERTIARY` (what the screen is about / the words
@@ -734,7 +778,7 @@ nap screen. It is still measured, fitted and centred as one text.
 Test names are global, so each file uses its own prefix (`testOnset_`, `testWake_`,
 `testTiming_`, `testAlarm_`, `testSummary_`, `testReg_`, `testLayout_`, `testStay_`,
 `testDelegate_`, `testQuiet_`, `testMotion_`, `testInv_`, `testTrace_`,
-`testStart_`). Alarm tests derive tone
+`testStart_`, `testOverlap_`). Alarm tests derive tone
 expectations from `Attention has :playTone` (vívoactive 5/6 have none) and must
 not build melodies without `Attention has :ToneProfile` (Symbol Not Found there).
 

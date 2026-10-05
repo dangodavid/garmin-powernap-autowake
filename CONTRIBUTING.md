@@ -265,6 +265,95 @@ The smallest screen in the matrix is also the only 1-bit one, so those two
 requirements land on the same device; `fr255s` is the third shot because two
 pictures of `instinct3solar45mm` would prove the same thing twice.
 
+### Three levels of verification
+
+Every check in this section belongs to one of three levels, and each level
+has its budget.
+
+**Per pull request - under 15 minutes.**
+
+- `tools/matrix.sh build`, strict, on every product of the manifest.
+- `tools/matrix.sh test` on the protocol set, plus the watch of the user
+  report the pull request answers, if there is one.
+- Screenshots of instant states only - anything a key press reaches: the
+  start screen, its menu, a popup, the alarm preview - on at most three
+  representatives of the class table below. All 21 only when a screen the
+  firmware draws has changed (the menu): the tests cannot see those.
+- No real-time run.
+
+**Before publishing.**
+
+- The full suite on every product of the manifest, and the release build
+  (the commands and the store package are below).
+- One real-time run on `fenix847mm` - a nap played from a FIT recording - and
+  only if the asleep or the alarm screens changed.
+
+**An audit on every device - only for a bug from production.** Once, for that
+bug, with its estimate said before it starts: the layout tests and the
+screenshots over every product, the way the start screen's clock was traced
+on 2026-10-05 (pull request #4).
+
+**Estimate first.** At the start of every pull request, say how long its
+verification will take. Over 15 minutes, stop and ask before running it.
+
+### Screenshots are taken per screen class, never per product
+
+One product for each combination of resolution, screen shape and family -
+fēnix, Forerunner, Venu, vívoactive, Instinct, epix, MARQ - and never all the
+products of the manifest: there the tests speak (`LayoutTest` and
+`OverlapTest` lay out every screen on every product). The three shots above
+are three of these classes; how many representatives a change is shown on,
+and when a real-time run is due, is set by the levels above.
+
+The D2, Descent and Enduro watches are built on another family's hardware and
+count with it - their screens measured box for box the same as their base
+watch's on 2026-10-05: D2 Mach 1 and Descent MK3 with epix, D2 Mach 2 and
+Enduro 3 with fēnix. Resolution and shape come from the SDK's device
+definition (`compiler.json`). The representative is the protocol device or
+the reported device where the class has one, else the class's base model.
+
+| Family | Screen | Representative |
+|--------|--------|----------------|
+| fēnix | 240 round | `fenix7s` |
+| fēnix | 260 round | `fenix7` |
+| fēnix | 280 round | `fenix7x` |
+| fēnix | 416 round | `fenix843mm` |
+| fēnix | 454 round | `fenix847mm` |
+| epix | 390 round | `epix2pro42mm` |
+| epix | 416 round | `epix2` |
+| epix | 454 round | `epix2pro51mm` |
+| Forerunner | 218 round | `fr255s` |
+| Forerunner | 260 round | `fr255` |
+| Forerunner | 360 round | `fr265s` |
+| Forerunner | 390 round | `fr57042mm` |
+| Forerunner | 416 round | `fr265` |
+| Forerunner | 454 round | `fr965` |
+| Venu | 390 round | `venu3s` |
+| Venu | 454 round | `venu3` |
+| vívoactive | 390 round | `vivoactive5` |
+| Instinct | 176 semi-octagon | `instinct3solar45mm` |
+| Instinct | 390 round | `instinct3amoled45mm` |
+| Instinct | 416 round | `instinct3amoled50mm` |
+| MARQ | 390 round | `marq2` |
+
+21 classes for the 43 products of `manifest.xml` on 2026-10-05. A product
+added to the manifest joins the class of its resolution, shape and family, or
+opens a new row with itself as the representative, in the same pull request.
+The table holds the representatives only: which products the app supports is
+still read from the manifest and nowhere else.
+
+A class is the rule for what to photograph, not a promise that its members
+draw alike - on 2026-10-05 the start screen showed its title on the Venu 3 and
+not on the Venu 4 45 mm, both Venu 454, and the fēnix 7X and the fēnix 8 Solar
+51 mm needed different fixes at 280. The screenshot shows the representative;
+the tests answer for the rest.
+
+### Screenshots never hold up a pull request
+
+Push the branch and report with the build and the tests first. The
+screenshots follow, in a message of their own, when they are taken; if they
+show a problem, the fix is one more commit on the same pull request.
+
 ### Before publishing
 
 The full sweep, all three strict, every product in the manifest:
@@ -345,10 +434,13 @@ simulator and delete `$TMPDIR/com.garmin.connectiq/GARMIN/APPS/SETTINGS/*.SET`.
 
 One file per area under `test/`, each with its own name prefix because test
 function names are global. The runner reports the number of **test functions**,
-not the number of assertions, and four files multiply what one function checks:
+not the number of assertions, and five files multiply what one function checks:
 
 - `LayoutTest.mc` solves every screen against the **running device**, so a full
   sweep runs the same functions once per product in the manifest;
+- `OverlapTest.mc` does the same, and checks each screen in both clock formats,
+  with a full and a low battery, and every popup and armed footer it can carry -
+  some four hundred screens per device in six functions;
 - `InvariantTest.mc` runs a handful of fixed seeds per function and asserts
   after **every simulated second** of every random nap;
 - `QuietOnsetTest.mc` loops each scenario over alarm types 0, 1 and 2, and once
@@ -368,6 +460,7 @@ can be carrying more assertions than a file with thirty functions.
 | `SummaryTest.mc` | Finish and cancel from every state, the statistics (planned completion, sleep efficiency, actual sleep, wake episodes, average and minimum sleep HR), that they freeze once the nap has ended, and `RingMath`'s angle maths for the progress ring. |
 | `RegressionTest.mc` | One test per confirmed review finding: HR-plateau wake ping-pong, the sleep-HR fold exclusion, frozen settings and clamping, the app lifecycle (`onInactive`/`onActive`), the alarm channel fallback, the per-phase vibration patterns, `ringNow()`, and the two-press guard. These exist so that a fixed bug cannot come back quietly. |
 | `LayoutTest.mc` | Every screen state - start, calibrating, monitoring, sleeping, alarm, summary, Stay Awake, peek card, alarm preview - laid out against a `Dc` of the running device, each also with the popup it can show over it. It asserts that no text is truncated, that nothing leaves the screen or the round chord, and that the layout stays inside its work budget, because every screen redraws at 1 Hz and the Instinct watchdog is 240k bytecodes per event. Its inputs are its own: it forces the battery level and pins the clock, so a screen never passes or fails on what the simulator happened to be that day. |
+| `OverlapTest.mc` | Nothing drawn over anything else, and nothing outside the display. Every screen - start, calibrating, monitoring, asleep, awake after a wake, the peek card, both alarms calm and at full strength, the summaries, Stay Awake from calibrating to its summary, the alarm preview, and every popup over them - is built by the real view and taken apart into the boxes it draws, including what the view draws outside the layout: the start screen's clock and arrows, the clock in the Instinct lens (`testScreenBoxes`). No box may overlap another, and each must lie inside the round chord at its own rows (inside the summary ring where it is drawn), inside the Instinct's octagon and clear of its lens. Each screen is checked in 12 and 24 h, with a full and a low battery, the clock at the widest time of day the device draws and the content at its longest (a 3-digit heart rate, the 120-minute nap, 12 wakes, 12 dozes, a 10-hour session). It exists because `LayoutTest` checked each line against the display but never two things against each other: the start screen's clock was drawn over the "POWER NAP" title on 25 of the 43 products, the fēnix 7 among them, and every test passed. The popup is a layer over the screen and is checked as one (inside the display, its text inside its box); the "Test alarm" menu is drawn by the firmware and has no boxes - the contact sheets of a layout PR are its check. |
 | `StayAwakeTest.mc` | Stay Awake mode: no deadline and no timed alarm at all, the doze rules measured against the rolling HR reference rather than the calibration baseline, the single nudge at 3 still minutes, `noteUserAwake()` ending the still run, and the return to the guard after a doze alarm. |
 | `DelegateTest.mc` | The real delegate, view and detector wired together and driven through `handleKey()`/`handleTap()` - the code paths `onKey` and `onTap` run. It owns the key model: BACK walks back one level at a time, taking a pair wherever that step would end a nap, an alarm or a Stay Awake session and one press where nothing is lost; only the start screen's BACK x2 exits; START x2 stops; the 1.5 s input lock never traps a burst of presses; and a first press made on one screen never pairs with a second made on another, nor a START with a BACK. Two of its tests walk [the BACK contract](#the-back-contract) over **every** screen in `BACK_SCREENS` rather than one path at a time, so a screen added later cannot quietly get a BACK of its own. |
 | `QuietOnsetTest.mc` | The QUIET ONSET RULE, with the real `AlarmManager`: nothing vibrates, sounds or lights up at onset, at a wake, at re-entry, at the end of calibration, on a sensor dropout or on resume. Every second of every scenario asserts that the manager's blocked-delivery counter is still zero. The rule is non-negotiable, so it is guarded structurally rather than by review. |
