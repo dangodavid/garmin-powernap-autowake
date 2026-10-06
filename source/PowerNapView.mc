@@ -630,7 +630,9 @@ class PowerNapView extends WatchUi.View {
             ScreenLayout.KEEP);
         L.addText([at + " into the real alarm", at + " into the alarm", at + " into alarm", "At " + at],
             fontsDetail(), Palette.TEXT_PRIMARY, ScreenLayout.KEEP);
-        L.addText(["Feel the wake-up ramp", "Wake-up ramp"], fontsDetail(), Graphics.COLOR_LT_GRAY, 70);
+        // Below the lines the footer protects (70): where room is short the
+        // hint shortens or goes, and "BACK to stop" stays whole.
+        L.addText(["Feel the wake-up ramp", "Wake-up ramp"], fontsDetail(), Graphics.COLOR_LT_GRAY, 65);
         L.setFooterTexts(["BACK to stop", "BACK"] as Array<String>, Graphics.COLOR_LT_GRAY);
         return L;
     }
