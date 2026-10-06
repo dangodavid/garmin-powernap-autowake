@@ -24,6 +24,9 @@ This file starts at 1.1.0; it is not filled in backwards.
 - **The alarm only vibrates**: the nature melody is gone, and the Alarm Type
   setting with it. The sound did not play the same on every watch, and a
   wrong sound is worse than none.
+- **"Vibration off" on the start screen** when vibration is switched off in
+  the watch settings: the alarm could not be felt, and now you know before
+  you fall asleep. It is a warning only; the nap still starts.
 
 ## 1.1.0 - 2026-09-20
 

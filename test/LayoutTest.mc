@@ -34,8 +34,9 @@ function layoutHelperDc() as Graphics.Dc {
     return (ref.get() as Graphics.BufferedBitmap).getDc();
 }
 
-//! View over the given detector, marked as started. A full battery, whatever
-//! the simulator says (tests turn the warning on explicitly).
+//! View over the given detector, marked as started. A full battery and
+//! vibration on, whatever the simulator says (tests turn the warnings on
+//! explicitly).
 (:debug)
 function layoutHelperView(d as SleepDetector, a as AlarmManager) as PowerNapView {
     var v = layoutHelperStartView(d, a);
@@ -43,11 +44,12 @@ function layoutHelperView(d as SleepDetector, a as AlarmManager) as PowerNapView
     return v;
 }
 
-//! Start-screen view with a full battery.
+//! Start-screen view with a full battery and vibration on.
 (:debug)
 function layoutHelperStartView(d as SleepDetector, a as AlarmManager) as PowerNapView {
     var v = new PowerNapView(d, a);
     v.testForceBattery(100);
+    v.testForceVibrateOn(true);
     return v;
 }
 
@@ -60,14 +62,16 @@ const LAYOUT_MAX_PASSES = 6;
 const LAYOUT_MAX_FITS = 60;
 
 //! Screens this wide (px) keep the time of day on the start screen even when
-//! the low-battery warning is there too. Below it the warning takes that room:
-//! it adds a line, the block grows towards the top of the screen, and the
-//! clock's row ends up where a round chord is at its narrowest. That is the
-//! right way round - a watch that dies mid-nap never rings at all - and it is
-//! why the 240 px fenix 7S drops the clock while the 260 px fenix 7 keeps it.
-//! With a healthy battery the clock is on every screen that has no lens.
+//! a warning is there too ("Low battery" or "Vibration off": the same line in
+//! the same place). Below it the warning takes that room: it adds a line, the
+//! block grows towards the top of the screen, and the clock's row ends up
+//! where a round chord is at its narrowest. That is the right way round - a
+//! watch that dies mid-nap never rings at all, and one that cannot vibrate
+//! rings unfelt - and it is why the 240 px fenix 7S drops the clock while the
+//! 260 px fenix 7 keeps it. With no warning the clock is on every screen that
+//! has no lens; with both warnings it may give way anywhere.
 (:debug)
-const LOW_BATTERY_CLOCK_FROM_PX = 260;
+const WARNING_CLOCK_FROM_PX = 260;
 
 //! Common checks; mustShow are text fragments that must appear on screen.
 (:debug)
@@ -528,8 +532,9 @@ function testLayout_clockOnLiveScreens(logger as Test.Logger) as Boolean {
 
 //! The start screen shows the time of day at the top as well (owner
 //! request: "Alarm by HH:MM" reads against it), drawn in the margin above
-//! the block: for every duration, Stay Awake included, and with the
-//! low-battery warning on screens of 240 px and up; the box is on screen,
+//! the block: for every duration, Stay Awake included, and with one warning
+//! (low battery or vibration off) on screens of 260 px and up; with both it
+//! may give way, but never moves with the time of day. The box is on screen,
 //! clear of the first line and inside the round chord at its rows, and
 //! the block itself is untouched (promise shown, number at full size). On
 //! the Instinct the clock is in the lens, not a box.
@@ -566,12 +571,14 @@ function testLayout_clockOnStartScreen(logger as Test.Logger) as Boolean {
         }
     }
     var durations = [5, 30, 120, 0] as Array<Number>;
-    var batteries = [100, 5] as Array<Number>;
-    for (var b = 0; b < batteries.size(); b++) {
+    // No warning, low battery, vibration off, both.
+    var warnings = ["", " low battery", " vibration off", " both warnings"] as Array<String>;
+    for (var b = 0; b < warnings.size(); b++) {
         for (var i = 0; i < durations.size(); i++) {
             v.testSetPendingDuration(durations[i]);
-            v.testForceBattery(batteries[b]);
-            var name = "start " + durations[i] + " battery " + batteries[b];
+            v.testForceBattery((b == 1 || b == 3) ? 5 : 100);
+            v.testForceVibrateOn(b < 2);
+            var name = "start " + durations[i] + warnings[b];
             d.testPinClock(wideSec);
             var box = v.testStartClockBox(dc);
             d.testPinClock(narrowSec);
@@ -584,7 +591,7 @@ function testLayout_clockOnStartScreen(logger as Test.Logger) as Boolean {
                 ok = false;
             }
             if (box == null) {
-                if (batteries[b] == 100 || dc.getHeight() >= LOW_BATTERY_CLOCK_FROM_PX) {
+                if (b == 0 || (b < 3 && dc.getHeight() >= WARNING_CLOCK_FROM_PX)) {
                     logger.debug(name + ": no clock");
                     logger.debug(v.testBuildLayout(dc).testDescribe());
                     ok = false;
@@ -595,6 +602,7 @@ function testLayout_clockOnStartScreen(logger as Test.Logger) as Boolean {
         }
     }
     v.testForceBattery(100);
+    v.testForceVibrateOn(true);
     v.testSetPendingDuration(30);
     var layout = v.testBuildLayout(dc);
     var zones = v.testMeasureTapZones(dc);
@@ -721,29 +729,107 @@ function testLayout_lowBatteryWarning(logger as Test.Logger) as Boolean {
 }
 
 //! The start-screen number only shrinks when that keeps the promise line on
-//! screen: with a warning it either keeps its full size, or it is smaller
-//! and "Alarm by" is shown (on the Instinct the warning replaces the
-//! promise and the number stays full size).
+//! screen: with one warning (low battery or vibration off) it either keeps
+//! its full size, or it is smaller and "Alarm by" is shown (on the Instinct
+//! the warning replaces the promise and the number stays full size). With
+//! both warnings the promise gives way to them and the number may shrink
+//! for them (testLayout_vibrationOffWarning).
 (:test)
 function testLayout_startNumberShrinksOnlyForThePromise(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
     var full = dc.getFontHeight(Graphics.FONT_NUMBER_MEDIUM);
     var ok = true;
-    var pcts = [5, 100] as Array<Number>;
-    for (var i = 0; i < pcts.size(); i++) {
+    var warnings = ["no warning", "low battery", "vibration off"] as Array<String>;
+    for (var i = 0; i < warnings.size(); i++) {
         var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
         v.testSetPendingDuration(30);
-        v.testForceBattery(pcts[i]);
+        v.testForceBattery((i == 1) ? 5 : 100);
+        v.testForceVibrateOn(i != 2);
         var zones = v.testMeasureTapZones(dc);
         var layout = v.testBuildLayout(dc);
         if (zones[2] < full && !layout.showsFragment("Alarm by") && !layout.showsFragment("By ")) {
-            logger.debug("battery " + pcts[i] + "%: number shrank to " + zones[2] + " px but the promise is gone");
+            logger.debug(warnings[i] + ": number shrank to " + zones[2] + " px but the promise is gone");
             ok = false;
         }
-        if (pcts[i] == 100 && zones[2] != full) {
+        if (i == 0 && zones[2] != full) {
             logger.debug("without warnings the number must keep its full size");
             ok = false;
         }
+    }
+    return ok;
+}
+
+//! Whether a layout shows the vibration warning, in either of its lengths.
+(:debug)
+function layoutHelperVibrationOff(layout as ScreenLayout) as Boolean {
+    return layout.showsText("Vibration off") || layout.showsText("Vibe off");
+}
+
+//! Vibration switched off in the watch settings (the value of
+//! DeviceSettings.vibrateOn, simulated here): "Vibration off" is on the start
+//! screen exactly then, for every duration and in Stay Awake, in the place
+//! and the way "Low battery" is - everything fits, and the promise stays
+//! wherever it stays beside a low battery. With a low battery as well,
+//! "Vibration off" is the warning that stays where only one fits (the 176 px
+//! Instinct); everywhere else both are shown, and the promise may give way
+//! to them. No nap screen checks the setting: not the monitoring screen,
+//! not the Stay Awake guard.
+(:test)
+function testLayout_vibrationOffWarning(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var ok = true;
+    // As in testLayout_lowBatteryWarning: the 176 px Instinct has room for one
+    // line under the duration, larger screens for the promise as well.
+    var roomy = dc.getHeight() >= 200;
+    var v = layoutHelperStartView(new SleepDetector(null), new AlarmManager());
+    var durations = [5, 30, 120, 0] as Array<Number>;
+    for (var i = 0; i < durations.size(); i++) {
+        var dur = durations[i];
+        v.testSetPendingDuration(dur);
+        var name = "start " + dur;
+        for (var on = 0; on < 2; on++) {
+            v.testForceVibrateOn(on == 1);
+            if (layoutHelperVibrationOff(v.testBuildLayout(dc)) != (on == 0)) {
+                logger.debug(name + ((on == 1) ? ", vibration on: the warning is shown"
+                    : ", vibration off: no warning"));
+                ok = false;
+            }
+        }
+        v.testForceVibrateOn(false);
+        var promise = (dur == 0) ? "doze" : "Alarm by|By ";
+        ok = layoutHelperCheck(name + " vibration off", v, dc,
+            (roomy ? [dur.toString(), "Vibration off|Vibe off", promise] : [dur.toString(), "Vibration off|Vibe off"])
+                as Array<String>, logger) && ok;
+        v.testForceBattery(5);
+        var both = v.testBuildLayout(dc);
+        if (!layoutHelperVibrationOff(both)) {
+            logger.debug(name + " vibration off + low battery: 'Vibration off' must stay");
+            ok = false;
+        }
+        if (roomy && !both.showsFragment("attery 5%")) {
+            logger.debug(name + " vibration off + low battery: both fit here, both must show");
+            ok = false;
+        }
+        v.testForceBattery(100);
+        v.testForceVibrateOn(true);
+    }
+
+    var d = new SleepDetector(null);
+    d.testStart();
+    d.testSetBaseline(70.0f);
+    var nap = layoutHelperView(d, new AlarmManager());
+    nap.testForceVibrateOn(false);
+    if (layoutHelperVibrationOff(nap.testBuildLayout(dc))) {
+        logger.debug("the monitoring screen must not check vibration");
+        ok = false;
+    }
+    d = new SleepDetector(null);
+    d.testStartStayAwake();
+    var stay = layoutHelperView(d, new AlarmManager());
+    stay.testForceVibrateOn(false);
+    if (layoutHelperVibrationOff(stay.testBuildLayout(dc))) {
+        logger.debug("the Stay Awake guard must not check vibration");
+        ok = false;
     }
     return ok;
 }

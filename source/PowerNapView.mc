@@ -114,6 +114,7 @@ class PowerNapView extends WatchUi.View {
     private var _startClock as Array<Number>? = null;
 
     private var _forceBatteryPct as Number = -1;     // tests: >= 0 replaces the battery level
+    private var _forceVibrateOn as Number = -1;      // tests: 0 = vibration off, 1 = on, -1 = the watch's setting
     private var _force24Hour as Number = -1;         // tests: 0 = 12 h, 1 = 24 h, -1 = the watch's own
     private var _forceClockSec as Number = -1;       // tests: >= 0 replaces the time of day shown
     private var _msOffset as Number = 0;             // tests: moves the millisecond clock
@@ -451,8 +452,9 @@ class PowerNapView extends WatchUi.View {
 
     //! Start screen: the time of day, arrows around the duration ("min of
     //! sleep": counted from falling asleep), the guaranteed alarm time
-    //! ("Alarm by", or what Stay Awake does) and the low-battery warning. Adds the
-    //! arrow spacers, the number and its label to `lines` for the caller.
+    //! ("Alarm by", or what Stay Awake does) and the warnings: vibration off
+    //! in the watch settings, a low battery. Adds the arrow spacers, the
+    //! number and its label to `lines` for the caller.
     //! Everything above the number adds 5 min, everything below the label
     //! removes 5 min, the number and the label start. The title starts
     //! `titleStep` font sizes down (see solveStartScreen).
@@ -493,6 +495,7 @@ class PowerNapView extends WatchUi.View {
                 [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, 90);
         }
         lines.add(L.addSpacer(arrowH + 1, ScreenLayout.KEEP));
+        addVibrationWarning(L);
         addWarnings(L, 97);
         if (_debugLabel.length() > 0) {
             L.addText([_debugLabel], [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>,
@@ -980,6 +983,18 @@ class PowerNapView extends WatchUi.View {
         }
     }
 
+    //! Start screen only: the alarm only vibrates, so with vibration switched
+    //! off in the watch settings it would not be felt, and the wearer has to
+    //! know before falling asleep. It does not stop START (the setting is the
+    //! wearer's choice), and no nap screen checks it. Above "Low battery"
+    //! (97): where only one of the two fits, a silent alarm is the worse news.
+    private function addVibrationWarning(L as ScreenLayout) as Void {
+        if (vibrationOff()) {
+            L.addText(["Vibration off", "Vibe off"] as Array<String>,
+                [Graphics.FONT_XTINY] as Array<Graphics.FontDefinition>, Graphics.COLOR_RED, 98);
+        }
+    }
+
     //! Footer of the nap, Stay Awake, peek and alarm screens (longest first,
     //! shorter variants for narrow screens and wide fonts). Unarmed it says
     //! what one BACK does (back to the start screen, or the alarm off) and
@@ -1209,6 +1224,30 @@ class PowerNapView extends WatchUi.View {
         } catch (e instanceof Lang.Exception) {
             return -1;
         }
+    }
+
+    //! Vibration is switched off in the watch settings. A watch that does
+    //! not say gets no warning.
+    private function vibrationOff() as Boolean {
+        return vibrateOnSetting() == false;
+    }
+
+    //! DeviceSettings.vibrateOn where the watch has it, else null. Tests
+    //! replace the value the watch reports (testForceVibrateOn), not the
+    //! decision taken on it.
+    private function vibrateOnSetting() as Boolean? {
+        if (_forceVibrateOn >= 0) {
+            return _forceVibrateOn == 1;
+        }
+        try {
+            var settings = System.getDeviceSettings();
+            if (settings has :vibrateOn) {
+                return settings.vibrateOn;
+            }
+        } catch (e instanceof Lang.Exception) {
+            // No answer from the watch: no warning.
+        }
+        return null;
     }
 
     private function dozesText(dozes as Number) as Array<String> {
@@ -1549,6 +1588,13 @@ class PowerNapView extends WatchUi.View {
     (:debug)
     function testForceBattery(pct as Number) as Void {
         _forceBatteryPct = pct;
+    }
+
+    //! Pretend the watch reports vibration switched on or off in its
+    //! settings (DeviceSettings.vibrateOn).
+    (:debug)
+    function testForceVibrateOn(on as Boolean) as Void {
+        _forceVibrateOn = on ? 1 : 0;
     }
 
     (:debug)

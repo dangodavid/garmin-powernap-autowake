@@ -164,7 +164,8 @@ test/
   LayoutTest.mc         # every screen (start, nap, peek, Stay Awake) fits the running device
   OverlapTest.mc        # every screen taken apart into the boxes it draws: none over
                         #   another, none outside the display (chord, octagon, lens),
-                        #   12/24 h x full/low battery, widest time, longest content;
+                        #   12/24 h x full/low battery (the start screen also x
+                        #   vibration on/off), widest time, longest content;
                         #   the popup: whole rows only, the exit popup's font, the
                         #   longest text that fits on one or two lines; and that
                         #   font, recomputed, printed for the protocol-set check
@@ -175,7 +176,8 @@ test/
   InvariantTest.mc      # seeded random naps checked every second + negative tests
   TraceTest.mc          # replays of recorded naps (how to record one is in the file)
   StartScreenTest.mc    # the AlarmCap formula, preview == the nap it starts, the live
-                        #   minute refresh, the remembered duration, the button-only flow
+                        #   minute refresh, the remembered duration, the button-only flow,
+                        #   "Vibration off" never locks START
 resources/
   drawables/            # launcher_icon.png (60x60 default) + drawables.xml
   properties/           # Default property values
@@ -437,7 +439,9 @@ value left on a watch changes nothing
 (`testReg_oldAlarmTypeSettingChangesNothing`). In the SDK 9.1 simulator the
 runtime refuses the undeclared key (`Properties.getValue` and `setValue`
 throw `InvalidKeyException`) and leaves it out of the settings file when the
-app stops (2026-10-06).
+app stops (2026-10-06). With vibration switched off in the watch settings the
+start screen says so before the nap ("Vibration off", see Screens and
+layout).
 
 **AMOLED rule (do not regress):** in `fireAlarm()` the vibration runs first,
 in its own try block; `Attention.backlight(true)` runs last, in its
@@ -680,6 +684,21 @@ list of `LayoutLine`s with a priority (`ScreenLayout.KEEP` = never dropped,
 10 %, not charging); priority 97 on start and Stay Awake, 94 on monitoring
 (below "Alarm by" 96). On the 176 px Instinct the start screen has room for
 one line under the duration: a warning wins over "Alarm by" there.
+The start screen alone also warns "Vibration off" (short "Vibe off";
+`addVibrationWarning`, owner brief of 2026-10-06): the alarm only vibrates,
+so with vibration switched off in the watch settings it would not be felt.
+`vibrationOff()` reads `DeviceSettings.vibrateOn` behind a `has` (no answer,
+no warning; tests replace the value with `testForceVibrateOn`). The same
+line as "Low battery" - XTINY, red, under the down arrow - at priority 98, so
+where only one of the two fits (the Instinct) "Vibration off" stays: a silent
+alarm is worse than a flat battery. It never blocks START, and no nap screen
+checks it. Measured on all 43 on 2026-10-06: alone it lays the screen out
+exactly as "Low battery" alone does (the promise stays on 42, the 176 px
+Instinct excepted; the clock gives way on the four screens below 260 px).
+With both, "Low battery" shows on 42 (not on the Instinct), the promise
+gives way to the two warnings on 16 products and the margin clock on 16 (12
+more than with one warning): the order the start screen already had,
+warning over promise and warning over clock.
 DND fact (owner's wrist test 2026-09-19, fēnix 8 Pro): `Attention.vibrate`
 works with Do Not Disturb on, so there is no DND warning any more (v1.1.0
 removed it; keep every try/catch around `Attention` calls, the 1.0.2 crash fix).
@@ -720,13 +739,14 @@ away at 10:00 while someone was looking at it. The box is centred on the
 same point either way, so the time is drawn exactly where it was.
 `testLayout_clockOnStartScreen`: the box is the SAME box at the narrowest
 and at the widest time of day (or absent at both), on every duration and
-both battery states; it is present on every non-lens device, and with the
-low-battery warning from 260 px, on screen, clear of the first line, inside
-the chord; the promise stays and the number keeps its size. Below 260 px
-the warning takes the clock's room - stably, now - which is the right way
-round: a watch that dies mid-nap never rings at all. The test reads neither
-the battery nor the wall clock from the simulator: it forces one and pins
-the other. The wording "Latest
+with no warning, either warning or both; it is present on every non-lens
+device, and with one warning (low battery or vibration off) from 260 px, on
+screen, clear of the first line, inside the chord; the promise stays and the
+number keeps its size. Below 260 px the warning takes the clock's room -
+stably, now - which is the right way round: a watch that dies mid-nap never
+rings at all. The test reads neither the battery, the vibration setting nor
+the wall clock from the simulator: it forces the first two and pins the
+last. The wording "Latest
 alarm" was replaced by "Alarm by" (the owner: "latest" reads as "most
 recent", and the 26-minute gap to a 10-minute nap looked wrong without the
 clock); the short variant stays "By HH:MM".
