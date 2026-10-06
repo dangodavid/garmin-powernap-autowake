@@ -139,6 +139,7 @@ class AlarmManager {
     private var _nudgeCount     as Number  = 0;
     private var _forceBacklightThrow as Boolean = false;
     private var _forceNoVibe as Boolean = false;     // debug: simulate a device without vibration
+    (:debug) private var _lastPattern as Array<Attention.VibeProfile>? = null; // the last vibration delivered
 
     //! Start the crescendo. Fires the first ring immediately (step 0), then
     //! schedules the repeating rings whose wait shrinks step by step.
@@ -423,11 +424,24 @@ class AlarmManager {
             return;
         }
         try {
-            Attention.vibrate(getVibePattern(step));
+            var pattern = getVibePattern(step);
+            Attention.vibrate(pattern);
             _vibrateCount += 1;
+            noteDelivered(pattern);
         } catch (e instanceof Lang.Exception) {
             // The screen and the backlight carry this ring.
         }
+    }
+
+    //! Remember the vibration just delivered, for the tests (debug builds
+    //! only: release builds have neither the field nor anything to write).
+    (:debug)
+    private function noteDelivered(pattern as Array<Attention.VibeProfile>) as Void {
+        _lastPattern = pattern;
+    }
+
+    (:release)
+    private function noteDelivered(pattern as Array<Attention.VibeProfile>) as Void {
     }
 
     //! Turn the display on, in its own try block (see class doc).
@@ -609,5 +623,14 @@ class AlarmManager {
 
     (:debug)
     function testGetVibePattern(step as Number) as Array<Attention.VibeProfile> { return getVibePattern(step); }
+
+    //! The vibration actually delivered last (a ring, a preview step or the
+    //! nudge), null before the first.
+    (:debug)
+    function testGetLastPattern() as Array<Attention.VibeProfile>? { return _lastPattern; }
+
+    //! The wait after the ring that fired last: when the next one rings.
+    (:debug)
+    function testGetWaitAfterLastRing() as Number { return intervalAfterLastRing(); }
 }
 
