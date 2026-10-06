@@ -1,3 +1,4 @@
+import Toybox.Attention;
 import Toybox.Test;
 import Toybox.Lang;
 
@@ -7,8 +8,9 @@ import Toybox.Lang;
 // Covers the ramp table (ring -> step -> wait mapping, the constraints the
 // owner set on it: >= 8 perceptible steps, fine first pulses, monotonic
 // growth, full strength at 100-130 s, 3 min at full, then the 30 s persistent
-// phase), the thresholds derived from it (backlight, doze alarm, nudge), the
-// display phases, the vibrate counter, the start/stop lifecycle, and the
+// phase), the backlight threshold derived from it, the display phases, the
+// Stay Awake doze alarm and nudge on their own table (ring by ring in
+// StayAwakeTest), the vibrate counter, the start/stop lifecycle, and the
 // AMOLED backlight regression: a throwing Attention.backlight() must never
 // suppress the vibration of the ring it belongs to, nor stop the alarm.
 //
@@ -253,41 +255,41 @@ function testAlarm_displayPhasesFollowRamp(logger as Test.Logger) as Boolean {
     return ok;
 }
 
-//! The Stay Awake doze alarm starts at the first step of at least 60 %
-//! (step 5, 63 %): first ring immediately at that step, the display turned
-//! on (it is above the 50 % backlight threshold), full strength six rings
-//! later, and the backlight schedule counts from the start.
+//! The Stay Awake doze alarm climbs its own table, not RAMP: its first ring
+//! fires at once at 63 % with the display on (above the 50 % backlight
+//! threshold), full strength comes with its seventh ring, the backlight
+//! schedule counts from its start (rings 1, 2 and 7 by then), and the next
+//! nap alarm climbs RAMP from its first step again. Ring by ring it is
+//! testStay_dozeAlarmAndNudgeAsIn110.
 (:test)
-function testAlarm_dozeStartsAtSixtyPercent(logger as Test.Logger) as Boolean {
+function testAlarm_dozeAlarmClimbsItsOwnTable(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     alarm.testForceBacklightThrow(false);
-    var step = alarm.testDozeStartStep();
     var ok = true;
-    if (step != 5 || alarm.testGetRampRow(step)[0] < 60 || alarm.testGetRampRow(step - 1)[0] >= 60) {
-        logger.debug("doze step " + step + " (" + alarm.testGetRampRow(step)[0] + " %), expected the first >= 60 %");
-        ok = false;
-    }
     alarm.startDozeAlarm();
-    if (!alarm.isAlarming() || alarm.testGetRingCount() != alarm.testGetFirstRingOfStep(step) + 1
-        || alarm.testGetLastRingStep() != step || alarm.testGetRingsFired() != 1
+    var first = alarm.testGetLastPattern();
+    if (!alarm.isAlarming() || alarm.testGetLastRingStep() != 0 || alarm.testGetRingsFired() != 1
         || alarm.testGetVibrateCount() != 1 || alarm.testGetBacklightCount() != 1
-        || alarm.getLastRingPhase() != 1 || alarm.isFullIntensity()) {
-        logger.debug("start: rings " + alarm.testGetRingCount() + " step " + alarm.testGetLastRingStep()
-            + " vib " + alarm.testGetVibrateCount() + " bl " + alarm.testGetBacklightCount());
+        || alarm.getLastRingPhase() != 1 || alarm.isFullIntensity()
+        || first == null || (first as Array<Attention.VibeProfile>)[0].dutyCycle != 63) {
+        logger.debug("start: step " + alarm.testGetLastRingStep() + " vib " + alarm.testGetVibrateCount()
+            + " bl " + alarm.testGetBacklightCount() + " phase " + alarm.getLastRingPhase());
         ok = false;
     }
-    var fullRing = alarmHelperFirstFullRing(alarm);
-    while (alarm.testGetRingCount() <= fullRing) {
+    while (!alarm.isFullIntensity() && alarm.testGetRingsFired() < 50) {
         alarm.testFireRing();
     }
-    if (!alarm.isFullIntensity() || alarm.testGetRingsFired() != fullRing - alarm.testGetFirstRingOfStep(step) + 1) {
-        logger.debug("expected full strength at ring " + fullRing + ", rings fired " + alarm.testGetRingsFired());
+    if (alarm.testGetRingsFired() != 7 || alarm.testGetBacklightCount() != 3) {
+        logger.debug("full strength after " + alarm.testGetRingsFired() + " rings (expected 7), backlight "
+            + alarm.testGetBacklightCount() + " (expected 3)");
         ok = false;
     }
-    // Backlight: the first two rings, then every 6th bright ring (7 rings
-    // fired here: bright indices 0, 1 and 6).
-    if (alarm.testGetBacklightCount() != 3) {
-        logger.debug("backlight after " + alarm.testGetRingsFired() + " rings " + alarm.testGetBacklightCount() + ", expected 3");
+    alarm.stop();
+    alarm.startAlarm();
+    var nap = alarm.testGetLastPattern();
+    if (alarm.testGetLastRingStep() != 0 || nap == null
+        || (nap as Array<Attention.VibeProfile>)[0].dutyCycle != alarm.testGetRampRow(0)[0]) {
+        logger.debug("a nap alarm after a doze alarm must start at the first step of RAMP");
         ok = false;
     }
     alarm.stop();
@@ -619,19 +621,15 @@ function testAlarm_stepBoundariesKeepAlarming(logger as Test.Logger) as Boolean 
     return ok;
 }
 
-//! A nudge is one vibration of the first step of at least 30 % (step 2,
-//! 35 %) with the display turned on; it is not an alarm, it is ignored while
-//! the alarm rings, and it is refused (quiet onset gate) unless the session
-//! is Stay Awake.
+//! A nudge is one vibration (of NUDGE_ROW, 35 %: its pattern is checked in
+//! testStay_dozeAlarmAndNudgeAsIn110) with the display turned on; it is not
+//! an alarm, it is ignored while the alarm rings, and it is refused (quiet
+//! onset gate) unless the session is Stay Awake.
 (:test)
 function testAlarm_nudgeIsOneGentleBurst(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     alarm.testForceBacklightThrow(false);
     var ok = true;
-    if (alarm.testNudgeStep() != 2 || alarm.testGetRampRow(2)[0] < 30 || alarm.testGetRampRow(1)[0] >= 30) {
-        logger.debug("nudge step " + alarm.testNudgeStep() + ", expected 2 (the first >= 30 %)");
-        ok = false;
-    }
     alarm.nudge();                           // a nap session: refused
     if (alarm.testGetNudgeCount() != 0 || alarm.testGetVibrateCount() != 0
         || alarm.testGetBacklightCount() != 0 || alarm.testGetBlockedDeliveries() != 1) {

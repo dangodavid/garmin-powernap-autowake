@@ -12,10 +12,14 @@ import Toybox.WatchUi;
 //! The ramp is one table (RAMP), one row per step:
 //!   [intensity %, pulse ms, pulses, gap ms, interval ms, rings]
 //! and everything else is derived from it: the vibration pattern of a ring,
-//! the wait after it, when the backlight may come on, where the Stay Awake
-//! doze alarm and nudge start, and the phase the screen shows ("ALARM x/4",
-//! calm or loud). The table is what the owner tunes on the wrist (the "Test
-//! alarm" preview plays every step once).
+//! the wait after it, when the backlight may come on, and the phase the
+//! screen shows ("ALARM x/4", calm or loud). The table is what the owner
+//! tunes on the wrist (the "Test alarm" preview plays every step once).
+//!
+//! Stay Awake does not read RAMP. Its doze alarm climbs DOZE_RAMP and its
+//! nudge is one ring of NUDGE_ROW: their own copy of the 1.1.0 rows they
+//! rang with (steps 5-9 and step 2), so a retuned nap ramp never changes
+//! them (owner, 2026-10-06; testStay_dozeAlarmAndNudgeAsIn110).
 //!
 //!   step  %    pulse  pulses  gap   interval  rings  first ring at
 //!   0     22   120    2       400   10 s      2      0 s
@@ -39,12 +43,11 @@ import Toybox.WatchUi;
 //! seconds later (a watch left on the nightstand), so the alarm keeps ringing
 //! every 30 s until dismissed instead of draining the battery.
 //!
-//! Derived thresholds: the backlight may come on from the first step >= 50 %
-//! (BACKLIGHT_FROM_PCT), the Stay Awake doze alarm starts at the first step
-//! >= 60 % (DOZE_START_PCT) and the nudge uses the first step >= 30 %
-//! (NUDGE_PCT). The display phase of a step is 0 below 40 %, 1 below 65 %,
-//! 2 below 100 % and 3 at 100 % (getCurrentPhase / getLastRingPhase /
-//! isFullIntensity keep their meaning for the view).
+//! Derived thresholds, the same for both tables: the backlight may come on
+//! from a ring >= 50 % (BACKLIGHT_FROM_PCT), and the display phase of a ring
+//! is 0 below 40 %, 1 below 65 %, 2 below 100 % and 3 at 100 %
+//! (getCurrentPhase / getLastRingPhase / isFullIntensity keep their meaning
+//! for the view).
 //!
 //! Output: every ring is a vibration and nothing else (tools/no-sound.sh
 //! keeps it that way). A watch without vibration, or a vibrate call that
@@ -100,10 +103,23 @@ class AlarmManager {
         [100, 350, 3, 150, 30000,  0]
     ] as Array<Array<Number> >;
 
-    // Thresholds on the ramp, all resolved to steps with firstStepAtLeast().
-    private const BACKLIGHT_FROM_PCT = 50;  // gentle visuals: dark below this
-    private const DOZE_START_PCT     = 60;  // Stay Awake doze alarm starts here
-    private const NUDGE_PCT          = 30;  // Stay Awake nudge: one burst of this step
+    //! The Stay Awake doze alarm, climbed from its first row: someone who
+    //! just dozed off at a desk must notice it at once, not after a minute
+    //! of feather taps. Rows 5-9 of the 1.1.0 ramp, copied (see class doc).
+    private const DOZE_RAMP = [
+        [ 63, 240, 3, 260,  6000,  2],
+        [ 78, 280, 3, 200,  6000,  2],
+        [ 92, 320, 3, 160,  5000,  2],
+        [100, 350, 3, 150,  5000, 36],
+        [100, 350, 3, 150, 30000,  0]
+    ] as Array<Array<Number> >;
+
+    //! The Stay Awake nudge: one ring of this row (its interval and rings
+    //! are not used). Row 2 of the 1.1.0 ramp, copied (see class doc).
+    private const NUDGE_ROW = [35, 160, 2, 350, 8000, 2] as Array<Number>;
+
+    // Gentle visuals: the display stays dark below this.
+    private const BACKLIGHT_FROM_PCT = 50;
 
     // Display phases for "ALARM x/4" and the calm/loud screen.
     private const PHASE1_FROM_PCT = 40;
@@ -120,6 +136,7 @@ class AlarmManager {
     private var _lastRingMs  as Number       = 0;     // System.getTimer() at the last ring
     private var _forceTimerFail as Boolean   = false; // debug: the repeat timer cannot start
     private var _isAlarming  as Boolean      = false;
+    private var _doze        as Boolean      = false; // the ringing alarm climbs DOZE_RAMP, not RAMP
     private var _ringCount   as Number       = 0;     // index of the next ring (sets its step)
     private var _ringsFired  as Number       = 0;     // rings since startAlarm
     private var _brightRings as Number       = 0;     // rings fired at or above BACKLIGHT_FROM_PCT
@@ -144,23 +161,23 @@ class AlarmManager {
     //! Start the crescendo. Fires the first ring immediately (step 0), then
     //! schedules the repeating rings whose wait shrinks step by step.
     function startAlarm() as Void {
-        startAlarmFromStep(0);
+        startRamp(false);
     }
 
-    //! The Stay Awake doze alarm: someone who just dozed off at a desk must
-    //! notice it at once, not after a minute of feather taps, so it starts
-    //! at the first step of DOZE_START_PCT and climbs the ramp from there.
+    //! The Stay Awake doze alarm: DOZE_RAMP from its first row, loud at once.
     function startDozeAlarm() as Void {
-        startAlarmFromStep(firstStepAtLeast(DOZE_START_PCT));
+        startRamp(true);
     }
 
-    //! Start the ramp at the first ring of `step`.
-    function startAlarmFromStep(step as Number) as Void {
+    //! Start a table at its first ring: RAMP, or DOZE_RAMP for `doze`.
+    //! Refused while an alarm rings or a preview plays.
+    private function startRamp(doze as Boolean) as Void {
         if (_isAlarming || _previewing) {
             return;
         }
+        _doze = doze;
         _isAlarming = true;
-        _ringCount  = firstRingOfStep(step);
+        _ringCount  = 0;
         _ringsFired = 0;
         _brightRings = 0;
         _vibrateCount = 0;
@@ -196,9 +213,8 @@ class AlarmManager {
     }
 
     //! Stay Awake: one gentle reminder when the wrist has been still for a
-    //! while (one ring of the first step at NUDGE_PCT, display on). Never
-    //! while the alarm rings, and never in a nap session (the quiet onset
-    //! gate).
+    //! while (one ring of NUDGE_ROW, display on). Never while the alarm
+    //! rings, and never in a nap session (the quiet onset gate).
     function nudge() as Void {
         if (_isAlarming || !_stayAwake) {
             _blockedDeliveries += 1;
@@ -207,7 +223,7 @@ class AlarmManager {
         _nudgeCount += 1;
         _nudging = true;
         try {
-            deliver(firstStepAtLeast(NUDGE_PCT));
+            deliver(NUDGE_ROW);
             requestBacklight();
         } catch (e instanceof Lang.Exception) {
             // The vibration and the backlight catch their own errors.
@@ -226,6 +242,7 @@ class AlarmManager {
     //! session.
     function stop() as Void {
         _isAlarming = false;
+        _doze       = false;
         _ringCount  = 0;
         _ringsFired = 0;
         _brightRings = 0;
@@ -304,16 +321,16 @@ class AlarmManager {
 
     //! Intensity of the step the preview played last, %.
     function getPreviewPct() as Number {
-        return (_previewStep > 0) ? pctOfStep(_previewStep - 1) : 0;
+        return (_previewStep > 0) ? RAMP[_previewStep - 1][R_PCT] : 0;
     }
 
-    //! One preview ring: the next step, delivered like an alarm ring.
+    //! One preview ring: the next step of RAMP, delivered like an alarm ring.
     private function firePreviewStep() as Void {
-        var step = _previewStep;
+        var row = RAMP[_previewStep];
         _previewStep += 1;
         _ringsFired += 1;
-        deliver(step);
-        if (pctOfStep(step) >= BACKLIGHT_FROM_PCT) {
+        deliver(row);
+        if (row[R_PCT] >= BACKLIGHT_FROM_PCT) {
             var bright = _brightRings;
             _brightRings += 1;
             if (bright < BACKLIGHT_INITIAL_RINGS || (bright % BACKLIGHT_EVERY_N_RINGS) == 0) {
@@ -346,7 +363,7 @@ class AlarmManager {
     //! Wait after the ring that fired last (its step's interval).
     private function intervalAfterLastRing() as Number {
         var last = (_ringCount > 0) ? _ringCount - 1 : 0;
-        return RAMP[stepOfRing(last)][R_INTERVAL_MS];
+        return activeRamp()[stepOfRing(last)][R_INTERVAL_MS];
     }
 
     //! (Re)start the repeat timer with the wait after the ring just fired.
@@ -387,14 +404,14 @@ class AlarmManager {
     //! Fire one ring. The vibration comes first, in its own try block; the
     //! backlight request is last and sparse (see class doc).
     private function fireAlarm() as Void {
-        var step = stepOfRing(_ringCount);
+        var row = activeRamp()[stepOfRing(_ringCount)];
         _ringCount += 1;
         _ringsFired += 1;
         _lastRingMs = System.getTimer();
 
-        deliver(step);
+        deliver(row);
 
-        if (pctOfStep(step) >= BACKLIGHT_FROM_PCT) {
+        if (row[R_PCT] >= BACKLIGHT_FROM_PCT) {
             var bright = _brightRings;
             _brightRings += 1;
             if (bright < BACKLIGHT_INITIAL_RINGS || (bright % BACKLIGHT_EVERY_N_RINGS) == 0) {
@@ -414,9 +431,9 @@ class AlarmManager {
         return false;
     }
 
-    //! The vibration of one ring of `step`, the alarm's only output (see
-    //! class doc).
-    private function deliver(step as Number) as Void {
+    //! The vibration of one ring of a table `row`, the alarm's only output
+    //! (see class doc).
+    private function deliver(row as Array<Number>) as Void {
         if (!outputAllowed()) {
             return;
         }
@@ -424,7 +441,7 @@ class AlarmManager {
             return;
         }
         try {
-            var pattern = getVibePattern(step);
+            var pattern = getVibePattern(row);
             Attention.vibrate(pattern);
             _vibrateCount += 1;
             noteDelivered(pattern);
@@ -466,31 +483,41 @@ class AlarmManager {
 
     // -- The ramp table ---------------------------------------------------
 
+    //! The table the alarm climbs: DOZE_RAMP for the Stay Awake doze alarm,
+    //! RAMP otherwise (a nap's alarm, and idle).
+    private function activeRamp() as Array<Array<Number> > {
+        return _doze ? DOZE_RAMP : RAMP;
+    }
+
     //! Step of ring `ring` (0-based ring index since the ramp's first ring).
     //! Rings beyond the bounded rows belong to the last (persistent) row.
     private function stepOfRing(ring as Number) as Number {
+        var ramp = activeRamp();
         var first = 0;
-        for (var s = 0; s < RAMP.size(); s++) {
-            var rings = RAMP[s][R_RINGS];
+        for (var s = 0; s < ramp.size(); s++) {
+            var rings = ramp[s][R_RINGS];
             if (rings <= 0 || ring < first + rings) {
                 return s;
             }
             first += rings;
         }
-        return RAMP.size() - 1;
+        return ramp.size() - 1;
     }
 
     //! Index of the first ring of a step (the persistent row's first ring
     //! follows the last bounded ring).
     private function firstRingOfStep(step as Number) as Number {
+        var ramp = activeRamp();
         var first = 0;
-        for (var s = 0; s < step && s < RAMP.size(); s++) {
-            first += RAMP[s][R_RINGS];
+        for (var s = 0; s < step && s < ramp.size(); s++) {
+            first += ramp[s][R_RINGS];
         }
         return first;
     }
 
-    //! The first step whose intensity is at least `pct` (the last one if none).
+    //! The first step of RAMP whose intensity is at least `pct` (the last
+    //! one if none). Only the tests resolve thresholds to steps.
+    (:debug)
     private function firstStepAtLeast(pct as Number) as Number {
         for (var s = 0; s < RAMP.size(); s++) {
             if (RAMP[s][R_PCT] >= pct) {
@@ -501,7 +528,7 @@ class AlarmManager {
     }
 
     private function pctOfStep(step as Number) as Number {
-        return RAMP[step][R_PCT];
+        return activeRamp()[step][R_PCT];
     }
 
     //! Display phase of an intensity: 0 below 40 %, 1 below 65 %, 2 below
@@ -513,12 +540,11 @@ class AlarmManager {
         return 0;
     }
 
-    //! Vibration pattern of a step, built from its RAMP row: `pulses` pulses
-    //! of `pulse ms` at `pct` with `gap ms` between them (at most 8 profiles).
+    //! Vibration pattern of one ring of a table row: `pulses` pulses of
+    //! `pulse ms` at `pct` with `gap ms` between them (at most 8 profiles).
     //! Note: Forerunner devices ignore the intensity and run every pulse at
     //! the same duty cycle, so escalation there is by pulse length and count.
-    private function getVibePattern(step as Number) as Array<Attention.VibeProfile> {
-        var row = RAMP[step];
+    private function getVibePattern(row as Array<Number>) as Array<Attention.VibeProfile> {
         var out = [] as Array<Attention.VibeProfile>;
         var pulses = row[R_PULSES];
         if (pulses > 4) { pulses = 4; }
@@ -562,17 +588,12 @@ class AlarmManager {
     (:debug)
     function testDisplayPhase(pct as Number) as Number { return displayPhase(pct); }
 
-    //! Steps the thresholds resolve to.
+    //! The RAMP step the backlight threshold resolves to.
     (:debug)
     function testBacklightFromStep() as Number { return firstStepAtLeast(BACKLIGHT_FROM_PCT); }
 
-    (:debug)
-    function testDozeStartStep() as Number { return firstStepAtLeast(DOZE_START_PCT); }
-
-    (:debug)
-    function testNudgeStep() as Number { return firstStepAtLeast(NUDGE_PCT); }
-
-    //! Step of the ring that fired last (-1 before the first ring).
+    //! Step of the ring that fired last, in the table the alarm climbs (-1
+    //! before the first ring).
     (:debug)
     function testGetLastRingStep() as Number {
         return (_ringsFired == 0 || _ringCount == 0) ? -1 : stepOfRing(_ringCount - 1);
@@ -622,7 +643,7 @@ class AlarmManager {
     function testForceNoVibration(force as Boolean) as Void { _forceNoVibe = force; }
 
     (:debug)
-    function testGetVibePattern(step as Number) as Array<Attention.VibeProfile> { return getVibePattern(step); }
+    function testGetVibePattern(step as Number) as Array<Attention.VibeProfile> { return getVibePattern(RAMP[step]); }
 
     //! The vibration actually delivered last (a ring, a preview step or the
     //! nudge), null before the first.
