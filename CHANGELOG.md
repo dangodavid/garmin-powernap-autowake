@@ -7,7 +7,7 @@ is only a claim about the code, not about what anyone has installed.
 
 This file starts at 1.1.0; it is not filled in backwards.
 
-## 1.2.0 - unreleased
+## 1.2.0 - 2026-10-06
 
 - **Fix**: on the start screen, the time at the top no longer runs into the
   "POWER NAP" title. It sits above the title now, on the fēnix 7 and on every

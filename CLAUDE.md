@@ -67,9 +67,11 @@ upload form - so the only authoritative answer to "what is live" is the app's
 own page in the Connect IQ store and its entry in the developer dashboard.
 Look there before trusting any number written down here.
 
-As of 2026-10-06: **published = 1.1.0** (in the store since 2026-09-20;
-`v1.1.0` at `1d2c860`), **in progress = 1.2.0**. Every "v1.1.0" and "since
-1.1.0" note below means that store version.
+As of 2026-10-06: **published = 1.2.0** (in the store since 2026-10-06;
+`v1.2.0` at `b62e87f`, package `bin/PowerNap-1.2.0.iq`), nothing in
+progress. Before it, 1.1.0 (in the store from 2026-09-20; `v1.1.0` at
+`1d2c860`). Every "v1.1.0" and "since 1.1.0" note below means that store
+version, every "1.2.0" note the one after it.
 
 **Every build meant for a wrist carries its commit in its file name**:
 `PowerNap-<version>-<short sha>-<device>.prg` for a sideload (that is the

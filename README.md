@@ -209,9 +209,10 @@ The layout tests measure the real device fonts, so run the suite on several scre
 
 ## Installing on a Watch
 
-The Connect IQ store carries 1.1.0, published - Stay Awake, the crescendo ramp,
-"Test alarm" and the "Alarm by" guarantee included - and that is the way to
-install it. Before every release the test suite runs on all 43 watches the app
+The Connect IQ store carries 1.2.0, published on 2026-10-06 - Stay Awake, the
+vibration-only alarm that starts from a faint pulse, "Test alarm", the
+"Vibration off" warning and the "Alarm by" guarantee included - and that is
+the way to install it. Before every release the test suite runs on all 43 watches the app
 supports. To try code from this repository before it reaches the store, build
 it and copy it across:
 
