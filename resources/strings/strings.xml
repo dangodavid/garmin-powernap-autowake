@@ -54,9 +54,12 @@
          per thing that would be lost: the nap, the ringing alarm, Stay
          Awake. Longest first, as above. Each one names the thing the way
          the screen names it, so the last variant of the Stay Awake set
-         drops the name rather than invent a word for it: on the 176 px
-         Instinct nothing longer fits, and that screen says STAY AWAKE at
-         the top anyway. -->
+         drops the name rather than invent a word for it. That variant was
+         written for the one-line popup before 1.2.0, when nothing longer
+         fitted the 176 px Instinct (whose screen says STAY AWAKE at the top
+         anyway). The popup now breaks onto two lines, and the longest
+         variant fits every popup screen of every product (measured on all
+         43 on 2026-10-05), so the shorter ones are only a fallback. -->
     <string id="BackAgainNap">Press BACK again to end nap</string>
     <string id="BackAgainNapShort">BACK again to end nap</string>
     <string id="BackAgainNapTiny">BACK again: end</string>
