@@ -294,7 +294,7 @@ function testReg_noVibrationKeepsAlarmRunning(logger as Test.Logger) as Boolean 
 }
 
 //! What a fresh alarm does, ring by ring, from its first ring into the
-//! persistent phase (ring 57 is the first persistent ring), and then the
+//! persistent phase (ring 58 is the first persistent ring), and then the
 //! whole "Test alarm" preview: vibrations, backlight requests and refused
 //! calls so far, after every ring and every preview step.
 (:debug)
@@ -302,7 +302,7 @@ function regHelperAlarmOutputs() as Array<Number> {
     var a = new AlarmManager();
     var out = [] as Array<Number>;
     a.startAlarm();
-    for (var ring = 0; ring < 59; ring++) {
+    for (var ring = 0; ring < 60; ring++) {
         if (ring > 0) {
             a.testFireRing();
         }

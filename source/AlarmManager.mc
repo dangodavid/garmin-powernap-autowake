@@ -23,35 +23,38 @@ import Toybox.WatchUi;
 //!
 //!   step  %    pulse  pulses  gap   interval  rings  first ring at
 //!   0     7    120    1       -     10 s      1      0 s
-//!   1     10   120    1       -     10 s      1      10 s
-//!   2     13   120    1       -     10 s      1      20 s
-//!   3     16   120    1       -     10 s      1      30 s
-//!   4     19   120    1       -     10 s      1      40 s
-//!   5     22   120    2       400   10 s      2      50 s
-//!   6     28   140    2       380   9 s       2      70 s
-//!   7     35   160    2       350   8 s       2      88 s
-//!   8     43   180    3       320   8 s       2      104 s
-//!   9     52   210    3       300   7 s       2      120 s
-//!   10    63   240    3       260   6 s       2      134 s
-//!   11    78   280    3       200   6 s       2      146 s
-//!   12    92   320    3       160   5 s       2      158 s
-//!   13    100  350    3       150   5 s       36     168 s (3 min at full)
-//!   14    100  350    3       150   30 s      -      348 s (persistent)
+//!   1     9    120    1       -     10 s      1      10 s
+//!   2     11   120    1       -     10 s      1      20 s
+//!   3     13   120    1       -     10 s      1      30 s
+//!   4     16   120    1       -     10 s      1      40 s
+//!   5     19   120    1       -     10 s      1      50 s
+//!   6     22   120    2       400   10 s      2      60 s
+//!   7     28   140    2       380   9 s       2      80 s
+//!   8     35   160    2       350   8 s       2      98 s
+//!   9     43   180    3       320   8 s       2      114 s
+//!   10    52   210    3       300   7 s       2      130 s
+//!   11    63   240    3       260   6 s       2      144 s
+//!   12    78   280    3       200   6 s       2      156 s
+//!   13    92   320    3       160   5 s       2      168 s
+//!   14    100  350    3       150   5 s       36     178 s (3 min at full)
+//!   15    100  350    3       150   30 s      -      358 s (persistent)
 //!
 //! The interval of a row is the wait AFTER each of its rings, so a step's
 //! first ring comes one interval of the previous step after that step's last
 //! ring. The first ring is the pulse the owner measured on the wrist on
 //! 2026-10-06 (the first one felt lying down on the fenix 8 Pro: one pulse
-//! of 120 ms at 7 %; standing, 10 %); from there the ramp climbs in steps of
-//! 3 points, one ring each, 10 s apart, to the first step of the 1.1.0 ramp
-//! (22 %), and from 22 % up it is that ramp unchanged. Full strength comes
-//! 168 s after the first ring (the owner's limit: 1.1.0's 118 s + 60 s =
-//! 178 s), no step rises more than 1.1.0's largest (15 points), and every
-//! step raises intensity, pulse length or pulse count while the wait never
-//! grows. A single pulse has no gap. After three minutes at full strength
-//! nobody wakes from the next burst five seconds later (a watch left on the
-//! nightstand), so the alarm keeps ringing every 30 s until dismissed
-//! instead of draining the battery.
+//! of 120 ms at 7 %; standing, 10 %). From there the ramp climbs to the
+//! first step of the 1.1.0 ramp (22 %) the way that ramp climbs, in
+//! proportion - 9, 11, 13, 16, 19 %, one ring each, 10 s apart, every step
+//! 8-30 % above the one before it (owner, 2026-10-06: 7 -> 10 % was a jump
+//! of 43 %) - and from 22 % up it is that ramp unchanged. Full strength
+//! comes 178 s after the first ring, the owner's limit exactly (1.1.0's
+//! 118 s + 60 s), no step rises more than 1.1.0's largest (15 points), and
+//! every step raises intensity, pulse length or pulse count while the wait
+//! never grows. A single pulse has no gap. After three minutes at full
+//! strength nobody wakes from the next burst five seconds later (a watch
+//! left on the nightstand), so the alarm keeps ringing every 30 s until
+//! dismissed instead of draining the battery.
 //!
 //! Derived thresholds, the same for both tables: the backlight may come on
 //! from a ring >= 50 % (BACKLIGHT_FROM_PCT), and the display phase of a ring
@@ -102,7 +105,8 @@ class AlarmManager {
     //! The crescendo (see class doc). The last row is the persistent phase.
     private const RAMP = [
         [  7, 120, 1, 400, 10000,  1],
-        [ 10, 120, 1, 400, 10000,  1],
+        [  9, 120, 1, 400, 10000,  1],
+        [ 11, 120, 1, 400, 10000,  1],
         [ 13, 120, 1, 400, 10000,  1],
         [ 16, 120, 1, 400, 10000,  1],
         [ 19, 120, 1, 400, 10000,  1],
