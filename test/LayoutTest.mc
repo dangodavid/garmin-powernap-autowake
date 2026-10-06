@@ -214,7 +214,6 @@ function testLayout_alarmScreens(logger as Test.Logger) as Boolean {
     // full, but the screen is still calm and the counter shows the phase
     // felt: 3/4.
     var edgeAlarm = new AlarmManager();
-    edgeAlarm.testSetAlarmType(0);
     edgeAlarm.startAlarm();
     while (edgeAlarm.testGetRingCount() < 16) {
         edgeAlarm.testFireRing();
@@ -229,7 +228,6 @@ function testLayout_alarmScreens(logger as Test.Logger) as Boolean {
 
     // Full strength (ring 16): the loud screen, flashing.
     var loudAlarm = new AlarmManager();
-    loudAlarm.testSetAlarmType(0);
     loudAlarm.startAlarm();
     while (loudAlarm.testGetRingCount() < 17) {
         loudAlarm.testFireRing();
@@ -788,7 +786,6 @@ function testLayout_lensAndLongValues(logger as Test.Logger) as Boolean {
 
     // 12 dozes.
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     d = new SleepDetector(null);
     d.testStartStayAwake();
     v = layoutHelperView(d, a);
@@ -921,7 +918,6 @@ function testLayout_stopHintBanner(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
     var ok = true;
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     var d = new SleepDetector(a);
     d.testStart();
     d.testFeedHR(100);
@@ -953,7 +949,6 @@ function testLayout_stopHintBanner(logger as Test.Logger) as Boolean {
     a.stop();
 
     a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     d = new SleepDetector(a);
     d.testStartStayAwake();
     d.testRunMinutes(3, 70, 200.0f);
@@ -975,7 +970,6 @@ function testLayout_backHintBanner(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
     var ok = true;
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     var d = new SleepDetector(a);
     d.testStart();
     d.testFeedHR(100);
@@ -1000,7 +994,6 @@ function testLayout_backHintBanner(logger as Test.Logger) as Boolean {
     a.stop();
 
     a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     d = new SleepDetector(a);
     d.testStartStayAwake();
     v = layoutHelperView(d, a);
@@ -1200,7 +1193,6 @@ function testLayout_workOfHeaviestScreens(logger as Test.Logger) as Boolean {
 function testLayout_previewScreen(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     var v = layoutHelperStartView(new SleepDetector(null), a);
     v.testSetPendingDuration(30);                // not the simulator's stored value
     var ok = true;

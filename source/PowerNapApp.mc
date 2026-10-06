@@ -47,8 +47,8 @@ class PowerNapApp extends Application.AppBase {
     }
 
     //! Task-switcher devices (fenix 8, Venu 3/4, vivoactive 6, ...): the app
-    //! was sent to the background. The system now denies vibration and tones
-    //! and limits sensors; the view warns the user once they come back.
+    //! was sent to the background. The system now denies vibration and
+    //! limits sensors; the view warns the user once they come back.
     function onInactive(state as Dictionary?) as Void {
         if (_sleepDetector != null) {
             (_sleepDetector as SleepDetector).noteInactive();
@@ -69,9 +69,6 @@ class PowerNapApp extends Application.AppBase {
     function onSettingsChanged() as Void {
         if (_sleepDetector != null) {
             (_sleepDetector as SleepDetector).loadSettings();
-        }
-        if (_alarmManager != null) {
-            (_alarmManager as AlarmManager).loadSettings();
         }
         if (_view != null) {
             (_view as PowerNapView).onSettingsChanged();

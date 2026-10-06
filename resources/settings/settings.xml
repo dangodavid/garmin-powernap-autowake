@@ -5,13 +5,6 @@
     <setting propertyKey="@Properties.fallAsleepAllowance" title="@Strings.FallAsleepAllowanceTitle" prompt="@Strings.FallAsleepAllowancePrompt">
         <settingConfig type="numeric" min="5" max="30" />
     </setting>
-    <setting propertyKey="@Properties.alarmType" title="@Strings.AlarmTypeTitle">
-        <settingConfig type="list">
-            <listEntry value="0">@Strings.VibrationOnly</listEntry>
-            <listEntry value="1">@Strings.ToneOnly</listEntry>
-            <listEntry value="2">@Strings.VibrationAndTone</listEntry>
-        </settingConfig>
-    </setting>
     <setting propertyKey="@Properties.hrDropThreshold" title="@Strings.HRDropTitle">
         <settingConfig type="numeric" min="3" max="20" />
     </setting>

@@ -178,6 +178,7 @@ matrix.sh build - debug build, strict: a warning fails the device
 manifest manifest.xml: 43 product(s)
 SDK      connectiq-sdk-mac-9.1.0-2026-03-09-6a872a80b
 logs     /tmp/powernap-matrix
+static   no sound API (playTone|ToneProfile) in source/ test/
 --------------------------------------------------------------------
  1/43  d2mach1              OK     3s
  ...
@@ -212,7 +213,7 @@ the first device.
 | Code | Meaning |
 |------|---------|
 | `0` | every device passed; devices skipped in test mode are named in the summary |
-| `1` | a device failed - its output was printed and the run stopped at that device; or a test run over the whole protocol set found it without a product for one of the popup fonts |
+| `1` | a device failed - its output was printed and the run stopped at that device; or a test run over the whole protocol set found it without a product for one of the popup fonts; or the static test found a sound API in the code, before any device was built |
 | `2` | the run never started: bad usage, or no manifest / product list / SDK / developer key |
 
 ### Environment
@@ -243,13 +244,17 @@ tools/matrix.sh build                          # strict, every product in the ma
 tools/matrix.sh test --protocol                # the suite on the protocol set, ~6 min
 ```
 
+Both start with the static test (`tools/no-sound.sh`, see
+[What the tests cover](#what-the-tests-cover)): it reads the code once,
+before the first device, and a failure stops the run there.
+
 The build is strict and covers **every** product, because a resource or a text
 that only one device rejects is exactly what a narrower run misses. The suite
 then runs on the protocol set: five devices that between them cover what the
 rest would: the largest AMOLED at 454 px (`fenix847mm`), the 176 px 1-bit
 octagon with a subscreen lens (`instinct3solar45mm`), the smallest colour
-screen at 218 px MIP (`fr255s`), a small AMOLED (`venu3s`), and a watch with no
-`Attention.playTone` at all whose popups are drawn in TINY (`vivoactive6`).
+screen at 218 px MIP (`fr255s`), a small AMOLED (`venu3s`), and a watch whose
+popups are drawn in TINY (`vivoactive6`).
 The set is defined once, as `protocol_set` in `tools/matrix.sh`, and
 `tools/matrix.sh list --protocol` prints it. A pull request that changes
 the start screen's title adds `vivoactive5` to that run, the only product
@@ -262,8 +267,7 @@ display: TINY on some products (14 of the 43 on 2026-10-05), XTINY on the
 rest. A change that moved every popup to one of them fails only where the
 other is the exit font, so the set holds a product of each: `vivoactive6`
 for TINY, the other four for XTINY. Until 2026-10-05 the fifth product was
-`vivoactive5` - the same 390 px round AMOLED without `Attention.playTone`,
-but XTINY like the rest - and moving every popup to XTINY passed every pull
+`vivoactive5` - the same 390 px round AMOLED, but XTINY like the rest - and moving every popup to XTINY passed every pull
 request. Now the run checks the set itself:
 `testOverlap_exitPopupFontForTheProtocolSet` prints the exit popup's font
 of the product it runs on, recomputed by the test's own geometry and never
@@ -475,8 +479,8 @@ not the number of assertions, and five files multiply what one function checks:
   only measures the exit popup's font for the protocol-set check;
 - `InvariantTest.mc` runs a handful of fixed seeds per function and asserts
   after **every simulated second** of every random nap;
-- `QuietOnsetTest.mc` loops each scenario over alarm types 0, 1 and 2, and once
-  more with the tone channel forced unavailable;
+- `QuietOnsetTest.mc` asserts after **every simulated second** of each
+  scenario, until its alarm is due;
 - `AlarmManagerTest.mc` walks the whole `RAMP` table inside single functions, so
   one test covers all ten steps.
 
@@ -488,9 +492,9 @@ can be carrying more assertions than a file with thirty functions.
 | `OnsetTest.mc` | Calibration and sleep onset: the HR baseline as the mean of the first two minutes, what makes a minute "still" (mean motion below the threshold and at most 5 active seconds), and the two ways in - 2 still minutes with the HR drop, or 5 still minutes without it. Onset is the decision the whole nap hangs off; detect it early and the alarm rings early. |
 | `WakeTest.mc` | Wake episodes and re-entry: what ends a sleep segment (10 active seconds, a 100 mg minute mean, or a 10 BPM rise held for 2 minutes), that the countdown keeps running through a wake, and that re-entry takes 2 still minutes. The segment arithmetic here is where the summary's "actual sleep" comes from. |
 | `TimingTest.mc` | Wall-clock alarm timing: the planned end, the hard deadline cap from `AlarmCap`, and the smart-wake window. The clock is frozen on a whole minute, so every expectation is exact. This is the file that holds the promise the start screen makes - the alarm never rings after "Alarm by HH:MM". |
-| `AlarmManagerTest.mc` | The escalation ramp: the owner's constraints (at least 8 steps below full, a gentle first step, intensity and pulse never decreasing, the wait never growing, full strength reached in 100-130 s), the exact ring schedule, the persistent phase, the tone melodies, the nudge, the backlight rule and the "Test alarm" preview. Tuning the table is safe only because these tests fail when a change leaves the approved envelope. |
+| `AlarmManagerTest.mc` | The escalation ramp: the owner's constraints (at least 8 steps below full, a gentle first step, intensity and pulse never decreasing, the wait never growing, full strength reached in 100-130 s), the exact ring schedule, the persistent phase, the nudge, the backlight rule and the "Test alarm" preview. Tuning the table is safe only because these tests fail when a change leaves the approved envelope. |
 | `SummaryTest.mc` | Finish and cancel from every state, the statistics (planned completion, sleep efficiency, actual sleep, wake episodes, average and minimum sleep HR), that they freeze once the nap has ended, and `RingMath`'s angle maths for the progress ring. |
-| `RegressionTest.mc` | One test per confirmed review finding: HR-plateau wake ping-pong, the sleep-HR fold exclusion, frozen settings and clamping, the app lifecycle (`onInactive`/`onActive`), the alarm channel fallback, the per-phase vibration patterns, `ringNow()`, and the two-press guard. These exist so that a fixed bug cannot come back quietly. |
+| `RegressionTest.mc` | One test per confirmed review finding: HR-plateau wake ping-pong, the sleep-HR fold exclusion, frozen settings and clamping, the app lifecycle (`onInactive`/`onActive`), the alarm on a watch that cannot vibrate, the Alarm Type value a watch keeps from 1.1.0 (it changes nothing), the per-phase vibration patterns, `ringNow()`, and the two-press guard. These exist so that a fixed bug cannot come back quietly. |
 | `LayoutTest.mc` | Every screen state - start, calibrating, monitoring, sleeping, alarm, summary, Stay Awake, peek card, alarm preview - laid out against a `Dc` of the running device, each also with the popup it can show over it. It asserts that no text is truncated, that nothing leaves the screen or the round chord, and that the layout stays inside its work budget, because every screen redraws at 1 Hz and the Instinct watchdog is 240k bytecodes per event. Its inputs are its own: it forces the battery level and pins the clock, so a screen never passes or fails on what the simulator happened to be that day. |
 | `OverlapTest.mc` | Nothing drawn over anything else, and nothing outside the display. Every screen - start, calibrating, monitoring, asleep, awake after a wake, the peek card, both alarms calm and at full strength, the summaries, Stay Awake from calibrating to its summary, the alarm preview, and every popup over them - is built by the real view and taken apart into the boxes it draws, including what the view draws outside the layout: the start screen's clock and arrows, the clock in the Instinct lens (`testScreenBoxes`). No box may overlap another, and each must lie inside the round chord at its own rows (inside the summary ring where it is drawn), inside the Instinct's octagon and clear of its lens. Each screen is checked in 12 and 24 h, with a full and a low battery, the clock at the widest time of day the device draws and the content at its longest (a 3-digit heart rate, the 120-minute nap, 12 wakes, 12 dozes, a 10-hour session). It exists because `LayoutTest` checked each line against the display but never two things against each other: the start screen's clock was drawn over the "POWER NAP" title on 25 of the 43 products, the fēnix 7 among them, and every test passed. The popup is a layer over the screen - a sheet from the top edge of one of its rows down past the bottom edge - and is checked as one: its text inside the sheet and inside the display, and on every screen that shows one the three rules it is placed by. It covers whole rows only (its top edge is a row's top edge and cuts none, and it starts no higher than its text needs); its font is the exit popup's on every product; and the next longer text would fit under no row in that font, not even on two lines. Those rules exist because the centred box it replaced cut the fēnix 8's countdown, the Instinct's "Wake at" and the FR255S's "Time to wake up" in half. The "Test alarm" menu is drawn by the firmware and has no boxes - the contact sheets of a layout PR are its check. One function checks nothing on the device: `testOverlap_exitPopupFontForTheProtocolSet` prints the exit popup's font, recomputed by the test's own geometry, and `tools/matrix.sh` fails a run over the protocol set that does not show both TINY and XTINY (see [Every pull request](#every-pull-request)). |
 | `StayAwakeTest.mc` | Stay Awake mode: no deadline and no timed alarm at all, the doze rules measured against the rolling HR reference rather than the calibration baseline, the single nudge at 3 still minutes, `noteUserAwake()` ending the still run, and the return to the guard after a doze alarm. |
@@ -500,6 +504,20 @@ can be carrying more assertions than a file with thirty functions.
 | `InvariantTest.mc` | Seeded random naps from a small Markov model (awake -> drowsy -> asleep, with wakes, stirs, HR dropouts and minutes with no accelerometer data), checked after every simulated second against the rules that must hold whatever the sensors say - above all that the alarm always fires and never after the deadline. Plus negative tests. A failure prints its seed, so the case replays exactly. |
 | `TraceTest.mc` | Replays of naps recorded on a real watch, minute by minute through `testReplayMinute`. The file header documents how to record one. It exists so that a nap that behaved wrong on the wrist becomes a permanent test instead of an anecdote. |
 | `StartScreenTest.mc` | The start screen's promise: that `AlarmCap` is the single formula behind both the preview and the running nap, so a nap started in the minute the preview was drawn in keeps exactly that time; the minute-aligned refresh; the duration remembered in `Application.Storage`; and that the whole flow can be driven from the buttons alone. |
+
+**The static test.** One test reads the code instead of running it:
+`tools/no-sound.sh`. Since 1.2.0 the alarm only vibrates - the sound did not
+play the same on every watch, and a wrong sound is worse than none - and a
+Connect IQ app can make a sound only through `Attention.playTone`, with a
+built-in tone or a melody of `Attention.ToneProfile` notes. So the test fails
+on every line of a `.mc` file under `source/` or `test/` that names either,
+comments included, and prints them as `file:line: text`. `tools/matrix.sh`
+runs it in build and test mode before the first device, so the two commands
+of every pull request run it, and a failure stops the run before anything is
+built (exit 1). Checked by mutation on 2026-10-06: one `Attention.playTone`
+call put back into `deliver()` failed it, naming the line, and so did one
+`ToneProfile` named in a comment of a test file; on `main` before vibration
+only it named 83 lines.
 
 ## Architecture
 
@@ -560,7 +578,7 @@ Effective naps (planned end minus onset, possibly shortened by the deadline cap)
 
 ### Deadline cap and frozen settings
 
-The deadline comes from `AlarmCap.deadlineSec()`: the start rounded UP to the next whole minute + allowance + nap. Both the start screen's preview and `beginSession()` call it, so a nap started anywhere in the minute the preview was drawn in keeps that time, and the cap is itself a whole minute, so the alarm rings at the latest exactly at the "Alarm by HH:MM" shown. It is a hard cap: a late onset shortens the nap instead of pushing the alarm past it. Detector settings are frozen for the running nap; changes from the phone apply to the next one. Alarm Type applies immediately. The duration a nap started with is remembered in `Application.Storage` (written at once, unlike properties, which are only saved when the app stops) and opens the next session unless the phone setting changed since.
+The deadline comes from `AlarmCap.deadlineSec()`: the start rounded UP to the next whole minute + allowance + nap. Both the start screen's preview and `beginSession()` call it, so a nap started anywhere in the minute the preview was drawn in keeps that time, and the cap is itself a whole minute, so the alarm rings at the latest exactly at the "Alarm by HH:MM" shown. It is a hard cap: a late onset shortens the nap instead of pushing the alarm past it. Detector settings are frozen for the running nap; changes from the phone apply to the next one. The duration a nap started with is remembered in `Application.Storage` (written at once, unlike properties, which are only saved when the app stops) and opens the next session unless the phone setting changed since.
 
 ### Alarm escalation (AlarmManager)
 
@@ -573,9 +591,9 @@ One table, `RAMP`, one row per step `[intensity %, pulse ms, pulses, gap ms, int
 | 8 | 100 % | 3 × 350 ms | 5 s | 118 s (36 rings = 3 min) |
 | 9 (persistent) | 100 % | 3 × 350 ms | 30 s | 298 s |
 
-The wait after a ring is that of its step; when it changes the repeat timer is restarted. Thresholds resolved with `firstStepAtLeast(pct)`: melody joins ("Both") at 40 %, backlight from 50 %, Stay Awake doze alarm starts at 60 %, nudge uses the 30 % step. Display phases: 0 below 40 %, 1 below 65 %, 2 below 100 %, 3 at full.
+The wait after a ring is that of its step; when it changes the repeat timer is restarted. Thresholds resolved with `firstStepAtLeast(pct)`: backlight from 50 %, Stay Awake doze alarm starts at 60 %, nudge uses the 30 % step. Display phases: 0 below 40 %, 1 below 65 %, 2 below 100 %, 3 at full.
 
-**AMOLED rule:** vibration and tone run first, each in its own try block; `Attention.backlight(true)` runs last, in its own try block, only from the 50 % step and only on the first two such rings and every 6th after. Burn-in protected displays throw after the display has been held on for about a minute; a backlight call placed before the vibration in a shared try block silences the alarm.
+**AMOLED rule:** the vibration runs first, in its own try block; `Attention.backlight(true)` runs last, in its own try block, only from the 50 % step and only on the first two such rings and every 6th after. Burn-in protected displays throw after the display has been held on for about a minute; a backlight call placed before the vibration in a shared try block silences the alarm.
 
 **Quiet onset gate:** `deliver()` and `requestBacklight()` refuse every call while the alarm is not ringing (except from `nudge()`), and `nudge()` is refused unless the detector marked the session as Stay Awake. `test/QuietOnsetTest.mc` and the invariant tests guard it.
 

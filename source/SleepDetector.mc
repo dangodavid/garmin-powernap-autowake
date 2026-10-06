@@ -389,7 +389,7 @@ class SleepDetector {
     // ── App lifecycle (task switcher devices) ───────────────────────────
 
     //! The app left the foreground (AppBase.onInactive). While inactive the
-    //! system denies vibration/tones and limits sensors, so the view warns
+    //! system denies vibration and limits sensors, so the view warns
     //! the user to stay in the app for the rest of the nap.
     function noteInactive() as Void {
         // A Stay Awake doze alarm is part of a session that goes on after it.
