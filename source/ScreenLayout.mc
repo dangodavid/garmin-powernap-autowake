@@ -144,6 +144,21 @@ class ScreenLayout {
     //! Lines from this priority on (the alarm promise, warnings) survive
     //! until every font has shrunk.
     static const IMPORTANT = 90;
+
+    //! In a popup's text, the place its author prefers the line break; it
+    //! reads as a space. Set in strings.xml (see solveBanner).
+    static const BREAK_MARK = "|";
+
+    //! A popup's text as it reads: its BREAK_MARK, if it has one, a space.
+    static function unmarked(text as String) as String {
+        var at = text.find(BREAK_MARK);
+        if (at == null) {
+            return text;
+        }
+        return (text.substring(0, at as Number) as String) + " "
+            + (text.substring((at as Number) + 1, text.length()) as String);
+    }
+
     //! The footer never moves above this share of the height: a hint that
     //! does not fit lower uses a shorter variant instead of eating the band.
     private const FOOTER_MIN_PCT = 72;
@@ -291,7 +306,9 @@ class ScreenLayout {
     //! corners. It covers the footer and every row in between, whole, and
     //! starts at the lowest row that leaves its text room. The text is the
     //! longest of `texts` that fits in `font` (popupFont, the same for
-    //! every popup), on one line or broken at a space onto two.
+    //! every popup), on one line or broken at a space onto two. A text may
+    //! mark the place it prefers to break at with BREAK_MARK, which reads as
+    //! a space (see solveBanner).
     function setBanner(texts as Array<String>, font as Graphics.FontDefinition) as Void {
         _bannerTexts = texts;
         _bannerFont = font;
@@ -478,10 +495,13 @@ class ScreenLayout {
     //! Place the banner (see setBanner): the texts longest first, each at
     //! the lowest row whose top edge leaves it room - on one line, else on
     //! two, broken at the space that keeps the lines most even and still
-    //! fits. A shorter text only when a longer one fits under no row, not
-    //! even on two lines; never a smaller font. Each text, and each way of
-    //! breaking it, is measured once (one fit call per measurement); the
-    //! rows cost only arithmetic.
+    //! fits. A text with a BREAK_MARK breaks there instead, under the lowest
+    //! row where both of those lines fit (or where it fits on one line); only
+    //! when they fit under no row does it break by the rule above, unchanged.
+    //! A shorter text only when a longer one fits under no row, not even on
+    //! two lines; never a smaller font. Each text, and each way of breaking
+    //! it, is measured once (one fit call per measurement); the rows cost
+    //! only arithmetic.
     private function solveBanner(dc as Graphics.Dc) as Void {
         if (_bannerTexts == null) {
             return;
@@ -490,25 +510,49 @@ class ScreenLayout {
         var fh = dc.getFontHeight(_bannerFont);
         var tops = rowTops();
         for (var ti = 0; ti < texts.size(); ti++) {
-            var one = [dc.getTextWidthInPixels(texts[ti], _bannerFont)] as Array<Number>;
+            var marked = texts[ti];
+            var mark = marked.find(BREAK_MARK);
+            var text = unmarked(marked);
+            var one = [dc.getTextWidthInPixels(text, _bannerFont)] as Array<Number>;
             _fitCalls += 1;
+            if (mark != null) {
+                // The author's break, under the lowest row where both of its
+                // lines fit (one line where that fits lower).
+                var a = marked.substring(0, mark as Number) as String;
+                var b = marked.substring((mark as Number) + 1, marked.length()) as String;
+                var two = [dc.getTextWidthInPixels(a, _bannerFont), dc.getTextWidthInPixels(b, _bannerFont)]
+                    as Array<Number>;
+                _fitCalls += 2;
+                for (var k = 0; k < tops.size(); k++) {
+                    var spot = bannerSpot(one, tops[k], fh);
+                    if (spot != null) {
+                        storeBanner(text, [text] as Array<String>, tops[k], spot);
+                        return;
+                    }
+                    spot = bannerSpot(two, tops[k], fh);
+                    if (spot != null) {
+                        storeBanner(text, [a, b] as Array<String>, tops[k], spot);
+                        return;
+                    }
+                }
+            }
             var breaks = [] as Array<Array>;
             var measured = false;
             for (var k = 0; k < tops.size(); k++) {
                 var spot = bannerSpot(one, tops[k], fh);
                 if (spot != null) {
-                    storeBanner(texts[ti], [texts[ti]] as Array<String>, tops[k], spot);
+                    storeBanner(text, [text] as Array<String>, tops[k], spot);
                     return;
                 }
                 if (!measured) {
-                    breaks = bannerBreaks(dc, texts[ti]);
+                    breaks = bannerBreaks(dc, text);
                     measured = true;
                 }
                 for (var j = 0; j < breaks.size(); j++) {
                     var br = breaks[j];
                     spot = bannerSpot([br[2] as Number, br[3] as Number] as Array<Number>, tops[k], fh);
                     if (spot != null) {
-                        storeBanner(texts[ti], [br[0] as String, br[1] as String] as Array<String>, tops[k], spot);
+                        storeBanner(text, [br[0] as String, br[1] as String] as Array<String>, tops[k], spot);
                         return;
                     }
                 }
@@ -1311,6 +1355,12 @@ class ScreenLayout {
     //! The banner's text, or null when no banner is set.
     function getBannerText() as String? {
         return (_bannerTexts == null) ? null : _bannerText;
+    }
+
+    //! The banner's text as it is drawn: one line or two (tests).
+    (:debug)
+    function testBannerLines() as Array<String> {
+        return _bannerLines;
     }
 
     //! The banner's sheet [x, y, w, h] (tests), or null when no banner is set.

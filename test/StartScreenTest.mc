@@ -479,7 +479,7 @@ function testStart_vibrationOffAsksBeforeStarting(logger as Test.Logger) as Bool
                 var texts = r.view.startAnywayTexts();
                 var known = false;
                 for (var k = 0; k < texts.size() && shown != null; k++) {
-                    if ((shown as String).equals(texts[k])) { known = true; }
+                    if ((shown as String).equals(ScreenLayout.unmarked(texts[k]))) { known = true; }
                 }
                 if (r.view.isStarted() || !r.view.testIsHintShowing() || !known
                     || r.view.testGetPendingDuration() != dur) {

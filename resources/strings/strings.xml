@@ -26,15 +26,18 @@
          is switched off in the watch settings: the alarm only vibrates and
          would not be felt, so a second press inside 4 s is needed to begin.
          The verb is the start hint's - TAP on a touch watch, START elsewhere.
-         Longest first; the popup takes the longest that fits on two lines. -->
-    <string id="StartAnywayTouch">Vibration off. TAP again to begin anyway</string>
-    <string id="StartAnywayTouchShort">Vibration off. TAP again to begin</string>
-    <string id="StartAnywayTouchTiny">Vibration off. TAP again</string>
-    <string id="StartAnywayTouchTiniest">Vibe off: TAP again</string>
-    <string id="StartAnywayButton">Vibration off. START again to begin anyway</string>
-    <string id="StartAnywayButtonShort">Vibration off. START again to begin</string>
-    <string id="StartAnywayButtonTiny">Vibration off. START again</string>
-    <string id="StartAnywayButtonTiniest">Vibe off: START again</string>
+         Longest first; the popup takes the longest that fits on two lines.
+         The | marks where the text prefers to break (it reads as a space):
+         after "Vibration off.", never between TAP and again, wherever both
+         lines fit; elsewhere the popup's usual, most even break. -->
+    <string id="StartAnywayTouch">Vibration off.|TAP again to begin anyway</string>
+    <string id="StartAnywayTouchShort">Vibration off.|TAP again to begin</string>
+    <string id="StartAnywayTouchTiny">Vibration off.|TAP again</string>
+    <string id="StartAnywayTouchTiniest">Vibe off:|TAP again</string>
+    <string id="StartAnywayButton">Vibration off.|START again to begin anyway</string>
+    <string id="StartAnywayButtonShort">Vibration off.|START again to begin</string>
+    <string id="StartAnywayButtonTiny">Vibration off.|START again</string>
+    <string id="StartAnywayButtonTiniest">Vibe off:|START again</string>
 
     <!-- The start screen's menu, a Menu2 the watch's firmware lays out:
          nothing here is measured or fitted by the app. The title reads as
