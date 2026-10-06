@@ -46,7 +46,6 @@ class DelegateRig {
         _lastNap = delegateHelperStored("lastNapMin");
         _phoneNap = delegateHelperStored("lastPhoneNapMin");
         alarm = new AlarmManager();
-        alarm.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
         detector = new SleepDetector(alarm);
         detector.testUseFakeRuntime();
         view = new PowerNapView(detector, alarm);
@@ -862,8 +861,9 @@ function testDelegate_lockDoesNotTrapRepeatedPresses(logger as Test.Logger) as B
     return ok;
 }
 
-//! Changing an unrelated setting on the phone (alarm type) keeps the pick on
-//! the watch, Stay Awake included; changing the nap duration is followed.
+//! Changing an unrelated setting on the phone (motion sensitivity) keeps the
+//! pick on the watch, Stay Awake included; changing the nap duration is
+//! followed.
 (:test)
 function testDelegate_phoneSettingsKeepWatchPick(logger as Test.Logger) as Boolean {
     var r = new DelegateRig(30);
@@ -872,7 +872,7 @@ function testDelegate_phoneSettingsKeepWatchPick(logger as Test.Logger) as Boole
         Application.Properties.setValue("napDuration", 30);
         r.view.onSettingsChanged();              // sync to 30
         r.view.testSetPendingDuration(0);        // user picks Stay Awake
-        r.view.onSettingsChanged();              // e.g. alarm type changed
+        r.view.onSettingsChanged();              // e.g. motion sensitivity changed
         if (r.view.testGetPendingDuration() != 0) {
             logger.debug("an unrelated setting must keep Stay Awake, got " + r.view.testGetPendingDuration());
             ok = false;

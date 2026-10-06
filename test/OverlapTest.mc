@@ -297,7 +297,6 @@ function testOverlap_stayAwakeScreens(logger as Test.Logger) as Boolean {
 function testOverlap_previewScreen(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     var v = layoutHelperStartView(new SleepDetector(null), a);
     var times = overlapHelperTimes(v, dc);
     var ok = true;
@@ -414,7 +413,6 @@ function overlapHelperAlarm(name as String, d as SleepDetector, dc as Graphics.D
     var ok = true;
     for (var loud = 0; loud < 2; loud++) {
         var a = new AlarmManager();
-        a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
         if (loud == 1) {
             a.startAlarm();
             while (!a.isFullIntensity()) {

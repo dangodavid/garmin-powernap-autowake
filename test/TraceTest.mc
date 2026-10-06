@@ -99,7 +99,6 @@ function testTrace_stayAwakeDozeReplay(logger as Test.Logger) as Boolean {
         [62, 600, 0]                                           // never reached
     ] as Array<Array<Number>>;
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     var d = new SleepDetector(a);
     d.testStartStayAwake();
     var minutes = traceReplay(d, rows);

@@ -1,7 +1,6 @@
 import Toybox.Test;
 import Toybox.Lang;
 import Toybox.Time;
-import Toybox.Attention;
 import Toybox.Application;
 
 // -----------------------------------------------------------------------------
@@ -9,7 +8,8 @@ import Toybox.Application;
 //
 // Each test pins one confirmed finding: HR-plateau wake ping-pong, the sleep
 // HR mean fold exclusion, frozen settings and clamping, app lifecycle
-// (inactive/active), alarm channel fallback, per-phase vibration patterns,
+// (inactive/active), the alarm on a watch that cannot vibrate, the Alarm
+// Type setting a watch keeps from 1.1.0, per-phase vibration patterns,
 // ringNow(), and the two-press ConfirmPress guard. The detector clock is
 // frozen by testStart(), so every value is exact.
 // -----------------------------------------------------------------------------
@@ -278,63 +278,97 @@ function testReg_onResumeAfterCancelIsInert(logger as Test.Logger) as Boolean {
     return true;
 }
 
-// ── Alarm channels and patterns ─────────────────────────────────────────────
+// ── Alarm output and patterns ───────────────────────────────────────────────
 
-//! Tone Only on a device without tones (vivoactive 5/6) vibrates instead.
+//! A watch that cannot vibrate (no motor, or the call fails): the alarm
+//! keeps running (screen + backlight) without crashing.
 (:test)
-function testReg_toneOnlyFallsBackToVibration(logger as Test.Logger) as Boolean {
+function testReg_noVibrationKeepsAlarmRunning(logger as Test.Logger) as Boolean {
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_TONE);
-    a.testForceChannelsUnavailable(false, true);
+    a.testForceNoVibration(true);
     a.startAlarm();
     a.testFireRing();
-    var ok = a.testGetVibrateCount() == 2 && a.testGetToneCount() == 0;
-    if (!ok) { logger.debug("vib " + a.testGetVibrateCount() + " tone " + a.testGetToneCount()); }
+    var ok = a.isAlarming() && a.testGetRingCount() == 2 && a.testGetVibrateCount() == 0;
     a.stop();
     return ok;
 }
 
-//! Vibration Only on a device (or setting) without vibration uses tones.
-//! (Skipped on devices that have no tones at all, e.g. vivoactive 5/6.)
-(:test)
-function testReg_vibrationOnlyFallsBackToTone(logger as Test.Logger) as Boolean {
-    if (!(Attention has :playTone)) {
-        return true;
+//! What a fresh alarm does, ring by ring, from its first ring into the
+//! persistent phase (ring 52 is the first persistent ring), and then the
+//! whole "Test alarm" preview: vibrations, backlight requests and refused
+//! calls so far, after every ring and every preview step.
+(:debug)
+function regHelperAlarmOutputs() as Array<Number> {
+    var a = new AlarmManager();
+    var out = [] as Array<Number>;
+    a.startAlarm();
+    for (var ring = 0; ring < 54; ring++) {
+        if (ring > 0) {
+            a.testFireRing();
+        }
+        out.addAll([a.testGetVibrateCount(), a.testGetBacklightCount(), a.testGetBlockedDeliveries()]);
     }
-    var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
-    a.testForceChannelsUnavailable(true, false);
-    a.startAlarm();
-    a.testFireRing();
-    var ok = a.testGetToneCount() == 2 && a.testGetVibrateCount() == 0;
-    if (!ok) { logger.debug("vib " + a.testGetVibrateCount() + " tone " + a.testGetToneCount()); }
     a.stop();
-    return ok;
+    a.startPreview();
+    for (var step = 1; step <= a.getPreviewSteps(); step++) {
+        if (step > 1) {
+            a.testPreviewTick();
+        }
+        out.addAll([a.testGetVibrateCount(), a.testGetBacklightCount(), a.testGetBlockedDeliveries()]);
+    }
+    a.stop();
+    return out;
 }
 
-//! No channel at all: the alarm keeps running (screen + backlight) without crashing.
-(:test)
-function testReg_noChannelKeepsAlarmRunning(logger as Test.Logger) as Boolean {
-    var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_BOTH);
-    a.testForceChannelsUnavailable(true, true);
-    a.startAlarm();
-    a.testFireRing();
-    var ok = a.isAlarming() && a.testGetRingCount() == 2
-        && a.testGetVibrateCount() == 0 && a.testGetToneCount() == 0;
-    a.stop();
-    return ok;
+//! Leave a value under the old key wherever a test can: in the properties,
+//! where 1.1.0 kept it, and in Application.Storage. This build declares no
+//! such property, and the runtime refuses the key in the properties (SDK
+//! 9.1: InvalidKeyException, for reading it too), so today the value can
+//! only be left in Storage.
+(:debug)
+function regHelperPlantOldAlarmType(value as Number) as Void {
+    try {
+        Application.Properties.setValue("alarmType", value);
+    } catch (e instanceof Lang.Exception) {
+        // Refused: the key is not in properties.xml any more.
+    }
+    Application.Storage.setValue("alarmType", value);
 }
 
-//! An unknown alarmType value vibrates instead of staying silent.
+//! 1.2.0 took the Alarm Type setting out (the alarm is vibration only), but
+//! a watch updated from 1.1.0 may still hold the value its owner had chosen:
+//! 0 (vibration only), 1 (nature sound only), 2 (both, the default) or one
+//! the setting never offered. Nothing reads it any more. With any of them
+//! left behind, loading the settings throws nothing, and the alarm and the
+//! preview ring exactly as with none, every ring vibrating.
 (:test)
-function testReg_unknownAlarmTypeVibrates(logger as Test.Logger) as Boolean {
-    var a = new AlarmManager();
-    a.testSetAlarmType(7);
-    a.startAlarm();
-    var ok = a.testGetVibrateCount() == 1;
-    if (!ok) { logger.debug("vib " + a.testGetVibrateCount()); }
-    a.stop();
+function testReg_oldAlarmTypeSettingChangesNothing(logger as Test.Logger) as Boolean {
+    var expected = regHelperAlarmOutputs();
+    var ok = expected[0] == 1 && expected[3 * 53] == 54;
+    if (!ok) {
+        logger.debug("setup: the alarm must vibrate on every ring, got " + expected[0] + " then " + expected[3 * 53]);
+    }
+    var values = [0, 1, 2, 7] as Array<Number>;
+    for (var i = 0; i < values.size() && ok; i++) {
+        regHelperPlantOldAlarmType(values[i]);
+        try {
+            var d = new SleepDetector(null);
+            d.loadSettings();
+            var got = regHelperAlarmOutputs();
+            ok = got.size() == expected.size();
+            for (var k = 0; k < expected.size() && ok; k++) {
+                if (got[k] != expected[k]) {
+                    logger.debug("alarmType " + values[i] + " left behind changed sample " + (k / 3)
+                        + ", field " + (k % 3) + ": " + got[k] + " instead of " + expected[k]);
+                    ok = false;
+                }
+            }
+        } catch (e instanceof Lang.Exception) {
+            logger.debug("alarmType " + values[i] + " left behind threw: " + e.getErrorMessage());
+            ok = false;
+        }
+    }
+    Application.Storage.deleteValue("alarmType");
     return ok;
 }
 
@@ -362,27 +396,10 @@ function testReg_vibePatternFollowsRampRow(logger as Test.Logger) as Boolean {
     return true;
 }
 
-//! Built-in tones (devices without ToneProfile) follow the display phase:
-//! ALERT_LO below 65 %, ALERT_HI below full, ALARM at full strength.
-(:test)
-function testReg_builtInTonePerStep(logger as Test.Logger) as Boolean {
-    var a = new AlarmManager();
-    for (var s = 0; s < a.testGetRampSize(); s++) {
-        var pct = a.testGetRampRow(s)[0];
-        var expected = (pct >= 100) ? Attention.TONE_ALARM : ((pct >= 65) ? Attention.TONE_ALERT_HI : Attention.TONE_ALERT_LO);
-        if (a.testGetToneForStep(s) != expected) {
-            logger.debug("step " + s + " (" + pct + " %): wrong built-in tone");
-            return false;
-        }
-    }
-    return true;
-}
-
 //! ringNow() rings immediately while alarming and does nothing otherwise.
 (:test)
 function testReg_ringNow(logger as Test.Logger) as Boolean {
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     a.ringNow();
     var ok = (a.testGetRingCount() == 0);
     a.startAlarm();
@@ -479,7 +496,6 @@ function testReg_cappedNapWindowUsesEffectiveLength(logger as Test.Logger) as Bo
 (:test)
 function testReg_resumeWhenDueRingsOnce(logger as Test.Logger) as Boolean {
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     var d = new SleepDetector(a);
     d.testStart();
     d.testSetNapDurationMin(10);
@@ -501,7 +517,6 @@ function testReg_resumeWhenDueRingsOnce(logger as Test.Logger) as Boolean {
 (:test)
 function testReg_resumeWhileRingingRingsAgain(logger as Test.Logger) as Boolean {
     var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
     var d = new SleepDetector(a);
     d.testStart();
     d.testSetNapDurationMin(10);
@@ -558,7 +573,7 @@ function testReg_startClampsDuration(logger as Test.Logger) as Boolean {
 }
 
 //! The persistent step (the last RAMP row) keeps the full-strength pattern
-//! and melody of the step before it; only the wait grows to 30 s.
+//! of the step before it; only the wait grows to 30 s.
 (:test)
 function testReg_persistentPhaseKeepsFullPattern(logger as Test.Logger) as Boolean {
     var a = new AlarmManager();
@@ -572,10 +587,7 @@ function testReg_persistentPhaseKeepsFullPattern(logger as Test.Logger) as Boole
     for (var i = 0; i < full.size(); i++) {
         if (full[i].dutyCycle != persistent[i].dutyCycle || full[i].length != persistent[i].length) { return false; }
     }
-    if (!(Attention has :ToneProfile)) {
-        return true;                         // vivoactive 5/6: no melodies to compare
-    }
-    return a.testGetToneProfile(last).size() == a.testGetToneProfile(last - 1).size();
+    return true;
 }
 
 //! System.getTimer() wraps after ~24.8 days of uptime. A press 3 s after the

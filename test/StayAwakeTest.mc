@@ -28,9 +28,7 @@ function stayHelperStart(a as AlarmManager?) as SleepDetector {
 
 (:debug)
 function stayHelperAlarm() as AlarmManager {
-    var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
-    return a;
+    return new AlarmManager();
 }
 
 //! One minute that is awake but calm: 6 active seconds (not a still minute,

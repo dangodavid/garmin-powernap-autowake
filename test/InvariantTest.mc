@@ -21,9 +21,9 @@ import Toybox.Application;
 //     never more wake episodes than minutes;
 //   * Stay Awake: never sleeps, only ALARM_DOZE, on a minute boundary after
 //     >= 2 still minutes, one doze per alarm;
-//   * quiet onset: the real AlarmManager never vibrates, sounds or lights
-//     up while the detector is not in STATE_ALARM (the Stay Awake nudge at
-//     3 still minutes excepted), and its gate never had to refuse a call.
+//   * quiet onset: the real AlarmManager never vibrates or lights up while
+//     the detector is not in STATE_ALARM (the Stay Awake nudge at 3 still
+//     minutes excepted), and its gate never had to refuse a call.
 // A failure prints the seed and settings, so the case can be replayed.
 // The seeds are fixed: the same numbers run on every device and every run.
 // -----------------------------------------------------------------------------
@@ -59,7 +59,7 @@ class InvChecker {
     private var _napEnd as Number = 0;
     private var _context as String;
     private var _alarm as AlarmManager?;
-    private var _outputs as Number = 0;       // vibrations + tones + backlight requests seen so far
+    private var _outputs as Number = 0;       // vibrations + backlight requests seen so far
     private var _nudges as Number = 0;
 
     function initialize(d as SleepDetector, a as AlarmManager?, context as String) {
@@ -78,7 +78,7 @@ class InvChecker {
 
     private function outputCount() as Number {
         var a = _alarm as AlarmManager;
-        return a.testGetVibrateCount() + a.testGetToneCount() + a.testGetBacklightCount();
+        return a.testGetVibrateCount() + a.testGetBacklightCount();
     }
 
     private function syncOutputs() as Void {
@@ -88,7 +88,7 @@ class InvChecker {
         }
     }
 
-    //! Quiet onset: outside STATE_ALARM no vibration, tone or backlight, the
+    //! Quiet onset: outside STATE_ALARM no vibration or backlight, the
     //! manager is not alarming, and the gate never had to refuse a call. In
     //! Stay Awake one nudge is allowed per still run, while the drowsiness
     //! warning shows.
@@ -335,12 +335,10 @@ function invFeedMinute(d as SleepDetector, rng as InvRng, behaviour as Number, h
     return true;
 }
 
-//! Real alarm manager (vibration) for the quiet onset invariant.
+//! Real alarm manager for the quiet onset invariant.
 (:debug)
 function invAlarm() as AlarmManager {
-    var a = new AlarmManager();
-    a.testSetAlarmType(AlarmManager.ALARM_VIBRATION);
-    return a;
+    return new AlarmManager();
 }
 
 //! One random nap from start to its alarm and summary.
