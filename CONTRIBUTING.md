@@ -251,7 +251,10 @@ octagon with a subscreen lens (`instinct3solar45mm`), the smallest colour
 screen at 218 px MIP (`fr255s`), a small AMOLED (`venu3s`), and a watch with no
 `Attention.playTone` at all whose popups are drawn in TINY (`vivoactive6`).
 The set is defined once, as `protocol_set` in `tools/matrix.sh`, and
-`tools/matrix.sh list --protocol` prints it.
+`tools/matrix.sh list --protocol` prints it. A pull request that changes
+the start screen's title adds `vivoactive5` to that run, the only product
+whose title steps down to XTINY:
+`tools/matrix.sh test $(tools/matrix.sh list --protocol) vivoactive5`.
 
 **Both popup fonts.** Every popup is drawn in the exit popup's font, the
 largest at which "Press BACK again to exit" fits across the middle of the
