@@ -1,3 +1,4 @@
+import Toybox.Attention;
 import Toybox.Test;
 import Toybox.Lang;
 import Toybox.Time;
@@ -13,8 +14,8 @@ import Toybox.Time;
 //     still minutes; the HR drop is measured against a rolling reference
 //     (minutes 4-13 ago) once 5 such minutes exist;
 //   * one gentle nudge at 3 still minutes;
-//   * the doze alarm starts at the ramp's 60 % step; dismissing it goes back
-//     on guard;
+//   * the doze alarm starts loud, at 63 % (its own table, not the nap's
+//     ramp); dismissing it goes back on guard;
 //   * the session ends only when the user stops it, with its own summary.
 // -----------------------------------------------------------------------------
 
@@ -60,7 +61,7 @@ function testStay_noTimedAlarmEver(logger as Test.Logger) as Boolean {
 
 //! Still from the start with a steady HR: calibration counts, nudge at 3
 //! still minutes (once), doze alarm exactly at 5 still minutes (300 s),
-//! starting at the ramp's doze step (the first step of at least 60 %).
+//! starting loud (its first ring at least 60 %).
 (:test)
 function testStay_fiveStillMinutesRingDozeAlarm(logger as Test.Logger) as Boolean {
     var a = stayHelperAlarm();
@@ -83,9 +84,10 @@ function testStay_fiveStillMinutesRingDozeAlarm(logger as Test.Logger) as Boolea
         logger.debug("expected the doze alarm at 300 s, state " + d.getState() + " reason " + d.getAlarmReason());
         ok = false;
     }
-    if (!a.isAlarming() || a.testGetLastRingStep() != a.testDozeStartStep() || a.testGetRingsFired() != 1
-        || a.testGetRampRow(a.testGetLastRingStep())[0] < 60) {
-        logger.debug("doze alarm must start at the 60 % step, step " + a.testGetLastRingStep());
+    var felt = a.testGetLastPattern();
+    if (!a.isAlarming() || a.testGetRingsFired() != 1 || felt == null
+        || (felt as Array<Attention.VibeProfile>)[0].dutyCycle < 60) {
+        logger.debug("the doze alarm must start loud (at least 60 %), rings " + a.testGetRingsFired());
         ok = false;
     }
     if (d.hasSleptAtLeastOnce() || d.getActualNapDurationSec() != 0 || d.getRemainingSeconds() != 0) {
@@ -317,5 +319,127 @@ function testStay_twoActiveSecondsDoNotEndTheWarning(logger as Test.Logger) as B
     if (!ok) {
         logger.debug("2 active seconds ended the warning, still " + d.getStillMinutes());
     }
+    return ok;
+}
+
+// -- The doze alarm and its warning, as in 1.1.0 --------------------------------
+
+//! What the doze alarm rang in 1.1.0, segment by segment: [intensity %,
+//! pulse ms, pulses, gap ms, wait after each ring ms, rings, display phase].
+//! The last segment is the persistent phase, of which 4 rings are checked.
+(:debug)
+function stayHelperDozeRings110() as Array<Array<Number> > {
+    return [
+        [ 63, 240, 3, 260,  6000,  2, 1],
+        [ 78, 280, 3, 200,  6000,  2, 2],
+        [ 92, 320, 3, 160,  5000,  2, 2],
+        [100, 350, 3, 150,  5000, 36, 3],
+        [100, 350, 3, 150, 30000,  4, 3]
+    ] as Array<Array<Number> >;
+}
+
+//! A vibration as "63 % x 240 ms x 3, 260 ms apart", for the messages.
+(:debug)
+function stayHelperRingText(pct as Number, pulseMs as Number, pulses as Number, gapMs as Number) as String {
+    return pct + " % x " + pulseMs + " ms x " + pulses + ", " + gapMs + " ms apart";
+}
+
+//! The vibration delivered last against [pct, pulse ms, pulses, gap ms]:
+//! null when it is exactly that (`pulses` pulses at pct, 0 % between them),
+//! else what was felt.
+(:debug)
+function stayHelperPatternDiff(a as AlarmManager, want as Array<Number>) as String? {
+    var got = a.testGetLastPattern();
+    if (got == null) {
+        return "nothing vibrated";
+    }
+    var p = got as Array<Attention.VibeProfile>;
+    if (p.size() == 0) {
+        return "an empty pattern";
+    }
+    var same = p.size() == 2 * want[2] - 1;
+    for (var i = 0; i < p.size() && same; i++) {
+        var pulse = (i % 2 == 0);
+        same = p[i].dutyCycle == (pulse ? want[0] : 0) && p[i].length == (pulse ? want[1] : want[3]);
+    }
+    if (same) {
+        return null;
+    }
+    return stayHelperRingText(p[0].dutyCycle, p[0].length, (p.size() + 1) / 2, (p.size() > 1) ? p[1].length : 0);
+}
+
+//! The doze alarm and its warning (the nudge) ring exactly as Stay Awake did
+//! in 1.1.0, ring by ring: every ring's vibration (intensity, pulse length,
+//! pulse count, gap), the wait after it - so the second each ring comes at -,
+//! the display phase and full strength it shows, and which rings turn the
+//! display on; then the nudge's one ring, display on. Written on 2026-10-06
+//! against the code of that day, before Stay Awake got its own copy of
+//! these values and the nap ramp its gentler start, and not edited since: a
+//! change to the nap ramp leaves it passing, a change to Stay Awake's copy
+//! fails it, naming the ring.
+(:test)
+function testStay_dozeAlarmAndNudgeAsIn110(logger as Test.Logger) as Boolean {
+    var a = stayHelperAlarm();
+    a.testForceBacklightThrow(false);
+    var ok = true;
+    a.startDozeAlarm();
+    var segments = stayHelperDozeRings110();
+    var ring = 0;
+    var sec = 0;
+    var lit = 0;
+    for (var s = 0; s < segments.size(); s++) {
+        var want = segments[s];
+        for (var r = 0; r < want[5]; r++) {
+            if (ring > 0) {
+                a.testFireRing();
+            }
+            var what = "doze ring " + ring + " at " + sec + " s";
+            var diff = stayHelperPatternDiff(a, want);
+            if (diff != null) {
+                logger.debug(what + ": " + diff + "; 1.1.0: " + stayHelperRingText(want[0], want[1], want[2], want[3]));
+                ok = false;
+            }
+            if (a.testGetWaitAfterLastRing() != want[4]) {
+                logger.debug(what + ": the next ring " + a.testGetWaitAfterLastRing() + " ms later; 1.1.0: "
+                    + want[4] + " ms");
+                ok = false;
+            }
+            if (a.getLastRingPhase() != want[6] || a.isFullIntensity() != (want[0] >= 100)) {
+                logger.debug(what + ": phase " + a.getLastRingPhase() + ", full " + a.isFullIntensity()
+                    + "; 1.1.0: phase " + want[6]);
+                ok = false;
+            }
+            // 1.1.0 lit the display on the first two rings at or above
+            // 50 % - every doze ring is - and then on every 6th.
+            if (ring < 2 || ring % 6 == 0) {
+                lit += 1;
+            }
+            if (a.testGetBacklightCount() != lit) {
+                logger.debug(what + ": " + a.testGetBacklightCount() + " backlight requests so far; 1.1.0: " + lit);
+                ok = false;
+            }
+            sec += want[4] / 1000;
+            ring += 1;
+        }
+    }
+    a.stop();
+
+    // The warning before it: one ring at 35 %, display on, no alarm.
+    var nudge = [35, 160, 2, 350] as Array<Number>;
+    var w = stayHelperAlarm();
+    w.testForceBacklightThrow(false);
+    w.setStayAwake(true);
+    w.nudge();
+    var diff = stayHelperPatternDiff(w, nudge);
+    if (diff != null) {
+        logger.debug("nudge: " + diff + "; 1.1.0: " + stayHelperRingText(nudge[0], nudge[1], nudge[2], nudge[3]));
+        ok = false;
+    }
+    if (w.testGetVibrateCount() != 1 || w.testGetBacklightCount() != 1 || w.isAlarming()) {
+        logger.debug("nudge: " + w.testGetVibrateCount() + " vibrations, " + w.testGetBacklightCount()
+            + " backlight requests, alarming " + w.isAlarming() + "; 1.1.0: 1, 1, no");
+        ok = false;
+    }
+    w.setStayAwake(false);
     return ok;
 }

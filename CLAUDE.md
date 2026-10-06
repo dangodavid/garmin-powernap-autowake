@@ -142,8 +142,9 @@ source/
   SleepDetector.mc      # Core engine  - wall-clock timing, per-minute sensor aggregation,
                         #   onset / wake / smart-wake logic, deadline cap, frozen settings,
                         #   Stay Awake mode, debug-only trace log
-  AlarmManager.mc       # Ramp-table vibration alarm (9 steps to full in ~2 min +
-                        #   persistent), quiet onset gate, Stay Awake nudge
+  AlarmManager.mc       # Ramp-table vibration alarm (14 steps to full in 168 s +
+                        #   persistent), quiet onset gate; the Stay Awake doze alarm
+                        #   and nudge on their own copy of the 1.1.0 rows
   MotionMath.mc         # Offset-free motion value of one accelerometer batch
   ScreenLayout.mc       # Line layout that fits 176-454 px round/octagon screens (text,
                         #   dividers, spacers, popup banner, two-tone label/value lines);
@@ -157,7 +158,8 @@ test/
   OnsetTest.mc          # calibration, stillness, HR-drop and stillness-only onset
   WakeTest.mc           # wake episodes, re-entry, sleep accumulation
   TimingTest.mc         # wall-clock alarm, deadline cap, smart-wake window
-  AlarmManagerTest.mc   # ramp constraints/schedule, persistent phase, nudge, backlight, preview
+  AlarmManagerTest.mc   # ramp constraints/schedule (the owner's limits of 2026-10-06
+                        #   against the 1.1.0 table), persistent phase, nudge, backlight, preview
   SummaryTest.mc        # finish/cancel paths, statistics, RingMath
   RegressionTest.mc     # HR wake rules, frozen settings, lifecycle, no vibration, the
                         #   Alarm Type value left from 1.1.0, timer wrap
@@ -170,7 +172,8 @@ test/
                         #   longest text that fits on one or two lines, broken at
                         #   its mark where it has one and both lines fit; and that
                         #   font, recomputed, printed for the protocol-set check
-  StayAwakeTest.mc      # doze rules, rolling HR reference, nudge, back on guard
+  StayAwakeTest.mc      # doze rules, rolling HR reference, nudge, back on guard, and the
+                        #   doze alarm and nudge ring by ring as in 1.1.0
   DelegateTest.mc       # buttons/taps through the real delegate + view + detector
   QuietOnsetTest.mc     # QUIET ONSET RULE: the real AlarmManager is silent every second until the alarm
   MotionTest.mc         # raw accelerometer batches, offset independence
@@ -357,13 +360,14 @@ notification, Garmin's own nap detection).
   against `rollingHrReference()`: mean of `_hrHistory` minus its last 3 minutes
   (up to 10 older minute means, needs >= 5), else the calibration baseline.
 - At `_stillMinutes == 3` without onset: one `AlarmManager.nudge()` (one ring
-  of the ramp's 30 % step + backlight), screen "Stay alert! Move a bit" (`isDozeWarning()`).
+  of `NUDGE_ROW`, 35 %, + backlight), screen "Stay alert! Move a bit" (`isDozeWarning()`).
   Answering it ends the still run at once (`noteUserAwake()`: stillness 0,
   clean minute): 3+ active seconds during the warning (the nudge's own buzz
   is at most 2), or any UP/DOWN/START/BACK press in Stay Awake (delegate).
   Hiding the app during a doze alarm also sets the "Keep app open" warning.
-- Onset -> `ALARM_DOZE`, `_dozeCount++`, alarm starts at the ramp's 60 % step
-  (`AlarmManager.startDozeAlarm()`, step 5 = 63 %).
+- Onset -> `ALARM_DOZE`, `_dozeCount++`, the doze alarm climbs Stay Awake's
+  own table from 63 % (`AlarmManager.startDozeAlarm()`, `DOZE_RAMP`; it never
+  reads the nap's `RAMP`, see the AlarmManager section).
   `dismissAlarm()` -> `resumeGuard()`: MONITORING, clean minute, stillness 0,
   `_hrWindow` cleared, history kept. START x2 while guarding -> summary;
   BACK x2 -> start screen; BACK x2 on the doze alarm -> back on guard (the
@@ -388,43 +392,82 @@ that file exists. Never in unit tests (frozen clock) or release builds. Rows
 - The label is derived from `getWakeEpisodes()` and `isCancelled()`, never from a
   threshold on a ratio.
 
-## AlarmManager  - ramp table (v1.1.0)
+## AlarmManager  - ramp table (1.2.0)
 
 One `const RAMP` (rows `[pct, pulseMs, pulses, gapMs, intervalMs, rings]`,
 columns `R_*`); the last row is the persistent phase (rings 0 = unbounded):
 
 | step | % | pulse | pulses | gap | wait after ring | rings | first ring at |
 |---|---|---|---|---|---|---|---|
-| 0 | 22 | 120 | 2 | 400 | 10 s | 2 | 0 s |
-| 1 | 28 | 140 | 2 | 380 | 9 s | 2 | 20 s |
-| 2 | 35 | 160 | 2 | 350 | 8 s | 2 | 38 s |
-| 3 | 43 | 180 | 3 | 320 | 8 s | 2 | 54 s |
-| 4 | 52 | 210 | 3 | 300 | 7 s | 2 | 70 s |
-| 5 | 63 | 240 | 3 | 260 | 6 s | 2 | 84 s |
-| 6 | 78 | 280 | 3 | 200 | 6 s | 2 | 96 s |
-| 7 | 92 | 320 | 3 | 160 | 5 s | 2 | 108 s |
-| 8 | 100 | 350 | 3 | 150 | 5 s | 36 | 118 s (3 min at full) |
-| 9 | 100 | 350 | 3 | 150 | 30 s | inf | 298 s (persistent) |
+| 0 | 7 | 120 | 1 | - | 10 s | 1 | 0 s |
+| 1 | 10 | 120 | 1 | - | 10 s | 1 | 10 s |
+| 2 | 13 | 120 | 1 | - | 10 s | 1 | 20 s |
+| 3 | 16 | 120 | 1 | - | 10 s | 1 | 30 s |
+| 4 | 19 | 120 | 1 | - | 10 s | 1 | 40 s |
+| 5 | 22 | 120 | 2 | 400 | 10 s | 2 | 50 s |
+| 6 | 28 | 140 | 2 | 380 | 9 s | 2 | 70 s |
+| 7 | 35 | 160 | 2 | 350 | 8 s | 2 | 88 s |
+| 8 | 43 | 180 | 3 | 320 | 8 s | 2 | 104 s |
+| 9 | 52 | 210 | 3 | 300 | 7 s | 2 | 120 s |
+| 10 | 63 | 240 | 3 | 260 | 6 s | 2 | 134 s |
+| 11 | 78 | 280 | 3 | 200 | 6 s | 2 | 146 s |
+| 12 | 92 | 320 | 3 | 160 | 5 s | 2 | 158 s |
+| 13 | 100 | 350 | 3 | 150 | 5 s | 36 | 168 s (3 min at full) |
+| 14 | 100 | 350 | 3 | 150 | 30 s | inf | 348 s (persistent) |
+
+**Calibrated start (owner, 2026-10-06, 1.2.0).** The 1.1.0 ramp (steps 5-14
+above, unchanged) started at 22 %, and that still felt too strong on the
+wrist. A calibration build, never committed, made "Test alarm" play single
+120 ms pulses at 1, 4, 7 ... 22 % (the SDK takes a dutyCycle of 0-100, 0 = no
+vibration), 5 s apart, each announced on the screen first. On the fenix 8
+Pro the first pulse felt lying down was 7 %, standing 10 %; the nap ramp is
+for lying down, so its first ring is that pulse exactly (one profile, 7 %,
+120 ms), then 10, 13, 16 and 19 %, one ring each, 10 s apart like the start
+of 1.1.0, then the 1.1.0 table. Full strength comes 50 s later than in 1.1.0
+(168 s instead of 118 s); the moment the alarm starts and the persistent
+phase did not change (it follows full strength by 3 minutes, so it starts
+at 348 s). A single pulse has no gap (the 400 in its row is unused).
 
 The wait AFTER ring k is the interval of ring k's step (`onRepeatAlarm`
-restarts the timer when it changes; `startAlarmFromStep(s)` fires the first
-ring of s and starts the timer with s's interval). `stepOfRing`,
-`firstRingOfStep`, `firstStepAtLeast(pct)`, `pctOfStep`, `displayPhase(pct)`
-(0 < 40 %, 1 < 65 %, 2 < 100 %, 3 = 100 %). Derived thresholds, never magic
-ring numbers: `BACKLIGHT_FROM_PCT` 50 (step 4 = ring 8: first two bright
-rings, then every 6th, `_brightRings`), `DOZE_START_PCT` 60 (`startDozeAlarm()` = step 5, 63 %;
-the detector calls it for `ALARM_DOZE`), `NUDGE_PCT` 30 (`nudge()` = one ring
-of step 2). `getCurrentPhase()` = display phase of the next ring,
+restarts the timer when it changes; `startRamp(doze)` fires the first ring
+of the table and starts the timer with its interval). `activeRamp()` (the
+doze alarm's `DOZE_RAMP`, else `RAMP`), `stepOfRing`, `firstRingOfStep`,
+`pctOfStep`, `displayPhase(pct)` (0 < 40 %, 1 < 65 %, 2 < 100 %, 3 = 100 %);
+`firstStepAtLeast(pct)` is `(:debug)`, left to the tests. Derived thresholds,
+never magic ring numbers: `BACKLIGHT_FROM_PCT` 50 (RAMP step 9 = ring 13:
+first two bright rings, then every 6th, `_brightRings`).
+`getCurrentPhase()` = display phase of the next ring,
 `getLastRingPhase()` = of the ring just felt (0 before the first),
 `isFullIntensity()` = the last ring was 100 %. Owner constraints, tested in
-`testAlarm_rampIsGentleAndMonotonic` / `fullReachedWithinTwoMinutes`: >= 8
-steps below full, first step <= 25 % and pulse >= 120 ms, intensity / pulse
-/ pulses non-decreasing, wait non-increasing, full at 100-130 s (118), then
-3 min at full 5 s apart, then 30 s persistent. `getVibePattern(step)` builds
-`pulses` pulses with `gap` pauses (<= 8 profiles). Tune the table only inside
-these constraints; the "Test alarm" preview (W6) plays every step once.
+`testAlarm_rampIsGentleAndMonotonic`, `testAlarm_rampStartsAtTheCalibratedPulse`,
+`testAlarm_noStepBiggerThanIn110`, `testAlarm_maximumAndUpperRampUnchanged`
+and `testAlarm_fullReachedInTime`: >= 8 steps below full; the first step
+and the first ring the calibrated pulse (7 %, one pulse of 120 ms); intensity
+/ pulse / pulses non-decreasing, and no step rising more than the 1.1.0
+ramp's largest (15 points, 63 -> 78 %); wait non-increasing; the maximum
+(100 %) and every row from 22 % up as in 1.1.0; full strength at 100-178 s
+(168; the upper limit is 1.1.0's 118 s + 60 s), then 3 min at full 5 s
+apart, then 30 s persistent. The limits are computed from the 1.1.0 table
+kept in the test (`alarmHelperRamp110`), never written in. Checked by
+mutation on 2026-10-06 (fenix847mm): the first step put back to 22 % fails
+`rampStartsAtTheCalibratedPulse` (and `rampIsGentleAndMonotonic`); the new
+steps waiting 13 s (full at 183 s) fail `fullReachedInTime` ("later than the
+limit of 178 s"); 78 -> 77 % in `DOZE_RAMP` fails only
+`testStay_dozeAlarmAndNudgeAsIn110`. `getVibePattern(row)` builds `pulses`
+pulses with `gap` pauses (<= 8 profiles). Tune the table only inside these
+constraints; the "Test alarm" preview (W6) plays every step once.
 
-`nudge()`: one ring of the 30 % step + backlight, ignored while alarming and
+**Stay Awake's own copy (owner, 2026-10-06).** The doze alarm climbs
+`DOZE_RAMP` from its first row - the 1.1.0 ramp's steps 5-9, copied: 63,
+78, 92 % two rings each, then 100 %, 36 rings 5 s apart, then every 30 s -
+and `nudge()` is one ring of `NUDGE_ROW` (its step 2, 35 %, 2 x 160 ms), so
+a retuned nap ramp never changes Stay Awake. `testStay_dozeAlarmAndNudgeAsIn110`
+checks both ring by ring (the vibration, the wait after each ring, the
+display phase, full strength, the backlight): it was written on the code of
+that day before the copy existed, passed there, and has not been edited
+since.
+
+`nudge()`: one ring of `NUDGE_ROW` + backlight, ignored while alarming and
 refused unless `setStayAwake(true)` (quiet onset gate, see above).
 
 **Vibration only (owner decision 2026-10-06, 1.2.0):** every ring is one
@@ -461,9 +504,9 @@ perceptible phases.
 dark (no backlight); a raised wrist sees a calm alarm screen ("Time to wake up",
 orange title, grey text, no flashing). The view flashes (red fill, white on the
 1-bit Instinct) and switches to "WAKE UP!" only when
-`AlarmManager.isFullIntensity()` (the last ring was at 100 %, ring 16 at 118 s).
-The Stay Awake doze alarm (from the 63 % step) is loud from the start but
-flashes only at full strength too.
+`AlarmManager.isFullIntensity()` (the last ring was at 100 %, ring 21 at 168 s).
+The Stay Awake doze alarm (its own table, from 63 %) is loud from the start
+but flashes only at full strength too.
 
 ## Input Design Decisions
 
@@ -681,12 +724,12 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   same backlight rule, no persistent phase, ends by itself after the last
   step (`getPreviewStep()` 1-based / `getPreviewSteps()` / `getPreviewPct()`
   for the screen). The preview screen (`previewLayout`:
-  "ALARM PREVIEW", "Step N of 9", "NN%", "Feel the wake-up ramp", footer "BACK
+  "ALARM PREVIEW", "Step N of 14", "NN%", "Feel the wake-up ramp", footer "BACK
   to stop") replaces the start screen while `isPreviewing()`; BACK
   (`view.stopPreview()`) or the end returns to the start screen, every other
   key and tap is swallowed meanwhile. Never during a nap (`view.startPreview`
-  refuses while `_started`); `startAlarmFromStep` refuses while previewing
-  and `startPreview` while alarming; `stop()` ends a preview too; the quiet
+  refuses while `_started`); `startAlarm`/`startDozeAlarm` refuse while
+  previewing (`startRamp`) and `startPreview` while alarming; `stop()` ends a preview too; the quiet
   onset gate allows output while `_previewing`. `testDisableExit()` also
   disables `pushView` (`testMenuRequests()` counts menu requests). NOT
   verified from the CLI: that `KEY_MENU` reaches `InputDelegate.onKey` on
