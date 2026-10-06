@@ -21,6 +21,9 @@ This file starts at 1.1.0; it is not filled in backwards.
   rises from the bottom of the screen over whole lines only, in the same size
   as the exit popup on every screen, and shows its whole sentence, on two lines
   where one is too narrow.
+- **The alarm only vibrates**: the nature melody is gone, and the Alarm Type
+  setting with it. The sound did not play the same on every watch, and a
+  wrong sound is worse than none.
 
 ## 1.1.0 - 2026-09-20
 

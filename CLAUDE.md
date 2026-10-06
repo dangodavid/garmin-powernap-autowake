@@ -48,7 +48,7 @@ Procedure, device sets, release steps and what each test file covers: `CONTRIBUT
 
 A Garmin Connect IQ watchapp that automatically detects when a user falls asleep
 (sustained stillness, accelerated by a heart-rate drop) and wakes them after a
-configurable nap duration via an escalating vibration/tone alarm. The alarm is
+configurable nap duration via an escalating vibration alarm. The alarm is
 guaranteed: it never rings later than the deadline shown as "Alarm by HH:MM"
 (`AlarmCap`: start rounded up to the next whole minute + fallAsleepAllowance +
 napDuration), whether or not sleep is detected.
@@ -142,9 +142,8 @@ source/
   SleepDetector.mc      # Core engine  - wall-clock timing, per-minute sensor aggregation,
                         #   onset / wake / smart-wake logic, deadline cap, frozen settings,
                         #   Stay Awake mode, debug-only trace log
-  AlarmManager.mc       # Ramp-table alarm (9 steps to full in ~2 min + persistent),
-                        #   vibration/melody channel fallback, quiet onset gate, Stay
-                        #   Awake nudge; ToneClock overlap guard
+  AlarmManager.mc       # Ramp-table vibration alarm (9 steps to full in ~2 min +
+                        #   persistent), quiet onset gate, Stay Awake nudge
   MotionMath.mc         # Offset-free motion value of one accelerometer batch
   ScreenLayout.mc       # Line layout that fits 176-454 px round/octagon screens (text,
                         #   dividers, spacers, popup banner, two-tone label/value lines);
@@ -158,9 +157,10 @@ test/
   OnsetTest.mc          # calibration, stillness, HR-drop and stillness-only onset
   WakeTest.mc           # wake episodes, re-entry, sleep accumulation
   TimingTest.mc         # wall-clock alarm, deadline cap, smart-wake window
-  AlarmManagerTest.mc   # ramp constraints/schedule, persistent phase, melodies, nudge, backlight, preview
+  AlarmManagerTest.mc   # ramp constraints/schedule, persistent phase, nudge, backlight, preview
   SummaryTest.mc        # finish/cancel paths, statistics, RingMath
-  RegressionTest.mc     # HR wake rules, frozen settings, lifecycle, channel fallback, timer wrap
+  RegressionTest.mc     # HR wake rules, frozen settings, lifecycle, no vibration, the
+                        #   Alarm Type value left from 1.1.0, timer wrap
   LayoutTest.mc         # every screen (start, nap, peek, Stay Awake) fits the running device
   OverlapTest.mc        # every screen taken apart into the boxes it draws: none over
                         #   another, none outside the display (chord, octagon, lens),
@@ -197,7 +197,11 @@ tools/
                         #   --protocol: the protocol set (`protocol_set`, its one
                         #   definition), and a test run over the whole set fails,
                         #   naming the product, unless it shows a TINY and an XTINY
-                        #   exit popup (`protocol_fonts`)
+                        #   exit popup (`protocol_fonts`); before the first device,
+                        #   build and test runs fail on the static test below
+  no-sound.sh           # the static test: no .mc file under source/ or test/ names
+                        #   playTone or ToneProfile (the alarm is vibration only);
+                        #   exit 0 none, 1 the lines that do, 2 could not run
   runtests.sh           # build (-t -l 3 -w) + monkeydo -t per device, log per device,
                         #   simulator restart + 3 attempts; PROJ_DIR/OUT_DIR overrides
                         #   (no device list of its own: tools/matrix.sh list feeds it)
@@ -221,7 +225,6 @@ docs/history/           # superseded documents, kept for provenance only; each o
 |-----------------------|---------------|----------------------------------------------------|
 | `napDuration`         | 30 min        | 5–120 min (watch picker: 0 = Stay Awake, never stored; the last started duration lives in Storage, see below) |
 | `fallAsleepAllowance` | 15 min        | 5–30 min: deadline = start + this + nap (hard cap) |
-| `alarmType`           | 2 (Vibration + nature sound) | 0 = Vibration only, 1 = Nature sound only, 2 = Both (default since 1.1.0) |
 | `hrDropThreshold`     | 5 BPM         | 3–20 BPM                                           |
 | `motionSensitivity`   | 1 (Medium)    | 0 = Low (80 mg), 1 = Med (50 mg), 2 = High (30 mg); labels say "restless sleepers" / "strict stillness" |
 
@@ -264,7 +267,7 @@ deadline alarm fires with `ALARM_DEADLINE` and the summary shows "No sleep detec
   users otherwise assume the alarm is start + nap (it floats with onset).
 - Detector settings are frozen for the running nap: `loadSettings()` returns early
   while `_running`; the next `start()` (via `PowerNapView.startNap`) reads them
-  again. `AlarmManager.loadSettings()` is not frozen: Alarm Type applies at once.
+  again.
 - "Alarm by" is the cap's own minute (the view's `alarmByTexts`, one function
   for the start screen and the nap screens), so the alarm rings at the latest
   exactly at the time shown, never after it. The start screen previews the same
@@ -309,8 +312,7 @@ increments `_blockedDeliveries` (`testGetBlockedDeliveries()`), which every
 test asserts stays 0. Guarded for ever by `test/QuietOnsetTest.mc`
 (`testQuiet_*`: HR-drop onset, still onset, wake + re-entry, late onset
 capped by the deadline, calibration end and dropouts, resume, no nudge in nap
-mode, the real delegate from START to the alarm; alarm types 0/1/2 and the
-tone channel forced unavailable) and by the invariant tests (`InvChecker`
+mode, the real delegate from START to the alarm) and by the invariant tests (`InvChecker`
 runs the real manager: no output counter moves while
 `getState() != STATE_ALARM`, one nudge allowed in Stay Awake at 3 still
 minutes). Owner's wrist test of 2026-09-19 felt a vibration at onset with a
@@ -406,9 +408,8 @@ restarts the timer when it changes; `startAlarmFromStep(s)` fires the first
 ring of s and starts the timer with s's interval). `stepOfRing`,
 `firstRingOfStep`, `firstStepAtLeast(pct)`, `pctOfStep`, `displayPhase(pct)`
 (0 < 40 %, 1 < 65 %, 2 < 100 %, 3 = 100 %). Derived thresholds, never magic
-ring numbers: `TONE_FROM_PCT` 40 ("Both": melody joins at step 3),
-`BACKLIGHT_FROM_PCT` 50 (step 4 = ring 8: first two bright rings, then every
-6th, `_brightRings`), `DOZE_START_PCT` 60 (`startDozeAlarm()` = step 5, 63 %;
+ring numbers: `BACKLIGHT_FROM_PCT` 50 (step 4 = ring 8: first two bright
+rings, then every 6th, `_brightRings`), `DOZE_START_PCT` 60 (`startDozeAlarm()` = step 5, 63 %;
 the detector calls it for `ALARM_DOZE`), `NUDGE_PCT` 30 (`nudge()` = one ring
 of step 2). `getCurrentPhase()` = display phase of the next ring,
 `getLastRingPhase()` = of the ring just felt (0 before the first),
@@ -420,28 +421,26 @@ steps below full, first step <= 25 % and pulse >= 120 ms, intensity / pulse
 `pulses` pulses with `gap` pauses (<= 8 profiles). Tune the table only inside
 these constraints; the "Test alarm" preview (W6) plays every step once.
 
-Tones: `Attention has :ToneProfile` -> a melody per step (`getToneProfile`):
-a low two-note "cuckoo" (587/494 Hz), then chirps that gain notes (up to 8),
-top pitch (up to 4186 Hz; the piezo gets louder toward 2-4 kHz) and length
-(280 -> 970 ms) every step; the persistent step repeats step 8's trill
-(`testAlarm_toneMelodiesEscalate`). No volume API. Else the built-in
-ALERT_LO (phase 0-1) / ALERT_HI (2) / ALARM (3) (`getToneForStep`).
-ALARM_BOTH: the melody joins at `TONE_FROM_PCT` while vibration works;
-ALARM_TONE plays it from the first ring. Default `alarmType` is 2 (Vibration
-+ nature sound) since v1.1.0; users who saved a choice keep it. `ToneClock`
-(module, one speaker) skips starting a melody while the previous one still
-plays; that ring counts as toned. Overlapping melodies crash the SDK 9.1
-simulator (40 back-to-back did).
 `nudge()`: one ring of the 30 % step + backlight, ignored while alarming and
 refused unless `setStayAwake(true)` (quiet onset gate, see above).
 
-**Channel fallback:** the alarm type is a preference. If the chosen channel is
-unsupported (vívoactive 5/6 have no `Attention.playTone`), switched off
-(`DeviceSettings.vibrateOn/tonesOn`) or throws, the other channel is used; an
-unknown alarmType vibrates.
+**Vibration only (owner decision 2026-10-06, 1.2.0):** every ring is one
+`Attention.vibrate` (`deliver()`) and nothing else - no sound of any kind, no
+Alarm Type setting, no alternative - because the sound did not play the same
+on every watch, and a wrong sound is worse than none. `tools/no-sound.sh`,
+which `tools/matrix.sh` runs before the first device, fails any `.mc` file
+under `source/` or `test/` that names `playTone` or `ToneProfile`. A watch
+that cannot vibrate (no motor, or the call throws) keeps ringing on the
+screen and the backlight (`testReg_noVibrationKeepsAlarmRunning`). The 1.1.0
+`alarmType` property and its setting are gone and nothing reads the key; a
+value left on a watch changes nothing
+(`testReg_oldAlarmTypeSettingChangesNothing`). In the SDK 9.1 simulator the
+runtime refuses the undeclared key (`Properties.getValue` and `setValue`
+throw `InvalidKeyException`) and leaves it out of the settings file when the
+app stops (2026-10-06).
 
-**AMOLED rule (do not regress):** in `fireAlarm()` the vibration and tone run
-first, each in its own try block; `Attention.backlight(true)` runs last, in its
+**AMOLED rule (do not regress):** in `fireAlarm()` the vibration runs first,
+in its own try block; `Attention.backlight(true)` runs last, in its
 own try block, and only from the 50 % step (`BACKLIGHT_FROM_PCT`): on the first
 two rings at or above it and then every 6th (`_brightRings`). The 52 % step
 (display phase 1, "ALARM 2/4", calm screen) is the first with the backlight:
@@ -623,7 +622,7 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   Stay Awake: back on guard).
 - A phone settings change on the start screen replaces the pick only when the
   stored napDuration itself changed (`_syncedDuration`), so Stay Awake or an
-  unsaved pick survives e.g. an Alarm Type change.
+  unsaved pick survives e.g. a Motion Sensitivity change.
 - START remembers the duration in `Application.Storage` (`lastNapMin`, plus
   `lastPhoneNapMin`: the phone's napDuration at that moment), never Stay Awake.
   `initialDuration()` opens the start screen on it (clamped to 5-120), unless
@@ -658,9 +657,9 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   and the preview screen says it anyway. Selecting it calls
   `view.startPreview()` -> `AlarmManager.startPreview()`: every RAMP step but
   the persistent row once, 3 s apart (`_previewTimer`, `onPreviewTick`), the
-  configured alarm type, the same backlight rule, no persistent phase, ends by
-  itself after the last step (`getPreviewStep()` 1-based / `getPreviewSteps()`
-  / `getPreviewPct()` for the screen). The preview screen (`previewLayout`:
+  same backlight rule, no persistent phase, ends by itself after the last
+  step (`getPreviewStep()` 1-based / `getPreviewSteps()` / `getPreviewPct()`
+  for the screen). The preview screen (`previewLayout`:
   "ALARM PREVIEW", "Step N of 9", "NN%", "Feel the wake-up ramp", footer "BACK
   to stop") replaces the start screen while `isPreviewing()`; BACK
   (`view.stopPreview()`) or the end returns to the start screen, every other
@@ -827,9 +826,9 @@ nap screen. It is still measured, fitted and centred as one text.
 Test names are global, so each file uses its own prefix (`testOnset_`, `testWake_`,
 `testTiming_`, `testAlarm_`, `testSummary_`, `testReg_`, `testLayout_`, `testStay_`,
 `testDelegate_`, `testQuiet_`, `testMotion_`, `testInv_`, `testTrace_`,
-`testStart_`, `testOverlap_`). Alarm tests derive tone
-expectations from `Attention has :playTone` (vívoactive 5/6 have none) and must
-not build melodies without `Attention has :ToneProfile` (Symbol Not Found there).
+`testStart_`, `testOverlap_`). One test reads the code instead of running it:
+`tools/no-sound.sh`, the static test that keeps the alarm vibration only (see
+the AlarmManager section).
 
 **Delegate tests:** `DelegateRig` wires the real delegate/view/detector;
 `detector.testUseFakeRuntime()` makes `start()` open a frozen-clock session
