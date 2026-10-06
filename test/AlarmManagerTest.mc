@@ -271,24 +271,30 @@ function testAlarm_rampIsGentleAndMonotonic(logger as Test.Logger) as Boolean {
 //! The ramp starts with the pulse the owner measured on the wrist on
 //! 2026-10-06: the first one felt lying down on the fenix 8 Pro was one
 //! pulse of 120 ms at 7 % (10 % standing), the pulse the calibration ladder
-//! played. The first step is that pulse, and the first ring is exactly it:
-//! one profile, 7 %, 120 ms, nothing before or after it.
+//! played. The first step rings it twice, 400 ms apart, as the 22 % step
+//! rings its pulses (owner, the same day): 7 % x 120 ms x 2, and the first
+//! ring is exactly that - 7 % for 120 ms, 400 ms of nothing, 7 % for 120 ms.
 (:test)
 function testAlarm_rampStartsAtTheCalibratedPulse(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     var ok = true;
     var row = alarm.testGetRampRow(0);
-    if (row[0] != 7 || row[1] != 120 || row[2] != 1) {
-        logger.debug("the first step is " + row[0] + " % x " + row[1] + " ms x " + row[2]
-            + "; the calibrated pulse is 7 % x 120 ms x 1");
+    if (row[0] != 7 || row[1] != 120 || row[2] != 2 || row[3] != 400) {
+        logger.debug("the first step is " + row[0] + " % x " + row[1] + " ms x " + row[2] + ", " + row[3]
+            + " ms apart; the calibrated pulse twice is 7 % x 120 ms x 2, 400 ms apart");
         ok = false;
     }
     alarm.startAlarm();
     var felt = alarm.testGetLastPattern();
-    if (felt == null || (felt as Array<Attention.VibeProfile>).size() != 1
-        || (felt as Array<Attention.VibeProfile>)[0].dutyCycle != 7
-        || (felt as Array<Attention.VibeProfile>)[0].length != 120) {
-        logger.debug("the first ring is " + alarmHelperPatternText(felt) + "; the calibrated pulse is 7 % x 120 ms");
+    var want = [[7, 120], [0, 400], [7, 120]] as Array<Array<Number> >;
+    var same = felt != null && (felt as Array<Attention.VibeProfile>).size() == want.size();
+    for (var i = 0; same && i < want.size(); i++) {
+        var p = (felt as Array<Attention.VibeProfile>)[i];
+        same = p.dutyCycle == want[i][0] && p.length == want[i][1];
+    }
+    if (!same) {
+        logger.debug("the first ring is " + alarmHelperPatternText(felt)
+            + "; the calibrated pulse twice is 7 % x 120 ms, 0 % x 400 ms, 7 % x 120 ms");
         ok = false;
     }
     alarm.stop();
