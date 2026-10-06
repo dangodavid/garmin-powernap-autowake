@@ -73,7 +73,8 @@ const OVERLAP_SESSION_HOUR = 10;
 //! The start screen at every duration step that changes its lines - 5, 30,
 //! the three digits of 120, and Stay Awake - laid out as a release build
 //! lays it out and with the debug label a debug build adds, each also with
-//! the exit popup over it.
+//! the exit popup over it, and each with either warning, both or neither:
+//! vibration on and off in the watch settings, a full and a low battery.
 (:test)
 function testOverlap_startScreen(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
@@ -438,22 +439,28 @@ function overlapHelperAlarm(name as String, d as SleepDetector, dc as Graphics.D
 
 // -- Inputs ---------------------------------------------------------------------
 
-//! The start screen in both formats and with both batteries, its clock and
-//! its "Alarm by" promise both at the widest time of day: the detector is
-//! pinned so that the promise lands on it. `hint`: the texts of the popup
-//! showing over it, or null.
+//! The start screen with vibration on and off in the watch settings, in
+//! both formats and with both batteries - so with no warning, either one or
+//! both - its clock and its "Alarm by" promise both at the widest time of
+//! day: the detector is pinned so that the promise lands on it. `hint`: the
+//! texts of the popup showing over it, or null.
 (:debug)
 function overlapHelperStart(name as String, v as PowerNapView, d as SleepDetector, dc as Graphics.Dc,
                             times as Array<Number>, hint as Array<String>?, logger as Test.Logger) as Boolean {
     var nap = v.testGetPendingDuration();
     var ok = true;
-    for (var f = 0; f < 2; f++) {
-        v.testForce24Hour(f == 1);
-        var widest = times[2 + f];
-        d.testPinClock(widest - (1 + d.getFallAsleepAllowanceMin() + nap) * 60);
-        v.testForceClockSec(widest);
-        ok = overlapHelperBatteries(name + ", " + ((f == 1) ? "24 h" : "12 h"), v, dc, hint, logger) && ok;
+    for (var vib = 0; vib < 2; vib++) {
+        v.testForceVibrateOn(vib == 0);
+        var vibName = name + ((vib == 0) ? "" : ", vibration off");
+        for (var f = 0; f < 2; f++) {
+            v.testForce24Hour(f == 1);
+            var widest = times[2 + f];
+            d.testPinClock(widest - (1 + d.getFallAsleepAllowanceMin() + nap) * 60);
+            v.testForceClockSec(widest);
+            ok = overlapHelperBatteries(vibName + ", " + ((f == 1) ? "24 h" : "12 h"), v, dc, hint, logger) && ok;
+        }
     }
+    v.testForceVibrateOn(true);
     return ok;
 }
 

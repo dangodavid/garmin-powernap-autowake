@@ -17,6 +17,8 @@ import Toybox.WatchUi;
 //   * The duration a nap started with is remembered (Application.Storage)
 //     and opens the next session, unless the phone setting changed since.
 //   * UP/DOWN/START/BACK run the whole flow without the touchscreen.
+//   * A warning never locks START: vibration switched off in the watch
+//     settings is announced on the screen, and the nap still starts.
 //
 // The detector's clock is pinned (testPinClock) where the second within the
 // minute matters, so these tests are exact. Helpers from DelegateTest
@@ -407,5 +409,36 @@ function testStart_buttonsRunTheWholeFlow(logger as Test.Logger) as Boolean {
     }
     delegateHelperRestore("lastNapMin", lastNap);
     delegateHelperRestore("lastPhoneNapMin", phoneNap);
+    return ok;
+}
+
+//! "Vibration off" is a warning, not a lock (the setting is the wearer's
+//! choice): with vibration switched off in the watch settings, START begins
+//! the nap with the duration on the screen, and so does a tap on the number.
+(:test)
+function testStart_vibrationOffStillStarts(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var ok = true;
+    for (var way = 0; way < 2; way++) {
+        var r = new DelegateRig(30);
+        r.view.testForceVibrateOn(false);
+        var how = (way == 0) ? "START" : "a tap on the number";
+        try {
+            if (way == 0) {
+                r.key(WatchUi.KEY_ENTER);
+            } else {
+                var zones = r.view.testMeasureTapZones(dc);
+                r.delegate.handleTap((zones[0] + zones[1]) / 2);
+            }
+            if (!r.view.isStarted() || r.detector.getNapDurationMin() != 30) {
+                logger.debug("vibration off: " + how + " must still begin the 30 min nap");
+                ok = false;
+            }
+        } catch (e instanceof Lang.Exception) {
+            logger.debug("vibration off, " + how + ": " + e.getErrorMessage());
+            ok = false;
+        }
+        r.cleanup();
+    }
     return ok;
 }
