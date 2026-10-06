@@ -13,7 +13,8 @@ import Toybox.Lang;
 // the backlight threshold derived from it, the display phases, the
 // Stay Awake doze alarm and nudge on their own table (ring by ring in
 // StayAwakeTest), the vibrate counter, the start/stop lifecycle, the
-// "Test alarm" preview, and the AMOLED backlight regression: a throwing
+// "Test alarm" preview (and the moment of the real alarm its screen shows
+// for each step), and the AMOLED backlight regression: a throwing
 // Attention.backlight() must never suppress the vibration of the ring it
 // belongs to, nor stop the alarm.
 //
@@ -78,6 +79,28 @@ function alarmHelperFullAtSec(rows as Array<Array<Number> >) as Number {
 function alarmHelperRowText(row as Array<Number>) as String {
     return row[0] + " % x " + row[1] + " ms x " + row[2] + ", " + row[3] + " ms apart, "
         + (row[4] / 1000) + " s wait, " + row[5] + " rings";
+}
+
+//! When each step of the ramp starts in the real alarm, in seconds from its
+//! first ring, one entry per step the preview plays: an alarm is started
+//! and rung ring by ring, each ring followed by the wait the alarm itself
+//! schedules after it, up to the persistent phase.
+(:debug)
+function alarmHelperStepStartSecs() as Array<Number> {
+    var alarm = new AlarmManager();
+    var persistent = alarm.testGetRampSize() - 1;
+    var starts = [] as Array<Number>;
+    var t = 0;
+    alarm.startAlarm();
+    while (alarm.testGetLastRingStep() < persistent) {
+        if (alarm.testGetLastRingStep() == starts.size()) {
+            starts.add(t);
+        }
+        t += alarm.testGetWaitAfterLastRing() / 1000;
+        alarm.testFireRing();
+    }
+    alarm.stop();
+    return starts;
 }
 
 //! A delivered vibration as "7 % x 120 ms, 0 % x 400 ms, ...", or "nothing".
@@ -920,6 +943,36 @@ function testAlarm_previewPlaysEachStepOnce(logger as Test.Logger) as Boolean {
         ok = false;
     }
     alarm.stop();
+    return ok;
+}
+
+//! The preview plays the steps 3 s apart, but each step's screen shows when
+//! that step starts in the real alarm, m:ss from its first ring: the second
+//! an alarm rung ring by ring, with the waits it schedules itself, reaches
+//! the step (alarmHelperStepStartSecs) - never the preview's own rhythm.
+(:test)
+function testAlarm_previewShowsWhenEachStepStartsInTheAlarm(logger as Test.Logger) as Boolean {
+    var starts = alarmHelperStepStartSecs();
+    var dc = layoutHelperDc();
+    var a = new AlarmManager();
+    var v = layoutHelperStartView(new SleepDetector(null), a);
+    a.startPreview();
+    var steps = a.getPreviewSteps();
+    var ok = starts.size() == steps;
+    if (!ok) {
+        logger.debug("the alarm rings " + starts.size() + " steps before its persistent phase, the preview "
+            + steps);
+    }
+    for (var s = 1; s <= steps && s <= starts.size(); s++) {
+        var sec = starts[s - 1];
+        var shown = (sec / 60) + ":" + ((sec % 60 < 10) ? "0" : "") + (sec % 60);
+        if (!v.testBuildLayout(dc).showsFragment(shown)) {
+            logger.debug("preview step " + s + " must show " + shown + ", when the alarm reaches it");
+            ok = false;
+        }
+        a.testPreviewTick();
+    }
+    a.stop();
     return ok;
 }
 

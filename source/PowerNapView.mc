@@ -610,12 +610,15 @@ class PowerNapView extends WatchUi.View {
     // -- Alarm preview ("Test alarm") --------------------------------------
 
     //! What the wrist feels right now: the step just played (1-based) of
-    //! the ramp and its intensity; BACK ends the preview.
+    //! the ramp, its intensity and when that step starts in the real alarm
+    //! (m:ss from its first ring: the preview plays the steps 3 s apart, the
+    //! alarm takes minutes to climb them); BACK ends the preview.
     private function previewLayout(dc as Graphics.Dc) as ScreenLayout {
         var L = new ScreenLayout(dc.getWidth(), dc.getHeight(), 14);
         var step = _alarm.getPreviewStep();
         var steps = _alarm.getPreviewSteps();
         var pct = _alarm.getPreviewPct();
+        var at = formatCountdown(_alarm.getPreviewAlarmSec());
         L.addText(["ALARM PREVIEW", "PREVIEW"], fontsTitle(), Graphics.COLOR_BLUE, 60);
         L.addDivider(14, Graphics.COLOR_DK_GRAY, 10);
         L.addText(["Step " + step + " of " + steps, step + "/" + steps], fontsBody(), Graphics.COLOR_WHITE,
@@ -625,6 +628,8 @@ class PowerNapView extends WatchUi.View {
                 as Array<Graphics.FontDefinition>,
             (pct >= 100) ? Graphics.COLOR_RED : ((pct >= 50) ? Graphics.COLOR_YELLOW : Graphics.COLOR_GREEN),
             ScreenLayout.KEEP);
+        L.addText([at + " into the real alarm", at + " into the alarm", at + " into alarm", "At " + at],
+            fontsDetail(), Palette.TEXT_PRIMARY, ScreenLayout.KEEP);
         L.addText(["Feel the wake-up ramp", "Wake-up ramp"], fontsDetail(), Graphics.COLOR_LT_GRAY, 70);
         L.setFooterTexts(["BACK to stop", "BACK"] as Array<String>, Graphics.COLOR_LT_GRAY);
         return L;

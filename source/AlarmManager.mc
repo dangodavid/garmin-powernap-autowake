@@ -14,7 +14,7 @@ import Toybox.WatchUi;
 //! and everything else is derived from it: the vibration pattern of a ring,
 //! the wait after it, when the backlight may come on, and the phase the
 //! screen shows ("ALARM x/4", calm or loud). The table is what the owner
-//! tunes on the wrist (the "Test alarm" preview plays every step once).
+//! tunes on the wrist, with the "Test alarm" preview (see below).
 //!
 //! Stay Awake does not read RAMP. Its doze alarm climbs DOZE_RAMP and its
 //! nudge is one ring of NUDGE_ROW: their own copy of the 1.1.0 rows they
@@ -88,8 +88,11 @@ import Toybox.WatchUi;
 //! increments _blockedDeliveries, which the tests assert stays 0.
 //!
 //! Preview ("Test alarm" in the start-screen menu, never during a nap): the
-//! ramp is played once, one ring per step 3 s apart, with the same backlight
-//! rule, without the persistent phase; it stops by itself after the last
+//! same rings as the alarm in a compressed rhythm - each step's ring once,
+//! 3 s apart, with the same backlight rule, without the persistent phase -
+//! and for the screen the moment each step starts in the real alarm
+//! (getPreviewAlarmSec): the preview is over in 45 s, and its screen still
+//! says when the alarm gets to each step. It stops by itself after the last
 //! step. A preview and an alarm exclude each other. The gate allows output
 //! while a preview runs.
 class AlarmManager {
@@ -343,6 +346,13 @@ class AlarmManager {
         return (_previewStep > 0) ? RAMP[_previewStep - 1][R_PCT] : 0;
     }
 
+    //! When the step the preview played last starts in the real alarm:
+    //! seconds from the alarm's first ring to that step's first one, not
+    //! the preview's own 3 s per step. 0 before the first step.
+    function getPreviewAlarmSec() as Number {
+        return (_previewStep > 0) ? startSecOfStep(_previewStep - 1) : 0;
+    }
+
     //! One preview ring: the next step of RAMP, delivered like an alarm ring.
     private function firePreviewStep() as Void {
         var row = RAMP[_previewStep];
@@ -532,6 +542,17 @@ class AlarmManager {
             first += ramp[s][R_RINGS];
         }
         return first;
+    }
+
+    //! Seconds from the first ring of RAMP to the first ring of `step`, as
+    //! the alarm rings them: every ring before it, each followed by the
+    //! wait of its own step.
+    private function startSecOfStep(step as Number) as Number {
+        var ms = 0;
+        for (var s = 0; s < step && s < RAMP.size(); s++) {
+            ms += RAMP[s][R_RINGS] * RAMP[s][R_INTERVAL_MS];
+        }
+        return ms / 1000;
     }
 
     //! The first step of RAMP whose intensity is at least `pct` (the last
