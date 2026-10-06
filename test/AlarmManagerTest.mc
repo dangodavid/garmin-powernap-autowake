@@ -7,19 +7,21 @@ import Toybox.Lang;
 //
 // Covers the ramp table (ring -> step -> wait mapping, the constraints the
 // owner set on it: >= 8 perceptible steps, the calibrated first pulse,
-// monotonic growth, no step bigger than 1.1.0's, the maximum and everything
-// from 22 % up as in 1.1.0, full strength by 178 s, 3 min at full, then the
-// 30 s persistent phase), the backlight threshold derived from it, the
-// display phases, the
+// monotonic growth, every step 8-30 % above the one before it, no step
+// bigger than 1.1.0's, the maximum and everything from 22 % up as in 1.1.0,
+// full strength by 178 s, 3 min at full, then the 30 s persistent phase),
+// the backlight threshold derived from it, the display phases, the
 // Stay Awake doze alarm and nudge on their own table (ring by ring in
-// StayAwakeTest), the vibrate counter, the start/stop lifecycle, and the
-// AMOLED backlight regression: a throwing Attention.backlight() must never
-// suppress the vibration of the ring it belongs to, nor stop the alarm.
+// StayAwakeTest), the vibrate counter, the start/stop lifecycle, the
+// "Test alarm" preview (and the moment of the real alarm its screen shows
+// for each step), and the AMOLED backlight regression: a throwing
+// Attention.backlight() must never suppress the vibration of the ring it
+// belongs to, nor stop the alarm.
 //
 // Ring times follow from the table: the wait after ring k is the interval of
 // ring k's step, so with one ring per step up to 19 % and 2 rings per step
-// from 22 % the first full ring (ring 21) is at 168 s, the last 5 s ring (56)
-// at 343 s, the first persistent ring (57) at 348 s.
+// from 22 % the first full ring (ring 22) is at 178 s, the last 5 s ring (57)
+// at 353 s, the first persistent ring (58) at 358 s.
 //
 // Every test that calls startAlarm() calls stop() before returning, because
 // startAlarm() arms a real repeat timer.
@@ -77,6 +79,28 @@ function alarmHelperFullAtSec(rows as Array<Array<Number> >) as Number {
 function alarmHelperRowText(row as Array<Number>) as String {
     return row[0] + " % x " + row[1] + " ms x " + row[2] + ", " + row[3] + " ms apart, "
         + (row[4] / 1000) + " s wait, " + row[5] + " rings";
+}
+
+//! When each step of the ramp starts in the real alarm, in seconds from its
+//! first ring, one entry per step the preview plays: an alarm is started
+//! and rung ring by ring, each ring followed by the wait the alarm itself
+//! schedules after it, up to the persistent phase.
+(:debug)
+function alarmHelperStepStartSecs() as Array<Number> {
+    var alarm = new AlarmManager();
+    var persistent = alarm.testGetRampSize() - 1;
+    var starts = [] as Array<Number>;
+    var t = 0;
+    alarm.startAlarm();
+    while (alarm.testGetLastRingStep() < persistent) {
+        if (alarm.testGetLastRingStep() == starts.size()) {
+            starts.add(t);
+        }
+        t += alarm.testGetWaitAfterLastRing() / 1000;
+        alarm.testFireRing();
+    }
+    alarm.stop();
+    return starts;
 }
 
 //! A delivered vibration as "7 % x 120 ms, 0 % x 400 ms, ...", or "nothing".
@@ -141,15 +165,15 @@ function testAlarm_startFiresRingZeroImmediately(logger as Test.Logger) as Boole
     return ok;
 }
 
-//! Ring -> step mapping: one ring per step up to 19 % (rings 0-4), then 2
-//! rings per step up to full strength (ring 21), 36 full rings (21-56),
-//! then the persistent row (57+).
+//! Ring -> step mapping: one ring per step up to 19 % (rings 0-5), then 2
+//! rings per step up to full strength (ring 22), 36 full rings (22-57),
+//! then the persistent row (58+).
 (:test)
 function testAlarm_stepForRingBoundaries(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     var last = alarm.testGetRampSize() - 1;
-    var rings    = [0, 1, 4, 5, 6, 7, 19, 20, 21, 56, 57, 100];
-    var expected = [0, 1, 4, 5, 5, 6, 12, 12, 13, 13, last, last];
+    var rings    = [0, 1, 5, 6, 7, 8, 20, 21, 22, 57, 58, 100];
+    var expected = [0, 1, 5, 6, 6, 7, 13, 13, 14, 14, last, last];
     var ok = true;
     for (var i = 0; i < rings.size(); i++) {
         var got = alarm.testGetStepForRing(rings[i] as Number);
@@ -158,9 +182,9 @@ function testAlarm_stepForRingBoundaries(logger as Test.Logger) as Boolean {
             ok = false;
         }
     }
-    if (alarm.testGetFirstRingOfStep(13) != 21 || alarm.testGetFirstRingOfStep(last) != 57
-        || alarm.testGetFirstRingOfStep(5) != 5 || alarm.testGetFirstRingOfStep(0) != 0) {
-        logger.debug("first rings: step 13 " + alarm.testGetFirstRingOfStep(13) + " persistent "
+    if (alarm.testGetFirstRingOfStep(14) != 22 || alarm.testGetFirstRingOfStep(last) != 58
+        || alarm.testGetFirstRingOfStep(6) != 6 || alarm.testGetFirstRingOfStep(0) != 0) {
+        logger.debug("first rings: step 14 " + alarm.testGetFirstRingOfStep(14) + " persistent "
             + alarm.testGetFirstRingOfStep(last));
         ok = false;
     }
@@ -172,8 +196,8 @@ function testAlarm_stepForRingBoundaries(logger as Test.Logger) as Boolean {
 (:test)
 function testAlarm_intervalPerStep(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
-    var expected = [10000, 10000, 10000, 10000, 10000, 10000, 9000, 8000, 8000, 7000, 6000, 6000, 5000, 5000,
-        30000];
+    var expected = [10000, 10000, 10000, 10000, 10000, 10000, 10000, 9000, 8000, 8000, 7000, 6000, 6000, 5000,
+        5000, 30000];
     var ok = alarm.testGetRampSize() == expected.size();
     for (var s = 0; s < expected.size() && ok; s++) {
         var got = alarm.testGetIntervalForStep(s);
@@ -247,27 +271,55 @@ function testAlarm_rampIsGentleAndMonotonic(logger as Test.Logger) as Boolean {
 //! The ramp starts with the pulse the owner measured on the wrist on
 //! 2026-10-06: the first one felt lying down on the fenix 8 Pro was one
 //! pulse of 120 ms at 7 % (10 % standing), the pulse the calibration ladder
-//! played. The first step is that pulse, and the first ring is exactly it:
-//! one profile, 7 %, 120 ms, nothing before or after it.
+//! played. The first step rings it twice, 400 ms apart, as the 22 % step
+//! rings its pulses (owner, the same day): 7 % x 120 ms x 2, and the first
+//! ring is exactly that - 7 % for 120 ms, 400 ms of nothing, 7 % for 120 ms.
 (:test)
 function testAlarm_rampStartsAtTheCalibratedPulse(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     var ok = true;
     var row = alarm.testGetRampRow(0);
-    if (row[0] != 7 || row[1] != 120 || row[2] != 1) {
-        logger.debug("the first step is " + row[0] + " % x " + row[1] + " ms x " + row[2]
-            + "; the calibrated pulse is 7 % x 120 ms x 1");
+    if (row[0] != 7 || row[1] != 120 || row[2] != 2 || row[3] != 400) {
+        logger.debug("the first step is " + row[0] + " % x " + row[1] + " ms x " + row[2] + ", " + row[3]
+            + " ms apart; the calibrated pulse twice is 7 % x 120 ms x 2, 400 ms apart");
         ok = false;
     }
     alarm.startAlarm();
     var felt = alarm.testGetLastPattern();
-    if (felt == null || (felt as Array<Attention.VibeProfile>).size() != 1
-        || (felt as Array<Attention.VibeProfile>)[0].dutyCycle != 7
-        || (felt as Array<Attention.VibeProfile>)[0].length != 120) {
-        logger.debug("the first ring is " + alarmHelperPatternText(felt) + "; the calibrated pulse is 7 % x 120 ms");
+    var want = [[7, 120], [0, 400], [7, 120]] as Array<Array<Number> >;
+    var same = felt != null && (felt as Array<Attention.VibeProfile>).size() == want.size();
+    for (var i = 0; same && i < want.size(); i++) {
+        var p = (felt as Array<Attention.VibeProfile>)[i];
+        same = p.dutyCycle == want[i][0] && p.length == want[i][1];
+    }
+    if (!same) {
+        logger.debug("the first ring is " + alarmHelperPatternText(felt)
+            + "; the calibrated pulse twice is 7 % x 120 ms, 0 % x 400 ms, 7 % x 120 ms");
         ok = false;
     }
     alarm.stop();
+    return ok;
+}
+
+//! Every step rises in proportion to the one before it, as the 1.1.0 ramp
+//! does from 22 % up (owner, 2026-10-06): by at most 30 % and by at least
+//! 8 %, from the first step to full strength. 7 -> 10 % was a jump of 43 %;
+//! 92 -> 100 % is the smallest rise there is (9 %). The persistent phase
+//! repeats full strength: it is not a step up.
+(:test)
+function testAlarm_everyStepRisesInProportion(logger as Test.Logger) as Boolean {
+    var alarm = new AlarmManager();
+    var full = alarm.testFirstStepAtLeast(100);
+    var ok = full > 0;
+    for (var s = 1; s <= full; s++) {
+        var from = alarm.testGetRampRow(s - 1)[0];
+        var to = alarm.testGetRampRow(s)[0];
+        if (to * 100 > from * 130 || to * 100 < from * 108) {
+            logger.debug("step " + s + " rises " + (((to - from) * 1000 / from + 5) / 10) + " % (" + from + " -> "
+                + to + " %): every step must be 8-30 % above the one before it");
+            ok = false;
+        }
+    }
     return ok;
 }
 
@@ -346,8 +398,8 @@ function testAlarm_maximumAndUpperRampUnchanged(logger as Test.Logger) as Boolea
 //! Full strength comes at most 60 s later than in 1.1.0 (owner,
 //! 2026-10-06): 1.1.0 reached it 118 s after the first ring, so the limit is
 //! 178 s; the lower bound the owner set for 1.1.0 stays (not before 100 s).
-//! The table reaches it with ring 21 at 168 s, and every step on the way is
-//! rung (none is skipped).
+//! The table reaches it with ring 22 at 178 s, the limit itself, and every
+//! step on the way is rung (none is skipped).
 (:test)
 function testAlarm_fullReachedInTime(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
@@ -369,8 +421,8 @@ function testAlarm_fullReachedInTime(logger as Test.Logger) as Boolean {
         logger.debug("full strength at " + t + " s, sooner than 100 s");
         ok = false;
     }
-    if (fullRing != 21 || t != 168) {
-        logger.debug("table changed: first full ring " + fullRing + " at " + t + " s (was 21 at 168 s)");
+    if (fullRing != 22 || t != 178) {
+        logger.debug("table changed: first full ring " + fullRing + " at " + t + " s (was 22 at 178 s)");
         ok = false;
     }
     // Every step below full is reached: each ring's step is at most one
@@ -395,7 +447,7 @@ function testAlarm_displayPhasesFollowRamp(logger as Test.Logger) as Boolean {
     if (!ok) {
         logger.debug("displayPhase thresholds wrong");
     }
-    var expected = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3];
+    var expected = [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3];
     for (var s = 0; s < alarm.testGetRampSize(); s++) {
         var got = alarm.testDisplayPhase(alarm.testGetRampRow(s)[0]);
         if (got != expected[s]) {
@@ -405,7 +457,7 @@ function testAlarm_displayPhasesFollowRamp(logger as Test.Logger) as Boolean {
     }
     alarm.startAlarm();                                  // ring 0
     // (rings fired, expected last phase, expected next phase)
-    var totals   = [1, 11, 12, 17, 18, 21, 22, 65];
+    var totals   = [1, 12, 13, 18, 19, 22, 23, 66];
     var lastPh   = [0, 0, 1,  1,  2,  2,  3,  3];
     var nextPh   = [0, 1, 1,  2,  2,  3,  3,  3];
     for (var i = 0; i < totals.size(); i++) {
@@ -463,29 +515,29 @@ function testAlarm_dozeAlarmClimbsItsOwnTable(logger as Test.Logger) as Boolean 
     return ok;
 }
 
-//! After three minutes at full strength (rings 21-56, 5 s apart) the alarm
-//! keeps ringing every 30 s: ring 57 is the first persistent ring. The
+//! After three minutes at full strength (rings 22-57, 5 s apart) the alarm
+//! keeps ringing every 30 s: ring 58 is the first persistent ring. The
 //! screen still shows the last phase (4/4), every ring still vibrates, and
-//! the timeline is 168 s / 343 s / 348 s / 378 s for rings 21 / 56 / 57 / 58.
+//! the timeline is 178 s / 353 s / 358 s / 388 s for rings 22 / 57 / 58 / 59.
 (:test)
 function testAlarm_persistentPhaseAfterThreeMinutesAtFull(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
-    var times = alarmHelperRingTimes(alarm, 58);
+    var times = alarmHelperRingTimes(alarm, 59);
     var ok = true;
-    if (times[21] != 168 || times[56] != 343 || times[57] != 348 || times[58] != 378) {
-        logger.debug("ring times 21/56/57/58: " + times[21] + "/" + times[56] + "/" + times[57] + "/" + times[58]);
+    if (times[22] != 178 || times[57] != 353 || times[58] != 358 || times[59] != 388) {
+        logger.debug("ring times 22/57/58/59: " + times[22] + "/" + times[57] + "/" + times[58] + "/" + times[59]);
         ok = false;
     }
     var last = alarm.testGetRampSize() - 1;
-    if (alarm.testGetStepForRing(56) != last - 1 || alarm.testGetStepForRing(57) != last) {
-        logger.debug("ring 56 must be the last full ring, ring 57 the first persistent one");
+    if (alarm.testGetStepForRing(57) != last - 1 || alarm.testGetStepForRing(58) != last) {
+        logger.debug("ring 57 must be the last full ring, ring 58 the first persistent one");
         ok = false;
     }
     alarm.startAlarm();
-    while (alarm.testGetRingCount() < 59) {
+    while (alarm.testGetRingCount() < 60) {
         alarm.testFireRing();
     }
-    if (!alarm.isAlarming() || alarm.testGetVibrateCount() != 59 || alarm.getCurrentPhase() != 3
+    if (!alarm.isAlarming() || alarm.testGetVibrateCount() != 60 || alarm.getCurrentPhase() != 3
         || alarm.getLastRingPhase() != 3 || !alarm.isFullIntensity()) {
         logger.debug("persistent phase: alarming " + alarm.isAlarming() + " vib " + alarm.testGetVibrateCount()
             + " phase " + alarm.getCurrentPhase());
@@ -501,19 +553,19 @@ function testAlarm_persistentPhaseAfterThreeMinutesAtFull(logger as Test.Logger)
 }
 
 //! KEY REGRESSION: with the backlight forced to throw (AMOLED burn-in guard),
-//! 21 rings still produce 21 vibrations, the alarm stays active and the
+//! 22 rings still produce 22 vibrations, the alarm stays active and the
 //! backlight counter never moves.
 (:test)
 function testAlarm_backlightThrowNeverSuppressesVibration(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     alarm.testForceBacklightThrow(true);
     alarm.startAlarm();
-    for (var i = 0; i < 20; i++) {
+    for (var i = 0; i < 21; i++) {
         alarm.testFireRing();
     }
     var ok = alarm.isAlarming()
-        && alarm.testGetRingCount() == 21
-        && alarm.testGetVibrateCount() == 21
+        && alarm.testGetRingCount() == 22
+        && alarm.testGetVibrateCount() == 22
         && alarm.testGetBacklightCount() == 0
         && alarm.getCurrentPhase() == 3;
     if (!ok) {
@@ -527,23 +579,23 @@ function testAlarm_backlightThrowNeverSuppressesVibration(logger as Test.Logger)
     return ok;
 }
 
-//! Backlight is sparse and only from the 50 % step (step 9 = ring 13): over
-//! 26 rings it is requested exactly on rings 13, 14, 19 and 25 (the first
-//! two bright rings, then every 6th) while every ring vibrates (count 26).
+//! Backlight is sparse and only from the 50 % step (step 10 = ring 14): over
+//! 27 rings it is requested exactly on rings 14, 15, 20 and 26 (the first
+//! two bright rings, then every 6th) while every ring vibrates (count 27).
 (:test)
 function testAlarm_backlightSparseSchedule(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     alarm.testForceBacklightThrow(false);
-    var ok = alarm.testBacklightFromStep() == 9 && alarm.testGetFirstRingOfStep(9) == 13
-        && alarm.testGetRampRow(9)[0] >= 50 && alarm.testGetRampRow(8)[0] < 50;
+    var ok = alarm.testBacklightFromStep() == 10 && alarm.testGetFirstRingOfStep(10) == 14
+        && alarm.testGetRampRow(10)[0] >= 50 && alarm.testGetRampRow(9)[0] < 50;
     if (!ok) {
-        logger.debug("backlight step " + alarm.testBacklightFromStep() + ", expected 9 (ring 13)");
+        logger.debug("backlight step " + alarm.testBacklightFromStep() + ", expected 10 (ring 14)");
     }
     alarm.startAlarm();
-    for (var i = 0; i < 25; i++) {
+    for (var i = 0; i < 26; i++) {
         alarm.testFireRing();
     }
-    if (alarm.testGetRingCount() != 26 || alarm.testGetVibrateCount() != 26 || alarm.testGetBacklightCount() != 4) {
+    if (alarm.testGetRingCount() != 27 || alarm.testGetVibrateCount() != 27 || alarm.testGetBacklightCount() != 4) {
         logger.debug("rings=" + alarm.testGetRingCount()
             + " vib=" + alarm.testGetVibrateCount()
             + " bl=" + alarm.testGetBacklightCount());
@@ -553,64 +605,64 @@ function testAlarm_backlightSparseSchedule(logger as Test.Logger) as Boolean {
     return ok;
 }
 
-//! The gentle steps (rings 0-12, below 50 %) never turn the screen on;
-//! ring 13 (52 %) and ring 14 do, rings 15-18 do not, ring 19 does.
+//! The gentle steps (rings 0-13, below 50 %) never turn the screen on;
+//! ring 14 (52 %) and ring 15 do, rings 16-19 do not, ring 20 does.
 (:test)
 function testAlarm_backlightSkipsGentlePhases(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     alarm.testForceBacklightThrow(false);
     alarm.startAlarm();              // ring 0
-    for (var i = 0; i < 12; i++) {   // rings 1..12
+    for (var i = 0; i < 13; i++) {   // rings 1..13
         alarm.testFireRing();
     }
-    var afterRing12 = alarm.testGetBacklightCount();
-    alarm.testFireRing();            // ring 13 -> bl 1
     var afterRing13 = alarm.testGetBacklightCount();
-    alarm.testFireRing();            // ring 14 -> bl 2
+    alarm.testFireRing();            // ring 14 -> bl 1
     var afterRing14 = alarm.testGetBacklightCount();
-    for (var i = 0; i < 4; i++) {    // rings 15..18
+    alarm.testFireRing();            // ring 15 -> bl 2
+    var afterRing15 = alarm.testGetBacklightCount();
+    for (var i = 0; i < 4; i++) {    // rings 16..19
         alarm.testFireRing();
     }
-    var afterRing18 = alarm.testGetBacklightCount();
-    alarm.testFireRing();            // ring 19 -> bl 3
     var afterRing19 = alarm.testGetBacklightCount();
-    var ok = afterRing12 == 0 && afterRing13 == 1 && afterRing14 == 2 && afterRing18 == 2
-        && afterRing19 == 3 && alarm.testGetRingCount() == 20;
+    alarm.testFireRing();            // ring 20 -> bl 3
+    var afterRing20 = alarm.testGetBacklightCount();
+    var ok = afterRing13 == 0 && afterRing14 == 1 && afterRing15 == 2 && afterRing19 == 2
+        && afterRing20 == 3 && alarm.testGetRingCount() == 21;
     if (!ok) {
-        logger.debug("bl after ring12=" + afterRing12 + " ring13=" + afterRing13 + " ring14=" + afterRing14
-            + " ring18=" + afterRing18 + " ring19=" + afterRing19);
+        logger.debug("bl after ring13=" + afterRing13 + " ring14=" + afterRing14 + " ring15=" + afterRing15
+            + " ring19=" + afterRing19 + " ring20=" + afterRing20);
     }
     alarm.stop();
     return ok;
 }
 
-//! A backlight failure is per request, not latched: rings 13 and 14 throw,
-//! and once the throw stops the next scheduled rings (19, then 25) request
+//! A backlight failure is per request, not latched: rings 14 and 15 throw,
+//! and once the throw stops the next scheduled rings (20, then 26) request
 //! the backlight again.
 (:test)
 function testAlarm_backlightThrowDoesNotLatch(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     alarm.testForceBacklightThrow(true);
     alarm.startAlarm();              // ring 0
-    for (var i = 0; i < 14; i++) {   // rings 1..14 (13 and 14 throw)
+    for (var i = 0; i < 15; i++) {   // rings 1..15 (14 and 15 throw)
         alarm.testFireRing();
     }
     var duringThrow = alarm.testGetBacklightCount();
     alarm.testForceBacklightThrow(false);
-    for (var i = 0; i < 5; i++) {    // rings 15..19
+    for (var i = 0; i < 5; i++) {    // rings 16..20
         alarm.testFireRing();
     }
-    var afterRing19 = alarm.testGetBacklightCount();
-    for (var i = 0; i < 6; i++) {    // rings 20..25
+    var afterRing20 = alarm.testGetBacklightCount();
+    for (var i = 0; i < 6; i++) {    // rings 21..26
         alarm.testFireRing();
     }
-    var afterRing25 = alarm.testGetBacklightCount();
-    var ok = duringThrow == 0 && afterRing19 == 1 && afterRing25 == 2
-        && alarm.testGetRingCount() == 26
-        && alarm.testGetVibrateCount() == 26;
+    var afterRing26 = alarm.testGetBacklightCount();
+    var ok = duringThrow == 0 && afterRing20 == 1 && afterRing26 == 2
+        && alarm.testGetRingCount() == 27
+        && alarm.testGetVibrateCount() == 27;
     if (!ok) {
-        logger.debug("bl duringThrow=" + duringThrow + " afterRing19=" + afterRing19
-            + " afterRing25=" + afterRing25
+        logger.debug("bl duringThrow=" + duringThrow + " afterRing20=" + afterRing20
+            + " afterRing26=" + afterRing26
             + " rings=" + alarm.testGetRingCount()
             + " vib=" + alarm.testGetVibrateCount());
     }
@@ -653,7 +705,7 @@ function testAlarm_stopResetsAndSilencesRings(logger as Test.Logger) as Boolean 
 function testAlarm_startWhileAlarmingIsNoOp(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     alarm.startAlarm();
-    for (var i = 0; i < 10; i++) {   // rings 1..10 -> total 11, next ring at step 8 (43 %): phase 1
+    for (var i = 0; i < 11; i++) {   // rings 1..11 -> total 12, next ring at step 9 (43 %): phase 1
         alarm.testFireRing();
     }
     var ringsBefore = alarm.testGetRingCount();
@@ -662,7 +714,7 @@ function testAlarm_startWhileAlarmingIsNoOp(logger as Test.Logger) as Boolean {
     var phaseBefore = alarm.getCurrentPhase();
     alarm.startAlarm();
     alarm.startDozeAlarm();
-    var ok = ringsBefore == 11
+    var ok = ringsBefore == 12
         && phaseBefore == 1
         && alarm.isAlarming()
         && alarm.testGetRingCount() == ringsBefore
@@ -687,14 +739,14 @@ function testAlarm_startWhileAlarmingIsNoOp(logger as Test.Logger) as Boolean {
 function testAlarm_restartAfterStopResetsCounters(logger as Test.Logger) as Boolean {
     var alarm = new AlarmManager();
     alarm.startAlarm();
-    for (var i = 0; i < 14; i++) {   // total 15 rings, vib 15, bl 2 (rings 13, 14), next ring 63 %: phase 1
+    for (var i = 0; i < 15; i++) {   // total 16 rings, vib 16, bl 2 (rings 14, 15), next ring 63 %: phase 1
         alarm.testFireRing();
     }
-    var escalated = alarm.testGetRingCount() == 15
-        && alarm.testGetVibrateCount() == 15
+    var escalated = alarm.testGetRingCount() == 16
+        && alarm.testGetVibrateCount() == 16
         && alarm.testGetBacklightCount() == 2
         && alarm.getCurrentPhase() == 1
-        && alarm.testGetLastRingStep() == 9;
+        && alarm.testGetLastRingStep() == 10;
     alarm.stop();
     alarm.startAlarm();
     var ok = escalated
@@ -766,7 +818,7 @@ function testAlarm_stepBoundariesKeepAlarming(logger as Test.Logger) as Boolean 
     var alarm = new AlarmManager();
     alarm.startAlarm();
     var ok = true;
-    for (var i = 0; i < 21; i++) {
+    for (var i = 0; i < 22; i++) {
         alarm.testFireRing();
         if (!alarm.isAlarming()) {
             logger.debug("alarm stopped after ring " + alarm.testGetRingCount());
@@ -774,8 +826,8 @@ function testAlarm_stepBoundariesKeepAlarming(logger as Test.Logger) as Boolean 
         }
     }
     ok = ok
-        && alarm.testGetRingCount() == 22
-        && alarm.testGetVibrateCount() == 22
+        && alarm.testGetRingCount() == 23
+        && alarm.testGetVibrateCount() == 23
         && alarm.getCurrentPhase() == 3
         && alarm.isFullIntensity();
     if (!ok) {
@@ -829,7 +881,7 @@ function testAlarm_nudgeIsOneGentleBurst(logger as Test.Logger) as Boolean {
 }
 
 //! The screen may flash only at full strength: false before and during the
-//! steps below 100 % (rings 0-20), true once ring 21 has fired, false after
+//! steps below 100 % (rings 0-21), true once ring 22 has fired, false after
 //! stop(). getLastRingPhase follows the ring that actually fired.
 (:test)
 function testAlarm_fullIntensityOnlyAtFullStep(logger as Test.Logger) as Boolean {
@@ -837,7 +889,7 @@ function testAlarm_fullIntensityOnlyAtFullStep(logger as Test.Logger) as Boolean
     var ok = !alarm.isFullIntensity();
     var fullRing = alarmHelperFirstFullRing(alarm);
     alarm.startAlarm();                       // ring 0
-    while (alarm.testGetRingCount() < fullRing) {   // rings 1..20
+    while (alarm.testGetRingCount() < fullRing) {   // rings 1..21
         if (alarm.isFullIntensity()) {
             logger.debug("full intensity before ring " + fullRing + " (ring count " + alarm.testGetRingCount() + ")");
             ok = false;
@@ -849,7 +901,7 @@ function testAlarm_fullIntensityOnlyAtFullStep(logger as Test.Logger) as Boolean
             + alarm.getLastRingPhase() + " next " + alarm.getCurrentPhase());
         ok = false;
     }
-    alarm.testFireRing();                     // ring 21: full strength
+    alarm.testFireRing();                     // ring 22: full strength
     if (!alarm.isFullIntensity() || alarm.getLastRingPhase() != 3) {
         logger.debug("ring " + fullRing + " must be full strength");
         ok = false;
@@ -890,13 +942,43 @@ function testAlarm_previewPlaysEachStepOnce(logger as Test.Logger) as Boolean {
             ok = false;
         }
     }
-    // Backlight from the 50 % step: bright rings are steps 9-13 (5 of them):
+    // Backlight from the 50 % step: bright rings are steps 10-14 (5 of them):
     // the first two, then every 6th -> 2 requests.
     if (alarm.testGetBacklightCount() != 2 || alarm.testGetBlockedDeliveries() != 0) {
         logger.debug("backlight " + alarm.testGetBacklightCount() + " blocked " + alarm.testGetBlockedDeliveries());
         ok = false;
     }
     alarm.stop();
+    return ok;
+}
+
+//! The preview plays the steps 3 s apart, but each step's screen shows when
+//! that step starts in the real alarm, m:ss from its first ring: the second
+//! an alarm rung ring by ring, with the waits it schedules itself, reaches
+//! the step (alarmHelperStepStartSecs) - never the preview's own rhythm.
+(:test)
+function testAlarm_previewShowsWhenEachStepStartsInTheAlarm(logger as Test.Logger) as Boolean {
+    var starts = alarmHelperStepStartSecs();
+    var dc = layoutHelperDc();
+    var a = new AlarmManager();
+    var v = layoutHelperStartView(new SleepDetector(null), a);
+    a.startPreview();
+    var steps = a.getPreviewSteps();
+    var ok = starts.size() == steps;
+    if (!ok) {
+        logger.debug("the alarm rings " + starts.size() + " steps before its persistent phase, the preview "
+            + steps);
+    }
+    for (var s = 1; s <= steps && s <= starts.size(); s++) {
+        var sec = starts[s - 1];
+        var shown = (sec / 60) + ":" + ((sec % 60 < 10) ? "0" : "") + (sec % 60);
+        if (!v.testBuildLayout(dc).showsFragment(shown)) {
+            logger.debug("preview step " + s + " must show " + shown + ", when the alarm reaches it");
+            ok = false;
+        }
+        a.testPreviewTick();
+    }
+    a.stop();
     return ok;
 }
 

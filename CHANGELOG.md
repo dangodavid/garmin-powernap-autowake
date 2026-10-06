@@ -29,12 +29,15 @@ This file starts at 1.1.0; it is not filled in backwards.
   you fall asleep. START (or a tap) then asks once more - "Vibration off.
   START again to begin anyway" - and only a second press within 4 seconds
   begins the nap; without it nothing starts.
-- **A gentler start to the alarm**: it now opens with a single short pulse at
-  7 % (the first one felt lying down when this was measured on a fēnix 8
-  Pro) instead of two at 22 %, and climbs to 22 % in steps of 3 points, one
-  pulse every 10 seconds; from there it goes on exactly as before. Full
-  strength comes 50 seconds later, 2 min 48 s after the first pulse. "Test
-  alarm" plays the new ramp; the Stay Awake alarm and its nudge are unchanged.
+- **A gentler start to the alarm**: it now opens with two short pulses at
+  7 % (the faintest felt lying down when this was measured on a fēnix 8
+  Pro) instead of two at 22 %, and climbs to 22 % through 9, 11, 13, 16
+  and 19 %, two pulses every 10 seconds, each step in proportion to the one
+  before it, as the rest of the ramp climbs; from there it goes on exactly
+  as before. Full strength comes a minute later, 2 min 58 s after the first
+  pulse. "Test alarm" plays the new ramp, the same pulses 3 seconds apart,
+  and shows on every step when it comes in the real alarm (from 0:00 to
+  2:58); the Stay Awake alarm and its nudge are unchanged.
 
 ## 1.1.0 - 2026-09-20
 

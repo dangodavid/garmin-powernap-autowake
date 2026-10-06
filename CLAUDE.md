@@ -142,7 +142,7 @@ source/
   SleepDetector.mc      # Core engine  - wall-clock timing, per-minute sensor aggregation,
                         #   onset / wake / smart-wake logic, deadline cap, frozen settings,
                         #   Stay Awake mode, debug-only trace log
-  AlarmManager.mc       # Ramp-table vibration alarm (14 steps to full in 168 s +
+  AlarmManager.mc       # Ramp-table vibration alarm (15 steps to full in 178 s +
                         #   persistent), quiet onset gate; the Stay Awake doze alarm
                         #   and nudge on their own copy of the 1.1.0 rows
   MotionMath.mc         # Offset-free motion value of one accelerometer batch
@@ -159,7 +159,8 @@ test/
   WakeTest.mc           # wake episodes, re-entry, sleep accumulation
   TimingTest.mc         # wall-clock alarm, deadline cap, smart-wake window
   AlarmManagerTest.mc   # ramp constraints/schedule (the owner's limits of 2026-10-06
-                        #   against the 1.1.0 table), persistent phase, nudge, backlight, preview
+                        #   against the 1.1.0 table), persistent phase, nudge, backlight,
+                        #   preview (each step's second of the real alarm on its screen)
   SummaryTest.mc        # finish/cancel paths, statistics, RingMath
   RegressionTest.mc     # HR wake rules, frozen settings, lifecycle, no vibration, the
                         #   Alarm Type value left from 1.1.0, timer wrap
@@ -399,34 +400,43 @@ columns `R_*`); the last row is the persistent phase (rings 0 = unbounded):
 
 | step | % | pulse | pulses | gap | wait after ring | rings | first ring at |
 |---|---|---|---|---|---|---|---|
-| 0 | 7 | 120 | 1 | - | 10 s | 1 | 0 s |
-| 1 | 10 | 120 | 1 | - | 10 s | 1 | 10 s |
-| 2 | 13 | 120 | 1 | - | 10 s | 1 | 20 s |
-| 3 | 16 | 120 | 1 | - | 10 s | 1 | 30 s |
-| 4 | 19 | 120 | 1 | - | 10 s | 1 | 40 s |
-| 5 | 22 | 120 | 2 | 400 | 10 s | 2 | 50 s |
-| 6 | 28 | 140 | 2 | 380 | 9 s | 2 | 70 s |
-| 7 | 35 | 160 | 2 | 350 | 8 s | 2 | 88 s |
-| 8 | 43 | 180 | 3 | 320 | 8 s | 2 | 104 s |
-| 9 | 52 | 210 | 3 | 300 | 7 s | 2 | 120 s |
-| 10 | 63 | 240 | 3 | 260 | 6 s | 2 | 134 s |
-| 11 | 78 | 280 | 3 | 200 | 6 s | 2 | 146 s |
-| 12 | 92 | 320 | 3 | 160 | 5 s | 2 | 158 s |
-| 13 | 100 | 350 | 3 | 150 | 5 s | 36 | 168 s (3 min at full) |
-| 14 | 100 | 350 | 3 | 150 | 30 s | inf | 348 s (persistent) |
+| 0 | 7 | 120 | 2 | 400 | 10 s | 1 | 0 s |
+| 1 | 9 | 120 | 2 | 400 | 10 s | 1 | 10 s |
+| 2 | 11 | 120 | 2 | 400 | 10 s | 1 | 20 s |
+| 3 | 13 | 120 | 2 | 400 | 10 s | 1 | 30 s |
+| 4 | 16 | 120 | 2 | 400 | 10 s | 1 | 40 s |
+| 5 | 19 | 120 | 2 | 400 | 10 s | 1 | 50 s |
+| 6 | 22 | 120 | 2 | 400 | 10 s | 2 | 60 s |
+| 7 | 28 | 140 | 2 | 380 | 9 s | 2 | 80 s |
+| 8 | 35 | 160 | 2 | 350 | 8 s | 2 | 98 s |
+| 9 | 43 | 180 | 3 | 320 | 8 s | 2 | 114 s |
+| 10 | 52 | 210 | 3 | 300 | 7 s | 2 | 130 s |
+| 11 | 63 | 240 | 3 | 260 | 6 s | 2 | 144 s |
+| 12 | 78 | 280 | 3 | 200 | 6 s | 2 | 156 s |
+| 13 | 92 | 320 | 3 | 160 | 5 s | 2 | 168 s |
+| 14 | 100 | 350 | 3 | 150 | 5 s | 36 | 178 s (3 min at full) |
+| 15 | 100 | 350 | 3 | 150 | 30 s | inf | 358 s (persistent) |
 
-**Calibrated start (owner, 2026-10-06, 1.2.0).** The 1.1.0 ramp (steps 5-14
+**Calibrated start (owner, 2026-10-06, 1.2.0).** The 1.1.0 ramp (steps 6-15
 above, unchanged) started at 22 %, and that still felt too strong on the
 wrist. A calibration build, never committed, made "Test alarm" play single
 120 ms pulses at 1, 4, 7 ... 22 % (the SDK takes a dutyCycle of 0-100, 0 = no
 vibration), 5 s apart, each announced on the screen first. On the fenix 8
 Pro the first pulse felt lying down was 7 %, standing 10 %; the nap ramp is
-for lying down, so its first ring is that pulse exactly (one profile, 7 %,
-120 ms), then 10, 13, 16 and 19 %, one ring each, 10 s apart like the start
-of 1.1.0, then the 1.1.0 table. Full strength comes 50 s later than in 1.1.0
-(168 s instead of 118 s); the moment the alarm starts and the persistent
-phase did not change (it follows full strength by 3 minutes, so it starts
-at 348 s). A single pulse has no gap (the 400 in its row is unused).
+for lying down, so its first step is that pulse (7 %, 120 ms), then 9, 11,
+13, 16 and 19 %, one ring each, 10 s apart like the start of 1.1.0, then
+the 1.1.0 table. Those steps climb in proportion, as the 1.1.0 table does
+(owner, the same day, after a first version had climbed 3 points a step:
+7 -> 10 % was a jump of 43 %): every step 8-30 % above the one before it,
+over the whole ramp. And each of them rings its pulse twice, 400 ms apart,
+as the 22 % step does (owner, later the same day; the first version rang
+it once): a ring of 640 ms. The 10 s of a step count from the start of one
+ring to the start of the next, so the second pulse comes out of the
+silence after the ring (9.36 s instead of 9.88 s) and the step still lasts
+10 s. Full strength comes 60 s later than in 1.1.0 (178 s instead of
+118 s), the owner's limit exactly, so the six new steps keep the 10 s
+wait; the moment the alarm starts and the persistent phase did not change
+(it follows full strength by 3 minutes, so it starts at 358 s).
 
 The wait AFTER ring k is the interval of ring k's step (`onRepeatAlarm`
 restarts the timer when it changes; `startRamp(doze)` fires the first ring
@@ -434,28 +444,45 @@ of the table and starts the timer with its interval). `activeRamp()` (the
 doze alarm's `DOZE_RAMP`, else `RAMP`), `stepOfRing`, `firstRingOfStep`,
 `pctOfStep`, `displayPhase(pct)` (0 < 40 %, 1 < 65 %, 2 < 100 %, 3 = 100 %);
 `firstStepAtLeast(pct)` is `(:debug)`, left to the tests. Derived thresholds,
-never magic ring numbers: `BACKLIGHT_FROM_PCT` 50 (RAMP step 9 = ring 13:
+never magic ring numbers: `BACKLIGHT_FROM_PCT` 50 (RAMP step 10 = ring 14:
 first two bright rings, then every 6th, `_brightRings`).
 `getCurrentPhase()` = display phase of the next ring,
 `getLastRingPhase()` = of the ring just felt (0 before the first),
 `isFullIntensity()` = the last ring was 100 %. Owner constraints, tested in
 `testAlarm_rampIsGentleAndMonotonic`, `testAlarm_rampStartsAtTheCalibratedPulse`,
-`testAlarm_noStepBiggerThanIn110`, `testAlarm_maximumAndUpperRampUnchanged`
-and `testAlarm_fullReachedInTime`: >= 8 steps below full; the first step
-and the first ring the calibrated pulse (7 %, one pulse of 120 ms); intensity
-/ pulse / pulses non-decreasing, and no step rising more than the 1.1.0
-ramp's largest (15 points, 63 -> 78 %); wait non-increasing; the maximum
-(100 %) and every row from 22 % up as in 1.1.0; full strength at 100-178 s
-(168; the upper limit is 1.1.0's 118 s + 60 s), then 3 min at full 5 s
-apart, then 30 s persistent. The limits are computed from the 1.1.0 table
-kept in the test (`alarmHelperRamp110`), never written in. Checked by
-mutation on 2026-10-06 (fenix847mm): the first step put back to 22 % fails
-`rampStartsAtTheCalibratedPulse` (and `rampIsGentleAndMonotonic`); the new
+`testAlarm_everyStepRisesInProportion`, `testAlarm_noStepBiggerThanIn110`,
+`testAlarm_maximumAndUpperRampUnchanged` and `testAlarm_fullReachedInTime`:
+>= 8 steps below full; the first step and the first ring the calibrated
+pulse twice (7 %, two pulses of 120 ms, 400 ms apart); intensity / pulse /
+pulses non-decreasing,
+every step 8-30 % above the one before it from the first step to full
+strength (the persistent phase repeats 100 %, it is not a step up), and no
+step rising more than the 1.1.0 ramp's largest (15 points, 63 -> 78 %); wait
+non-increasing; the maximum (100 %) and every row from 22 % up as in 1.1.0;
+full strength at 100-178 s (178; the upper limit is 1.1.0's 118 s + 60 s),
+then 3 min at full 5 s apart, then 30 s persistent. The limits are computed
+from the 1.1.0 table kept in the test (`alarmHelperRamp110`), never written
+in; 8 and 30 % are the owner's own numbers. Checked by mutation on
+2026-10-06 (fenix847mm): the first step put back to 22 % fails
+`rampStartsAtTheCalibratedPulse` (and `rampIsGentleAndMonotonic`), and so
+does the first step back to one pulse ("the first step is 7 % x 120 ms x
+1"); the new
 steps waiting 13 s (full at 183 s) fail `fullReachedInTime` ("later than the
 limit of 178 s"); 78 -> 77 % in `DOZE_RAMP` fails only
-`testStay_dozeAlarmAndNudgeAsIn110`. `getVibePattern(row)` builds `pulses`
-pulses with `gap` pauses (<= 8 profiles). Tune the table only inside these
-constraints; the "Test alarm" preview (W6) plays every step once.
+`testStay_dozeAlarmAndNudgeAsIn110`; 10 % put back after 7 % fails only
+`everyStepRisesInProportion` ("step 1 rises 43 % (7 -> 10 %)").
+`getVibePattern(row)` builds `pulses` pulses with `gap` pauses (<= 8
+profiles). Tune the table only inside these constraints, and feel it with
+"Test alarm": the preview plays the same rings as the alarm in a compressed
+rhythm - each step's ring once, 3 s apart, no persistent phase, 45 s in all
+- and each step's screen shows the moment that step starts in the real
+alarm, m:ss from the alarm's first ring (`getPreviewAlarmSec()`: the waits
+of every ring before it; 0:00 to 2:58).
+`testAlarm_previewShowsWhenEachStepStartsInTheAlarm` holds what the screen
+shows to an alarm rung ring by ring with the waits it schedules itself
+(`alarmHelperStepStartSecs`); the second taken from the preview's own
+rhythm (3 s a step), in `getPreviewAlarmSec()` or in the view, fails only
+that test, on 14 of the 15 steps (2026-10-06, fenix847mm).
 
 **Stay Awake's own copy (owner, 2026-10-06).** The doze alarm climbs
 `DOZE_RAMP` from its first row - the 1.1.0 ramp's steps 5-9, copied: 63,
@@ -504,7 +531,7 @@ perceptible phases.
 dark (no backlight); a raised wrist sees a calm alarm screen ("Time to wake up",
 orange title, grey text, no flashing). The view flashes (red fill, white on the
 1-bit Instinct) and switches to "WAKE UP!" only when
-`AlarmManager.isFullIntensity()` (the last ring was at 100 %, ring 21 at 168 s).
+`AlarmManager.isFullIntensity()` (the last ring was at 100 %, ring 22 at 178 s).
 The Stay Awake doze alarm (its own table, from 63 %) is loud from the start
 but flashes only at full strength too.
 
@@ -719,13 +746,16 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   the subtitle "Feel the wake-up ramp" is gone - the firmware cut it short on
   enduro3, fenix8solar47mm and fenix8solar51mm, clipped it on the Instinct,
   and the preview screen says it anyway. Selecting it calls
-  `view.startPreview()` -> `AlarmManager.startPreview()`: every RAMP step but
-  the persistent row once, 3 s apart (`_previewTimer`, `onPreviewTick`), the
-  same backlight rule, no persistent phase, ends by itself after the last
-  step (`getPreviewStep()` 1-based / `getPreviewSteps()` / `getPreviewPct()`
-  for the screen). The preview screen (`previewLayout`:
-  "ALARM PREVIEW", "Step N of 14", "NN%", "Feel the wake-up ramp", footer "BACK
-  to stop") replaces the start screen while `isPreviewing()`; BACK
+  `view.startPreview()` -> `AlarmManager.startPreview()`: the same rings as
+  the alarm in a compressed rhythm - every RAMP step but the persistent row
+  once, 3 s apart (`_previewTimer`, `onPreviewTick`), the same backlight
+  rule, no persistent phase - ending by itself after the last step
+  (`getPreviewStep()` 1-based / `getPreviewSteps()` / `getPreviewPct()` /
+  `getPreviewAlarmSec()` for the screen). The preview screen (`previewLayout`:
+  "ALARM PREVIEW", "Step N of 15", "NN%", the real moment "M:SS into the
+  real alarm" - KEEP, with "... into the alarm", "... into alarm" and "At
+  M:SS" for narrower screens - "Feel the wake-up ramp", footer "BACK to
+  stop") replaces the start screen while `isPreviewing()`; BACK
   (`view.stopPreview()`) or the end returns to the start screen, every other
   key and tap is swallowed meanwhile. Never during a nap (`view.startPreview`
   refuses while `_started`); `startAlarm`/`startDozeAlarm` refuse while
