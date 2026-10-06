@@ -141,11 +141,14 @@ the script.
 | `tools/matrix.sh` (or `tools/matrix.sh build`) | compiles the debug build for every product |
 | `tools/matrix.sh build --release` | compiles the release build (`-r`), the one the store package is made of |
 | `tools/matrix.sh test` | builds with `-t` and runs the whole suite on each device in the simulator |
+| `tools/matrix.sh test --protocol` | the same on the protocol set only, then checks the set itself (see [Every pull request](#every-pull-request)) |
 | `tools/matrix.sh list` | prints the device ids read from the manifest, one per line |
+| `tools/matrix.sh list --protocol` | prints the protocol set |
 
 Device ids after the mode limit the run to those products
 (`tools/matrix.sh test fenix847mm instinct3solar45mm`); every id must appear in
-the manifest, and the order stays alphabetical.
+the manifest, and the order stays alphabetical. `--protocol` takes the
+protocol set instead, and no ids.
 
 ### Strict and permissive
 
@@ -209,7 +212,7 @@ the first device.
 | Code | Meaning |
 |------|---------|
 | `0` | every device passed; devices skipped in test mode are named in the summary |
-| `1` | a device failed - its output was printed and the run stopped at that device |
+| `1` | a device failed - its output was printed and the run stopped at that device; or a test run over the whole protocol set found it without a product for one of the popup fonts |
 | `2` | the run never started: bad usage, or no manifest / product list / SDK / developer key |
 
 ### Environment
@@ -233,11 +236,11 @@ cannot break one of them while the other keeps working.
 
 ### Every pull request
 
-Two commands, together under seven minutes on a warm SDK:
+Two commands, together about eight minutes on a warm SDK:
 
 ```bash
 tools/matrix.sh build                          # strict, every product in the manifest, ~2 min
-tools/matrix.sh test fenix847mm instinct3solar45mm fr255s venu3s vivoactive5
+tools/matrix.sh test --protocol                # the suite on the protocol set, ~6 min
 ```
 
 The build is strict and covers **every** product, because a resource or a text
@@ -246,7 +249,31 @@ then runs on the protocol set: five devices that between them cover what the
 rest would: the largest AMOLED at 454 px (`fenix847mm`), the 176 px 1-bit
 octagon with a subscreen lens (`instinct3solar45mm`), the smallest colour
 screen at 218 px MIP (`fr255s`), a small AMOLED (`venu3s`), and a watch with no
-`Attention.playTone` at all (`vivoactive5`).
+`Attention.playTone` at all whose popups are drawn in TINY (`vivoactive6`).
+The set is defined once, as `protocol_set` in `tools/matrix.sh`, and
+`tools/matrix.sh list --protocol` prints it. A pull request that changes
+the start screen's title adds `vivoactive5` to that run, the only product
+whose title steps down to XTINY:
+`tools/matrix.sh test $(tools/matrix.sh list --protocol) vivoactive5`.
+
+**Both popup fonts.** Every popup is drawn in the exit popup's font, the
+largest at which "Press BACK again to exit" fits across the middle of the
+display: TINY on some products (14 of the 43 on 2026-10-05), XTINY on the
+rest. A change that moved every popup to one of them fails only where the
+other is the exit font, so the set holds a product of each: `vivoactive6`
+for TINY, the other four for XTINY. Until 2026-10-05 the fifth product was
+`vivoactive5` - the same 390 px round AMOLED without `Attention.playTone`,
+but XTINY like the rest - and moving every popup to XTINY passed every pull
+request. Now the run checks the set itself:
+`testOverlap_exitPopupFontForTheProtocolSet` prints the exit popup's font
+of the product it runs on, recomputed by the test's own geometry and never
+read from the view, and a test run that covered the whole set fails unless
+TINY and XTINY are both among them. The failure names the product the set
+holds for the missing font (`protocol_fonts`, beside `protocol_set`).
+Checked by mutation on 2026-10-05: moving every popup to XTINY failed four
+OverlapTest functions on `vivoactive6` (172 popup screens), and taking
+`vivoactive6` out of the set failed the run with "no product of it draws
+the popups in TINY: vivoactive6, its product for TINY, is not in it".
 
 ### Pull requests that touch text, colours or layout
 
@@ -273,8 +300,8 @@ has its budget.
 **Per pull request - under 15 minutes.**
 
 - `tools/matrix.sh build`, strict, on every product of the manifest.
-- `tools/matrix.sh test` on the protocol set, plus the watch of the user
-  report the pull request answers, if there is one.
+- `tools/matrix.sh test --protocol`, the suite on the protocol set, plus the
+  watch of the user report the pull request answers, if there is one.
 - Screenshots of instant states only - anything a key press reaches: the
   start screen, its menu, a popup, the alarm preview - on at most three
   representatives of the class table below. All 21 only when a screen the
@@ -334,7 +361,7 @@ the reported device where the class has one, else the class's base model.
 | Forerunner | 454 round | `fr965` |
 | Venu | 390 round | `venu3s` |
 | Venu | 454 round | `venu3` |
-| vívoactive | 390 round | `vivoactive5` |
+| vívoactive | 390 round | `vivoactive6` |
 | Instinct | 176 semi-octagon | `instinct3solar45mm` |
 | Instinct | 390 round | `instinct3amoled45mm` |
 | Instinct | 416 round | `instinct3amoled50mm` |
@@ -444,7 +471,8 @@ not the number of assertions, and five files multiply what one function checks:
   sweep runs the same functions once per product in the manifest;
 - `OverlapTest.mc` does the same, and checks each screen in both clock formats,
   with a full and a low battery, and every popup and armed footer it can carry -
-  some four hundred screens per device in six functions;
+  some four hundred screens per device in six functions, plus a seventh that
+  only measures the exit popup's font for the protocol-set check;
 - `InvariantTest.mc` runs a handful of fixed seeds per function and asserts
   after **every simulated second** of every random nap;
 - `QuietOnsetTest.mc` loops each scenario over alarm types 0, 1 and 2, and once
@@ -464,7 +492,7 @@ can be carrying more assertions than a file with thirty functions.
 | `SummaryTest.mc` | Finish and cancel from every state, the statistics (planned completion, sleep efficiency, actual sleep, wake episodes, average and minimum sleep HR), that they freeze once the nap has ended, and `RingMath`'s angle maths for the progress ring. |
 | `RegressionTest.mc` | One test per confirmed review finding: HR-plateau wake ping-pong, the sleep-HR fold exclusion, frozen settings and clamping, the app lifecycle (`onInactive`/`onActive`), the alarm channel fallback, the per-phase vibration patterns, `ringNow()`, and the two-press guard. These exist so that a fixed bug cannot come back quietly. |
 | `LayoutTest.mc` | Every screen state - start, calibrating, monitoring, sleeping, alarm, summary, Stay Awake, peek card, alarm preview - laid out against a `Dc` of the running device, each also with the popup it can show over it. It asserts that no text is truncated, that nothing leaves the screen or the round chord, and that the layout stays inside its work budget, because every screen redraws at 1 Hz and the Instinct watchdog is 240k bytecodes per event. Its inputs are its own: it forces the battery level and pins the clock, so a screen never passes or fails on what the simulator happened to be that day. |
-| `OverlapTest.mc` | Nothing drawn over anything else, and nothing outside the display. Every screen - start, calibrating, monitoring, asleep, awake after a wake, the peek card, both alarms calm and at full strength, the summaries, Stay Awake from calibrating to its summary, the alarm preview, and every popup over them - is built by the real view and taken apart into the boxes it draws, including what the view draws outside the layout: the start screen's clock and arrows, the clock in the Instinct lens (`testScreenBoxes`). No box may overlap another, and each must lie inside the round chord at its own rows (inside the summary ring where it is drawn), inside the Instinct's octagon and clear of its lens. Each screen is checked in 12 and 24 h, with a full and a low battery, the clock at the widest time of day the device draws and the content at its longest (a 3-digit heart rate, the 120-minute nap, 12 wakes, 12 dozes, a 10-hour session). It exists because `LayoutTest` checked each line against the display but never two things against each other: the start screen's clock was drawn over the "POWER NAP" title on 25 of the 43 products, the fēnix 7 among them, and every test passed. The popup is a layer over the screen - a sheet from the top edge of one of its rows down past the bottom edge - and is checked as one: its text inside the sheet and inside the display, and on every screen that shows one the three rules it is placed by. It covers whole rows only (its top edge is a row's top edge and cuts none, and it starts no higher than its text needs); its font is the exit popup's on every product; and the next longer text would fit under no row in that font, not even on two lines. Those rules exist because the centred box it replaced cut the fēnix 8's countdown, the Instinct's "Wake at" and the FR255S's "Time to wake up" in half. The "Test alarm" menu is drawn by the firmware and has no boxes - the contact sheets of a layout PR are its check. |
+| `OverlapTest.mc` | Nothing drawn over anything else, and nothing outside the display. Every screen - start, calibrating, monitoring, asleep, awake after a wake, the peek card, both alarms calm and at full strength, the summaries, Stay Awake from calibrating to its summary, the alarm preview, and every popup over them - is built by the real view and taken apart into the boxes it draws, including what the view draws outside the layout: the start screen's clock and arrows, the clock in the Instinct lens (`testScreenBoxes`). No box may overlap another, and each must lie inside the round chord at its own rows (inside the summary ring where it is drawn), inside the Instinct's octagon and clear of its lens. Each screen is checked in 12 and 24 h, with a full and a low battery, the clock at the widest time of day the device draws and the content at its longest (a 3-digit heart rate, the 120-minute nap, 12 wakes, 12 dozes, a 10-hour session). It exists because `LayoutTest` checked each line against the display but never two things against each other: the start screen's clock was drawn over the "POWER NAP" title on 25 of the 43 products, the fēnix 7 among them, and every test passed. The popup is a layer over the screen - a sheet from the top edge of one of its rows down past the bottom edge - and is checked as one: its text inside the sheet and inside the display, and on every screen that shows one the three rules it is placed by. It covers whole rows only (its top edge is a row's top edge and cuts none, and it starts no higher than its text needs); its font is the exit popup's on every product; and the next longer text would fit under no row in that font, not even on two lines. Those rules exist because the centred box it replaced cut the fēnix 8's countdown, the Instinct's "Wake at" and the FR255S's "Time to wake up" in half. The "Test alarm" menu is drawn by the firmware and has no boxes - the contact sheets of a layout PR are its check. One function checks nothing on the device: `testOverlap_exitPopupFontForTheProtocolSet` prints the exit popup's font, recomputed by the test's own geometry, and `tools/matrix.sh` fails a run over the protocol set that does not show both TINY and XTINY (see [Every pull request](#every-pull-request)). |
 | `StayAwakeTest.mc` | Stay Awake mode: no deadline and no timed alarm at all, the doze rules measured against the rolling HR reference rather than the calibration baseline, the single nudge at 3 still minutes, `noteUserAwake()` ending the still run, and the return to the guard after a doze alarm. |
 | `DelegateTest.mc` | The real delegate, view and detector wired together and driven through `handleKey()`/`handleTap()` - the code paths `onKey` and `onTap` run. It owns the key model: BACK walks back one level at a time, taking a pair wherever that step would end a nap, an alarm or a Stay Awake session and one press where nothing is lost; only the start screen's BACK x2 exits; START x2 stops; the 1.5 s input lock never traps a burst of presses; and a first press made on one screen never pairs with a second made on another, nor a START with a BACK. Two of its tests walk [the BACK contract](#the-back-contract) over **every** screen in `BACK_SCREENS` rather than one path at a time, so a screen added later cannot quietly get a BACK of its own. |
 | `QuietOnsetTest.mc` | The QUIET ONSET RULE, with the real `AlarmManager`: nothing vibrates, sounds or lights up at onset, at a wake, at re-entry, at the end of calibration, on a sensor dropout or on resume. Every second of every scenario asserts that the manager's blocked-delivery counter is still zero. The rule is non-negotiable, so it is guarded structurally rather than by review. |

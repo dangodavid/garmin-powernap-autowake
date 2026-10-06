@@ -178,7 +178,8 @@ Ctrl+Shift+P -> Monkey C: Run Tests
 Command line, one or more devices (the simulator is started and restarted as needed; one line per device):
 
 ```bash
-tools/runtests.sh fenix847mm instinct3solar45mm fr255s venu3s vivoactive5
+tools/matrix.sh test --protocol                 # the protocol set, what every pull request runs
+tools/runtests.sh fenix847mm instinct3solar45mm # any devices you name
 tools/matrix.sh test                            # every product in the manifest
 ```
 
@@ -188,7 +189,7 @@ The suite under `test/` covers calibration and onset, wake episodes and re-entry
 - **Negative tests** feed absurd heart rates, missing accelerometer data, a wall clock stepping back, lifecycle calls in every state and wrong-type settings.
 - **Trace replays** (`test/TraceTest.mc`) replay recorded naps minute by minute. To record one: install a debug build (no `-r`), create an empty `GARMIN/APPS/LOGS/PowerNap.TXT` on the watch, nap, and copy the file back; each minute line becomes one row of a replay test. The trace also proves the app was silent: it logs `onset`, `reentry`, `wake`, `alarm,<reason>` and `nudge` with the seconds since start, so an `onset` line without an `alarm` or `nudge` line at the same time means the app did not ring; a vibration felt at that moment came from the watch itself (an abnormal-heart-rate alert, a relax reminder, a phone notification, Garmin's own nap detection).
 
-The layout tests measure the real device fonts, so run the suite on a few screen sizes (e.g. `fenix847mm`, `venu3s`, `fenix7s`, `fr255s`, `instinct3solar45mm`).
+The layout tests measure the real device fonts, so run the suite on several screen sizes: the protocol set (`tools/matrix.sh test --protocol`) covers 176 to 454 px, the 1-bit screen and both fonts the popups are drawn in.
 
 ---
 
