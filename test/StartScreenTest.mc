@@ -1,6 +1,7 @@
 import Toybox.Test;
 import Toybox.Lang;
 import Toybox.Application;
+import Toybox.Graphics;
 import Toybox.Time;
 import Toybox.WatchUi;
 
@@ -17,8 +18,9 @@ import Toybox.WatchUi;
 //   * The duration a nap started with is remembered (Application.Storage)
 //     and opens the next session, unless the phone setting changed since.
 //   * UP/DOWN/START/BACK run the whole flow without the touchscreen.
-//   * A warning never locks START: vibration switched off in the watch
-//     settings is announced on the screen, and the nap still starts.
+//   * With vibration switched off in the watch settings START (or a tap
+//     that starts) asks once more, and only a second press inside the same
+//     4 s window begins the nap; with vibration on it begins at once.
 //
 // The detector's clock is pinned (testPinClock) where the second within the
 // minute matters, so these tests are exact. Helpers from DelegateTest
@@ -412,33 +414,140 @@ function testStart_buttonsRunTheWholeFlow(logger as Test.Logger) as Boolean {
     return ok;
 }
 
-//! "Vibration off" is a warning, not a lock (the setting is the wearer's
-//! choice): with vibration switched off in the watch settings, START begins
-//! the nap with the duration on the screen, and so does a tap on the number.
+//! One press that begins a nap: `way` 0 = START, 1 = a tap on the number,
+//! 2 = a tap on the top row of the popup's sheet (where, with no popup, a
+//! tap would shorten the nap by 5 minutes).
+(:debug)
+function startHelperBegin(r as DelegateRig, dc as Graphics.Dc, way as Number) as Void {
+    if (way == 0) {
+        r.key(WatchUi.KEY_ENTER);
+        return;
+    }
+    if (way == 1) {
+        var zones = r.view.testMeasureTapZones(dc);
+        r.delegate.handleTap((zones[0] + zones[1]) / 2);
+        return;
+    }
+    var box = r.view.testBuildLayout(dc).getBannerBox();
+    r.delegate.handleTap((box != null) ? (box as Array<Number>)[1] + 1 : 0);
+}
+
+//! The nap the rig started has the duration it was set up with (Stay Awake
+//! for 0).
+(:debug)
+function startHelperBegan(r as DelegateRig, minutes as Number) as Boolean {
+    return r.view.isStarted()
+        && ((minutes == 0) ? r.detector.isStayAwake() : r.detector.getNapDurationMin() == minutes);
+}
+
+//! The start screen is as it was before the first press: no nap, the same
+//! duration, and no popup.
+(:debug)
+function startHelperUntouched(r as DelegateRig, dc as Graphics.Dc, minutes as Number) as Boolean {
+    return !r.view.isStarted() && r.view.testGetPendingDuration() == minutes && !r.view.testIsHintShowing()
+        && r.view.testBuildLayout(dc).getBannerText() == null;
+}
+
+//! With vibration switched off in the watch settings (the value of
+//! DeviceSettings.vibrateOn, simulated here) the alarm would not be felt, so
+//! for every duration and Stay Awake:
+//!   * the first press that would begin the nap - START or a tap on the
+//!     number - starts nothing and shows the popup ("Vibration off. START
+//!     again to begin anyway", the verb TAP on a touch watch);
+//!   * a second press inside the same 4 s window begins the nap: START, a tap
+//!     on the number, or a tap on the popup itself, which never shortens the
+//!     nap even where the popup covers the "-5 min" zone;
+//!   * without one the popup goes when the window ends, the start screen is
+//!     as it was, and the next press only asks again;
+//!   * a BACK in between re-arms for itself: no exit, no nap.
+//! With vibration on the first press begins the nap, as ever.
 (:test)
-function testStart_vibrationOffStillStarts(logger as Test.Logger) as Boolean {
+function testStart_vibrationOffAsksBeforeStarting(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
     var ok = true;
-    for (var way = 0; way < 2; way++) {
-        var r = new DelegateRig(30);
-        r.view.testForceVibrateOn(false);
-        var how = (way == 0) ? "START" : "a tap on the number";
-        try {
-            if (way == 0) {
-                r.key(WatchUi.KEY_ENTER);
-            } else {
-                var zones = r.view.testMeasureTapZones(dc);
-                r.delegate.handleTap((zones[0] + zones[1]) / 2);
+    var durations = [5, 30, 120, 0] as Array<Number>;
+    var ways = ["START", "a tap on the number", "a tap on the popup"] as Array<String>;
+    for (var i = 0; i < durations.size() && ok; i++) {
+        var dur = durations[i];
+        for (var w = 0; w < ways.size() && ok; w++) {
+            var name = "start " + dur + ", vibration off, then " + ways[w];
+            var r = new DelegateRig(dur);
+            r.view.testForceVibrateOn(false);
+            try {
+                startHelperBegin(r, dc, (w == 2) ? 0 : w);
+                var shown = r.view.testBuildLayout(dc).getBannerText();
+                var texts = r.view.startAnywayTexts();
+                var known = false;
+                for (var k = 0; k < texts.size() && shown != null; k++) {
+                    if ((shown as String).equals(ScreenLayout.unmarked(texts[k]))) { known = true; }
+                }
+                if (r.view.isStarted() || !r.view.testIsHintShowing() || !known
+                    || r.view.testGetPendingDuration() != dur) {
+                    logger.debug(name + ": the first press must only ask, popup '" + shown + "', started "
+                        + r.view.isStarted());
+                    ok = false;
+                }
+                r.view.testAdvanceMs(3000);
+                startHelperBegin(r, dc, w);
+                if (!startHelperBegan(r, dur)) {
+                    logger.debug(name + " within 4 s: the nap must begin");
+                    ok = false;
+                }
+            } catch (e instanceof Lang.Exception) {
+                logger.debug(name + ": " + e.getErrorMessage());
+                ok = false;
             }
-            if (!r.view.isStarted() || r.detector.getNapDurationMin() != 30) {
-                logger.debug("vibration off: " + how + " must still begin the 30 min nap");
+            r.cleanup();
+        }
+
+        // The window runs out: nothing begins, and the next press asks again.
+        var r = new DelegateRig(dur);
+        r.view.testForceVibrateOn(false);
+        try {
+            r.key(WatchUi.KEY_ENTER);
+            r.view.testAdvanceMs(4100);
+            if (!startHelperUntouched(r, dc, dur)) {
+                logger.debug("start " + dur + ", vibration off: after 4 s the start screen must be as it was");
+                ok = false;
+            }
+            r.key(WatchUi.KEY_ENTER);
+            if (r.view.isStarted() || !r.view.testIsHintShowing()) {
+                logger.debug("start " + dur + ", vibration off: a press after the window must only ask again");
+                ok = false;
+            }
+            // A BACK in between re-arms for itself.
+            r.key(WatchUi.KEY_ESC);
+            r.key(WatchUi.KEY_ENTER);
+            if (r.view.isStarted() || r.delegate.testExitRequested()) {
+                logger.debug("start " + dur + ", vibration off: START, BACK, START must neither begin nor exit");
+                ok = false;
+            }
+            r.key(WatchUi.KEY_ENTER);
+            if (!startHelperBegan(r, dur)) {
+                logger.debug("start " + dur + ", vibration off: the START pair after a BACK must begin the nap");
                 ok = false;
             }
         } catch (e instanceof Lang.Exception) {
-            logger.debug("vibration off, " + how + ": " + e.getErrorMessage());
+            logger.debug("start " + dur + ", vibration off: " + e.getErrorMessage());
             ok = false;
         }
         r.cleanup();
+
+        // Vibration on: one press begins the nap, as ever.
+        for (var w = 0; w < 2 && ok; w++) {
+            var on = new DelegateRig(dur);
+            try {
+                startHelperBegin(on, dc, w);
+                if (!startHelperBegan(on, dur) || on.view.testIsHintShowing()) {
+                    logger.debug("start " + dur + ", vibration on: " + ways[w] + " must begin the nap at once");
+                    ok = false;
+                }
+            } catch (e instanceof Lang.Exception) {
+                logger.debug("start " + dur + ", vibration on: " + e.getErrorMessage());
+                ok = false;
+            }
+            on.cleanup();
+        }
     }
     return ok;
 }

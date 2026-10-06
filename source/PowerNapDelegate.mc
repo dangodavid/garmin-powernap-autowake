@@ -30,9 +30,11 @@ import Toybox.System;
 //! the same pair and the same window as the exit on the start screen.
 //!
 //!   Screen                         BACK               START              UP/DOWN
-//!   Start                          x2: exit; 1st:     start nap          +/- 5 min
-//!                                  "Press BACK again
-//!                                  to exit"
+//!   Start                          x2: exit; 1st:     start nap; with    +/- 5 min
+//!                                  "Press BACK again  vibration off x2,
+//!                                  to exit"           1st: "Vibration off.
+//!                                                     START again to begin
+//!                                                     anyway"
 //!     (MENU / long press: menu with "Test alarm"; BACK closes the menu and
 //!      ends the preview, back to the start screen: one press, nothing lost)
 //!   Calibrating                    end the nap,       x2: stop, summary  peek card
@@ -125,7 +127,7 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
             } else if (action < 0) {
                 _view.adjustDuration(-5);
             } else {
-                _view.startNap();
+                startOrAsk();
             }
             return true;
         }
@@ -230,7 +232,7 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
                 return true;
             }
             if (key == WatchUi.KEY_ENTER) {
-                _view.startNap();
+                startOrAsk();
                 return true;
             }
             if (key == WatchUi.KEY_ESC) {
@@ -309,6 +311,21 @@ class PowerNapDelegate extends WatchUi.InputDelegate {
     }
 
     // -- Private helpers ------------------------------------------------
+
+    //! START, or a tap that starts (the number, its label, the hint, the
+    //! popup's sheet): begin the nap. With vibration switched off in the
+    //! watch settings the alarm would not be felt, and the app cannot switch
+    //! it on, so the first press only asks ("Vibration off. START again to
+    //! begin anyway") and a second one inside the same 4 s window begins the
+    //! nap; without it the start screen stays as it was. A START and a tap
+    //! form a pair, a BACK in between re-arms for itself.
+    private function startOrAsk() as Void {
+        if (!_view.vibrationOff() || _view.pressConfirm(ConfirmPress.CONTEXT_START)) {
+            _view.startNap();
+        } else {
+            _view.showHint(_view.startAnywayTexts());
+        }
+    }
 
     //! Stop the ringing. A nap then shows its summary; Stay Awake mode goes
     //! back on guard.

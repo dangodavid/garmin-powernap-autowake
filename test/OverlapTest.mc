@@ -47,7 +47,12 @@ import Toybox.WatchUi;
 //     "Press BACK again to exit" fits across the middle of the display;
 //   * its text is the longest variant that fits, on one line or on two
 //     broken at a space: the next longer one fits under no row of the
-//     screen in that font, not even on two lines.
+//     screen in that font, not even on two lines;
+//   * a text that marks its preferred break (ScreenLayout.BREAK_MARK)
+//     breaks there, under the lowest row where both of those lines fit,
+//     whenever they fit under any row; otherwise at the space that keeps
+//     the lines most even among those that fit under its top edge - where
+//     every unmarked text breaks, as it always has.
 // "Fits" is the layout's own measure: each line inside the visible width
 // at its ink rows, 6 px clear of the edge and of the Instinct's lens.
 //
@@ -75,6 +80,9 @@ const OVERLAP_SESSION_HOUR = 10;
 //! lays it out and with the debug label a debug build adds, each also with
 //! the exit popup over it, and each with either warning, both or neither:
 //! vibration on and off in the watch settings, a full and a low battery.
+//! With vibration off, also with the popup the first START shows there
+//! ("Vibration off. START again to begin anyway"), with a full and a low
+//! battery.
 (:test)
 function testOverlap_startScreen(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
@@ -91,14 +99,88 @@ function testOverlap_startScreen(logger as Test.Logger) as Boolean {
         for (var i = 0; i < durations.size(); i++) {
             v.testSetPendingDuration(durations[i]);
             var name = "start " + durations[i] + " min" + build;
-            ok = overlapHelperStart(name, v, d, dc, times, null, logger) && ok;
+            ok = overlapHelperStart(name, v, d, dc, times, null, false, logger) && ok;
             v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
             v.showHint(PowerNapView.HINT_EXIT);
-            ok = overlapHelperStart(name + " + exit popup", v, d, dc, times, PowerNapView.HINT_EXIT, logger) && ok;
+            ok = overlapHelperStart(name + " + exit popup", v, d, dc, times, PowerNapView.HINT_EXIT, false, logger)
+                && ok;
+            v.testAdvanceMs(4100);
+            v.pressConfirm(ConfirmPress.CONTEXT_START);
+            v.showHint(v.startAnywayTexts());
+            ok = overlapHelperStart(name + " + start popup", v, d, dc, times, v.startAnywayTexts(), true, logger)
+                && ok;
             v.testAdvanceMs(4100);
         }
     }
     v.onHide();
+    return ok;
+}
+
+//! The popup of a first START with vibration off ("Vibration off. START
+//! again to begin anyway") marks its preferred break after "Vibration
+//! off.". On the start screen, for every duration and both batteries,
+//! every rule a popup is placed by holds (overlapHelperPopup: its row, its
+//! font, its longest text, and the break at the mark from the lowest row
+//! where both of its lines fit); the same texts without the mark break as
+//! every unmarked popup does, most evenly under the row they need. Prints
+//! how many of the screens broke at the mark, for the record.
+(:test)
+function testOverlap_startPopupBreaksAtItsMark(logger as Test.Logger) as Boolean {
+    var dc = layoutHelperDc();
+    var d = new SleepDetector(null);
+    var v = layoutHelperStartView(d, new AlarmManager());
+    v.testHideDebugLabel();
+    v.testForceVibrateOn(false);
+    var marked = v.startAnywayTexts();
+    var plain = [] as Array<String>;
+    for (var i = 0; i < marked.size(); i++) {
+        plain.add(ScreenLayout.unmarked(marked[i]));
+    }
+    var font = overlapHelperPopupFont(dc);
+    var durations = [5, 30, 120, 0] as Array<Number>;
+    var batteries = [100, OVERLAP_LOW_BATTERY] as Array<Number>;
+    var ok = true;
+    var atMark = 0;
+    var screens = 0;
+    for (var b = 0; b < batteries.size(); b++) {
+        v.testForceBattery(batteries[b]);
+        for (var i = 0; i < durations.size(); i++) {
+            v.testSetPendingDuration(durations[i]);
+            for (var withMark = 1; withMark >= 0; withMark--) {
+                var texts = (withMark == 1) ? marked : plain;
+                v.pressConfirm(ConfirmPress.CONTEXT_START);
+                v.showHint(texts);
+                var what = "start " + durations[i] + ", battery " + batteries[b]
+                    + ((withMark == 1) ? ", marked" : ", unmarked");
+                ok = overlapHelperPopup(what, v.testScreenBoxes(dc), texts, v, dc, logger) && ok;
+                var layout = v.testBuildLayout(dc);
+                var drawn = layout.testBannerLines();
+                var box = layout.getBannerBox();
+                var shown = layout.getBannerText();
+                if (withMark == 0 && drawn.size() == 2 && box != null && shown != null) {
+                    // No mark: the most even break that fits under its row.
+                    var want = overlapHelperPopupBreak(shown as String, (box as Array<Number>)[1], font, dc);
+                    if (want == null || !(want[0] as String).equals(drawn[0]) || !(want[1] as String).equals(drawn[1])) {
+                        logger.debug(overlapHelperDevice() + " " + what + ": breaks as '" + drawn[0] + "' / '"
+                            + drawn[1] + "', not most evenly");
+                        ok = false;
+                    }
+                }
+                if (withMark == 1 && drawn.size() == 2) {
+                    screens += 1;
+                    for (var k = 0; k < marked.size(); k++) {
+                        var mark = marked[k].find(ScreenLayout.BREAK_MARK);
+                        if (mark != null && (marked[k].substring(0, mark as Number) as String).equals(drawn[0])) {
+                            atMark += 1;
+                            break;
+                        }
+                    }
+                }
+                v.testAdvanceMs(4100);
+            }
+        }
+    }
+    System.println("START_POPUP_BREAK at the mark on " + atMark + " of " + screens + " screens");
     return ok;
 }
 
@@ -439,17 +521,19 @@ function overlapHelperAlarm(name as String, d as SleepDetector, dc as Graphics.D
 
 // -- Inputs ---------------------------------------------------------------------
 
-//! The start screen with vibration on and off in the watch settings, in
-//! both formats and with both batteries - so with no warning, either one or
-//! both - its clock and its "Alarm by" promise both at the widest time of
-//! day: the detector is pinned so that the promise lands on it. `hint`: the
-//! texts of the popup showing over it, or null.
+//! The start screen with vibration on and off in the watch settings (only
+//! off: `vibrationOffOnly`), in both formats and with both batteries - so
+//! with no warning, either one or both - its clock and its "Alarm by"
+//! promise both at the widest time of day: the detector is pinned so that
+//! the promise lands on it. `hint`: the texts of the popup showing over it,
+//! or null.
 (:debug)
 function overlapHelperStart(name as String, v as PowerNapView, d as SleepDetector, dc as Graphics.Dc,
-                            times as Array<Number>, hint as Array<String>?, logger as Test.Logger) as Boolean {
+                            times as Array<Number>, hint as Array<String>?, vibrationOffOnly as Boolean,
+                            logger as Test.Logger) as Boolean {
     var nap = v.testGetPendingDuration();
     var ok = true;
-    for (var vib = 0; vib < 2; vib++) {
+    for (var vib = vibrationOffOnly ? 1 : 0; vib < 2; vib++) {
         v.testForceVibrateOn(vib == 0);
         var vibName = name + ((vib == 0) ? "" : ", vibration off");
         for (var f = 0; f < 2; f++) {
@@ -660,7 +744,7 @@ function overlapHelperPopup(what as String, boxes as Array<Array>, hint as Array
     var text = layout.getBannerText();
     var index = -1;
     for (var i = 0; i < hint.size(); i++) {
-        if (text != null && hint[i].equals(text as String)) {
+        if (text != null && ScreenLayout.unmarked(hint[i]).equals(text as String)) {
             index = i;
         }
     }
@@ -669,14 +753,15 @@ function overlapHelperPopup(what as String, boxes as Array<Array>, hint as Array
         return false;
     }
     if (index > 0) {
-        var at = overlapHelperPopupLowest(hint[index - 1], rows, font, dc);
+        var longer = ScreenLayout.unmarked(hint[index - 1]);
+        var at = overlapHelperPopupLowest(longer, rows, font, dc);
         if (at >= 0) {
-            logger.debug(where + "'" + hint[index - 1] + "' would fit under the row at " + at
+            logger.debug(where + "'" + longer + "' would fit under the row at " + at
                 + " in the same font, the popup shows '" + text + "'");
             ok = false;
         }
     }
-    var lowest = overlapHelperPopupLowest(text as String, rows, font, dc);
+    var lowest = overlapHelperPopupLowest(hint[index], rows, font, dc);
     if (lowest != top) {
         logger.debug(where + "the popup starts at row " + top + ", its text fits under the row at " + lowest
             + " (-1: under none)");
@@ -687,7 +772,60 @@ function overlapHelperPopup(what as String, boxes as Array<Array>, hint as Array
         logger.debug(where + "'" + text + "' is on two lines where one fits");
         ok = false;
     }
+
+    // A text that marks its break breaks there where both lines fit, else
+    // most evenly. (Unmarked texts break as they always have; the start
+    // popup's texts without their mark are held to that in
+    // testOverlap_startPopupBreaksAtItsMark.)
+    var drawn = layout.testBannerLines();
+    if (drawn.size() == 2 && hint[index].find(ScreenLayout.BREAK_MARK) != null) {
+        var want = overlapHelperPopupBreak(hint[index], top, font, dc);
+        if (want == null || !(want[0] as String).equals(drawn[0]) || !(want[1] as String).equals(drawn[1])) {
+            logger.debug(where + "the popup breaks as '" + drawn[0] + "' / '" + drawn[1] + "', its rule gives "
+                + ((want == null) ? "no two lines that fit" : "'" + want[0] + "' / '" + want[1] + "'"));
+            ok = false;
+        }
+    }
     return ok;
+}
+
+//! The two lines `text` breaks into under a sheet whose top edge is at row
+//! t, by the popup's rule, from this test's own geometry: at its
+//! BREAK_MARK when both of those lines fit there, else at the space that
+//! keeps the wider line narrowest among the breaks that fit (the earlier
+//! space on a tie); null when no break fits.
+(:debug)
+function overlapHelperPopupBreak(text as String, t as Number, font as Graphics.FontDefinition,
+                                 dc as Graphics.Dc) as Array<String>? {
+    var fh = dc.getFontHeight(font);
+    var mark = text.find(ScreenLayout.BREAK_MARK);
+    if (mark != null) {
+        var a = text.substring(0, mark as Number) as String;
+        var b = text.substring((mark as Number) + 1, text.length()) as String;
+        if (overlapHelperPopupFitsAt([dc.getTextWidthInPixels(a, font), dc.getTextWidthInPixels(b, font)]
+                as Array<Number>, t, fh, dc)) {
+            return [a, b] as Array<String>;
+        }
+    }
+    var plain = ScreenLayout.unmarked(text);
+    var chars = plain.toCharArray();
+    var best = null as Array<String>?;
+    var bestWide = -1;
+    for (var i = 1; i < chars.size() - 1; i++) {
+        if (chars[i] != ' ') {
+            continue;
+        }
+        var a = plain.substring(0, i) as String;
+        var b = plain.substring(i + 1, chars.size()) as String;
+        var wa = dc.getTextWidthInPixels(a, font);
+        var wb = dc.getTextWidthInPixels(b, font);
+        var wide = (wa > wb) ? wa : wb;
+        if ((bestWide < 0 || wide < bestWide) && overlapHelperPopupFitsAt([wa, wb] as Array<Number>, t, fh, dc)) {
+            best = [a, b] as Array<String>;
+            bestWide = wide;
+        }
+    }
+    return best;
 }
 
 //! The exit popup's font, which every popup is drawn in: the largest of
@@ -714,9 +852,31 @@ function overlapHelperPopupFont(dc as Graphics.Dc) as Graphics.FontDefinition {
 //! room in `font` - on one line, or broken at a space onto two - or -1
 //! under none.
 (:debug)
-function overlapHelperPopupLowest(text as String, rows as Array<Array>, font as Graphics.FontDefinition,
+function overlapHelperPopupLowest(marked as String, rows as Array<Array>, font as Graphics.FontDefinition,
                                   dc as Graphics.Dc) as Number {
     var fh = dc.getFontHeight(font);
+    var text = ScreenLayout.unmarked(marked);
+    var mark = marked.find(ScreenLayout.BREAK_MARK);
+    if (mark != null) {
+        // A marked text needs the room for one line or for its own break,
+        // wherever that room exists.
+        var own = [[dc.getTextWidthInPixels(text, font)] as Array<Number>,
+            [dc.getTextWidthInPixels(marked.substring(0, mark as Number) as String, font),
+             dc.getTextWidthInPixels(marked.substring((mark as Number) + 1, marked.length()) as String, font)]
+                as Array<Number>] as Array<Array<Number> >;
+        var lowestOwn = -1;
+        for (var r = 0; r < rows.size(); r++) {
+            var t = rows[r][1] as Number;
+            for (var f = 0; f < own.size() && t > lowestOwn; f++) {
+                if (overlapHelperPopupFitsAt(own[f], t, fh, dc)) {
+                    lowestOwn = t;
+                }
+            }
+        }
+        if (lowestOwn >= 0) {
+            return lowestOwn;
+        }
+    }
     var forms = [[dc.getTextWidthInPixels(text, font)] as Array<Number>] as Array<Array<Number> >;
     var chars = text.toCharArray();
     for (var i = 1; i < chars.size() - 1; i++) {

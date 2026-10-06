@@ -167,7 +167,8 @@ test/
                         #   12/24 h x full/low battery (the start screen also x
                         #   vibration on/off), widest time, longest content;
                         #   the popup: whole rows only, the exit popup's font, the
-                        #   longest text that fits on one or two lines; and that
+                        #   longest text that fits on one or two lines, broken at
+                        #   its mark where it has one and both lines fit; and that
                         #   font, recomputed, printed for the protocol-set check
   StayAwakeTest.mc      # doze rules, rolling HR reference, nudge, back on guard
   DelegateTest.mc       # buttons/taps through the real delegate + view + detector
@@ -177,7 +178,7 @@ test/
   TraceTest.mc          # replays of recorded naps (how to record one is in the file)
   StartScreenTest.mc    # the AlarmCap formula, preview == the nap it starts, the live
                         #   minute refresh, the remembered duration, the button-only flow,
-                        #   "Vibration off" never locks START
+                        #   with vibration off START asks once, then begins
 resources/
   drawables/            # launcher_icon.png (60x60 default) + drawables.xml
   properties/           # Default property values
@@ -477,7 +478,7 @@ nothing is lost, one press is enough. Implemented in
 
 | Screen | BACK | START | UP / DOWN | Taps, swipes |
 |---|---|---|---|---|
-| Start | x2 within 4 s -> `exitApp()`; 1st -> popup `HINT_EXIT` "Press BACK again to exit" | start nap | +/-5 min | zones as below; right swipe = BACK |
+| Start | x2 within 4 s -> `exitApp()`; 1st -> popup `HINT_EXIT` "Press BACK again to exit" | start nap; with vibration off x2 within 4 s, 1st -> popup "Vibration off. START again to begin anyway" (`startOrAsk`) | +/-5 min | zones as below, a tap that starts asks like START; right swipe = BACK |
 | Menu (Test alarm), preview | closes / ends it -> start screen (1 press) | select / nothing | nothing | right swipe = BACK |
 | Calibrating (nap or Stay Awake) | 1 press -> `goBack`: `resetToStart()` + lock (no summary, no popup) | x2 -> `stopNap()`; 1st -> peek card | peek card | ignored |
 | Nap running (monitoring, sleeping), peek card | x2 -> `goBack`: `resetToStart()` + lock (nap ended, no summary); 1st -> popup "Press BACK again to end nap" | x2 -> `stopNap()` (cancel -> summary, also before any sleep); 1st -> peek card, footer "START again: stop + stats" | peek card | ignored |
@@ -530,8 +531,9 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   start again, so tapping the word "TAP" never shortens the nap.
 - `ConfirmPress` (owned by the view, window 4000 ms, `System.getTimer()` ms,
   elapsed-based so the 24.8-day timer wrap cannot leave it armed) has contexts
-  `CONTEXT_EXIT` (BACK on the start screen only) and `CONTEXT_STOP` (START
-  during a session): a press of the other key re-arms for its own context,
+  `CONTEXT_EXIT` (BACK on the start screen only), `CONTEXT_STOP` (START
+  during a session) and `CONTEXT_START` (START or a tap that starts, on the
+  start screen with vibration off): a press of the other key re-arms for its own context,
   so a BACK and a START never form a pair, in either direction (a BACK
   during a session goes through the same guard, in `CONTEXT_EXIT`, so a
   START in between re-arms for the stop pair and vice versa; `resetToStart`
@@ -544,8 +546,9 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   close the app). In Stay Awake every press also calls `noteUserAwake()`.
 - Popup hint: `view.showHint(HINT_EXIT)` after a first BACK on the start
   screen, `showHint(HINT_STOP)` after a first START on the alarm,
-  `showHint(backHintTexts(kind))` after a first BACK on a session screen;
-  `isHintShowing()`
+  `showHint(backHintTexts(kind))` after a first BACK on a session screen,
+  `showHint(startAnywayTexts())` after a first START on the start screen
+  with vibration off; `isHintShowing()`
   while that press is armed on its screen. Drawn by
   `ScreenLayout.setBanner(texts, font)` / `solveBanner` (owner's rules of
   2026-10-05, 1.2.0; until then a rounded box centred on the screen, which
@@ -570,12 +573,26 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   longest variant that fits in that font on one line, else broken at a
   space onto two (`bannerBreaks`: the most even break that fits); a shorter
   variant only when a longer one fits under no row even on two lines, never
-  a smaller font. On 2026-10-05 the longest variant fitted every popup
+  a smaller font. A text may mark the break it prefers with
+  `ScreenLayout.BREAK_MARK`, a `|` in strings.xml that reads as a space
+  (owner brief of 2026-10-06): it then breaks there, its sheet starting at
+  the lowest row where both of those lines fit (or where it fits on one
+  line), whenever they fit under any row; otherwise by the most even rule,
+  unchanged. Only the start popup's texts carry a mark, after "Vibration
+  off." (never between TAP and again); measured on all 43 on 2026-10-06, it breaks at the mark on 42, at every duration and battery, its sheet starting higher where its second line needs a wider row than an even break would (fenix847mm: row 260 instead of 307); on the 176 px Instinct 3 Solar its lines fit under no row and it breaks most evenly, as before. Every other popup
+  is unmarked and breaks as before. On 2026-10-05 the longest variant fitted every popup
   screen of all 43 products, on two lines on most (fēnix 8 47 mm: "Press
   BACK again" / "to end Stay Awake"). Variants:
   `HINT_EXIT` `["Press BACK again to exit", "BACK again to exit", "BACK again: exit"]`,
   `HINT_STOP` `["Press START again to stop", "START again to stop", "START again: stop"]`,
-  and from the resources `BackAgainNap` / `BackAgainAlarm` /
+  from the resources `StartAnywayButton` / `StartAnywayTouch` ("Vibration
+  off.|START again to begin anyway", the mark its preferred break, TAP
+  where the start hint says TAP),
+  with their Short, Tiny and Tiniest variants down to "Vibe off: START
+  again" (`startAnywayTexts()`, the popup of a first START with vibration
+  off; while it is up a tap anywhere on its sheet starts, as the footer's
+  "TAP to start" does, so a tap on words that say TAP never shortens the
+  nap), and from the resources `BackAgainNap` / `BackAgainAlarm` /
   `BackAgainStayAwake` ("Press BACK again to end nap / to stop alarm / to end
   Stay Awake") with their Short, Tiny and Tiniest variants down to
   "BACK x2: end" / "BACK x2: stop", which the 176 px Instinct showed on the
@@ -691,8 +708,11 @@ so with vibration switched off in the watch settings it would not be felt.
 no warning; tests replace the value with `testForceVibrateOn`). The same
 line as "Low battery" - XTINY, red, under the down arrow - at priority 98, so
 where only one of the two fits (the Instinct) "Vibration off" stays: a silent
-alarm is worse than a flat battery. It never blocks START, and no nap screen
-checks it. Measured on all 43 on 2026-10-06: alone it lays the screen out
+alarm is worse than a flat battery. A line is easy to overlook, so START
+asks as well (owner brief of 2026-10-06, the third): with vibration off the
+first START, or tap that starts, only shows the popup "Vibration off. START
+again to begin anyway" and a second one inside the 4 s window begins the
+nap; without it the start screen stays as it was. No nap screen checks it. Measured on all 43 on 2026-10-06: alone it lays the screen out
 exactly as "Low battery" alone does (the promise stays on 42, the 176 px
 Instinct excepted; the clock gives way on the four screens below 260 px).
 With both, "Low battery" shows on 42 (not on the Instinct), the promise
@@ -809,11 +829,16 @@ screen's clock and arrows, the lens clock). `ScreenLayout.testBoxes()` and
 display at its ink rows (15-85 %, the engine's own model). The popup is a
 layer of its own (it covers what is under it by design): its text inside
 its sheet and inside the display, and on every screen that shows one the
-three rules it is placed by (`overlapHelperPopup`): its top edge is the top
+rules it is placed by (`overlapHelperPopup`): its top edge is the top
 edge of a row and cuts none, the sheet runs to the bottom edge and starts
-no higher than its text needs; its font is the exit popup's (recomputed by
-the test's own geometry); the next longer variant would fit under no row
-in that font, not even on two lines. Checked by mutation on 2026-10-05: a
+no higher than its text needs (a marked text: than its own break needs,
+where that fits); its font is the exit popup's (recomputed by the test's
+own geometry); the next longer variant would fit under no row in that
+font, not even on two lines; and a marked text breaks at its mark when
+both lines fit there, else most evenly (`overlapHelperPopupBreak`). The
+start popup is checked with its mark and without it
+(`testOverlap_startPopupBreaksAtItsMark`, which also prints how many of
+its screens broke at the mark). Checked by mutation on 2026-10-05: a
 sheet starting on any pixel row, a text never broken onto two lines, and
 the font of the shortest exit text each fail the four OverlapTest functions
 that show a popup, on fenix847mm; every popup in XTINY fails them on
