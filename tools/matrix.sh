@@ -24,6 +24,10 @@
 # Device ids given as arguments limit the run to those devices; every id must
 # appear in the manifest.
 #
+# Before the first device, build and test runs read the code once with the
+# static test tools/no-sound.sh: the alarm is vibration only, and a Monkey C
+# file that names a sound API fails the run there, with its lines printed.
+#
 # A test run that covers the whole protocol set (--protocol, or every product)
 # then checks the set itself: it must hold a product whose popups are drawn in
 # TINY and one whose popups are drawn in XTINY, each font as the suite
@@ -32,7 +36,8 @@
 # Exit codes
 #   0  every device passed; devices that were skipped are named in the summary
 #   1  a device failed: its full output was printed and the run stopped there;
-#      or the protocol set has no product left for one of the popup fonts
+#      or the protocol set has no product left for one of the popup fonts;
+#      or the static test found a sound API in the code, before any device
 #   2  the run never started (bad usage, or no manifest / SDK / developer key)
 #
 # Environment
@@ -421,6 +426,19 @@ fi
 printf '\n'
 printf 'SDK      %s\n' "${sdk##*/}"
 printf 'logs     %s\n' "$out"
+
+# The static test reads the tree, not a device: once, before the first one.
+static_out=$(PROJ_DIR="$proj" "$here/no-sound.sh" 2>&1)
+static_rc=$?
+case "$static_rc" in
+    0) printf 'static   %s\n' "${static_out#no-sound.sh: }" ;;
+    1) rule
+       printf '%s\n' "$static_out"
+       rule
+       printf 'The static test FAILED before any device was built: tools/no-sound.sh exited with 1.\n'
+       exit "$EXIT_FAILED" ;;
+    *) die "tools/no-sound.sh could not run: $static_out" ;;
+esac
 rule
 
 missing=""
