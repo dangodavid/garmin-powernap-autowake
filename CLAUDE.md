@@ -8,6 +8,11 @@
 - States that need real time are captured on ONE device; for the rest the test speaks (owner, 2026-10-05). Asleep, the alarm and the summary only exist after a nap played in real time through a FIT recording: one run, on `fenix847mm`, before publishing and only when those screens changed - never in a pull request, never a sweep of several devices. The proof across devices is the layout test on every product of the manifest; how many screenshots a change gets, and the 15-minute budget of a pull request, are the verification levels of CONTRIBUTING.md.
 - Supported devices are read from `manifest.xml`, never from a hardcoded list.
 - New tests are for logic, not for texts and colours.
+- A setting taken out of the app needs no migration code: SDK 9.1 drops the
+  keys the build no longer declares from the stored settings by itself, at
+  the app's first stop. Seen with 1.1.0's `alarmType` on 2026-10-06: the
+  runtime refuses the undeclared key, and the settings file no longer holds
+  it once the app has stopped (`testReg_oldAlarmTypeSettingChangesNothing`).
 - Every build meant for a wrist carries its commit in its file name
   (`PowerNap-<version>-<sha>-<device>.prg`, the file copied to `GARMIN/APPS/`);
   only the store package `PowerNap-<version>.iq`, built from `main`, is named
@@ -62,13 +67,9 @@ upload form - so the only authoritative answer to "what is live" is the app's
 own page in the Connect IQ store and its entry in the developer dashboard.
 Look there before trusting any number written down here.
 
-As of 2026-10-05: **published = 1.1.0**, approved in the Connect IQ store on
-2026-09-20: the code of `main` at `1d2c860`, tagged `v1.1.0`, with its GitHub
-release (notes = the 1.1.0 section of CHANGELOG.md). Stay Awake, the ramp
-table, "Test alarm", the BACK key model and "Alarm by" are what users run;
-every "v1.1.0" and "since 1.1.0" note below means that store version. 1.2.0
-is the next one (PR #4 so far: the start screen's clock above the title,
-the menu's words, OverlapTest).
+As of 2026-10-06: **published = 1.1.0** (in the store since 2026-09-20;
+`v1.1.0` at `1d2c860`), **in progress = 1.2.0**. Every "v1.1.0" and "since
+1.1.0" note below means that store version.
 
 **Every build meant for a wrist carries its commit in its file name**:
 `PowerNap-<version>-<short sha>-<device>.prg` for a sideload (that is the
