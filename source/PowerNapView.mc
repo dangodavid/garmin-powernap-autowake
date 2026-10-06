@@ -74,6 +74,8 @@ class PowerNapView extends WatchUi.View {
     private var _backHintNap as Array<String>? = null;
     private var _backHintAlarm as Array<String>? = null;
     private var _backHintStayAwake as Array<String>? = null;
+    // The popup of a first START with vibration off (strings.xml, loaded once).
+    private var _startAnyway as Array<String>? = null;
     private var _hintTexts as Array<String>? = null;
     // The font of every popup, the exit popup's (popupFont), measured once.
     private var _popupFont as Graphics.FontDefinition? = null;
@@ -104,6 +106,9 @@ class PowerNapView extends WatchUi.View {
     // The start screen's footer hint, read from strings.xml on first use
     // (it depends on the watch having a touchscreen, which never changes).
     private var _startHint as Array<String>? = null;
+    // While the popup of a first START with vibration off is up: the top
+    // edge of its sheet, below which a tap starts the nap; else -1.
+    private var _tapSheetMinY as Number = -1;
 
     // The widest "HH:MM" this watch can draw, measured once per 12/24 h
     // format: what the start screen's clock is shown or hidden on.
@@ -301,6 +306,11 @@ class PowerNapView extends WatchUi.View {
         return _hintTexts != null && isArmed(_hintContext);
     }
 
+    //! The popup of a first START with vibration off is showing.
+    private function startAnywayShowing() as Boolean {
+        return _hintContext == ConfirmPress.CONTEXT_START && isHintShowing();
+    }
+
     //! Show the "so far" card for a few seconds (the nap keeps running).
     function showPeek() as Void {
         _peeking = true;
@@ -338,8 +348,13 @@ class PowerNapView extends WatchUi.View {
     //! Start-screen tap: +1 = add 5 min, -1 = remove 5 min, 0 = start.
     //! Above the number adds, the number and its label start, below them
     //! removes, and the "TAP to begin" hint at the bottom starts again (a
-    //! tap on the words that say "tap" must not shorten the nap).
+    //! tap on the words that say "tap" must not shorten the nap). For the
+    //! same reason, while "Vibration off. TAP again to begin anyway" is up,
+    //! a tap anywhere on its sheet starts.
     function tapActionAt(y as Number) as Number {
+        if (_tapSheetMinY >= 0 && y >= _tapSheetMinY && startAnywayShowing()) {
+            return 0;
+        }
         var plusMax = _tapPlusMaxY;
         var minusMin = _tapMinusMinY;
         if (plusMax < 0 || minusMin < 0) {
@@ -541,6 +556,8 @@ class PowerNapView extends WatchUi.View {
         _tapPlusMaxY = lines[1].y;
         _tapMinusMinY = lines[2].y + lines[2].slotH;
         _tapStartMinY = L.getFooterY();
+        var sheet = startAnywayShowing() ? L.getBannerBox() : null;
+        _tapSheetMinY = (sheet != null) ? (sheet as Array<Number>)[1] : -1;
         return L;
     }
 
@@ -985,9 +1002,10 @@ class PowerNapView extends WatchUi.View {
 
     //! Start screen only: the alarm only vibrates, so with vibration switched
     //! off in the watch settings it would not be felt, and the wearer has to
-    //! know before falling asleep. It does not stop START (the setting is the
-    //! wearer's choice), and no nap screen checks it. Above "Low battery"
-    //! (97): where only one of the two fits, a silent alarm is the worse news.
+    //! know before falling asleep. A line is easy to overlook, so START asks
+    //! once more as well (PowerNapDelegate.startOrAsk), and no nap screen
+    //! checks it. Above "Low battery" (97): where only one of the two fits,
+    //! a silent alarm is the worse news.
     private function addVibrationWarning(L as ScreenLayout) as Void {
         if (vibrationOff()) {
             L.addText(["Vibration off", "Vibe off"] as Array<String>,
@@ -1099,6 +1117,23 @@ class PowerNapView extends WatchUi.View {
                     loadText(Rez.Strings.BackAgainNapTiniest)] as Array<String>;
         }
         return _backHintNap as Array<String>;
+    }
+
+    //! The popup of a first START (or tap) with vibration switched off:
+    //! "Vibration off. START again to begin anyway", with the verb of this
+    //! watch's start hint (TAP on a touchscreen), longest variant first.
+    //! Loaded from strings.xml on first use and kept.
+    function startAnywayTexts() as Array<String> {
+        if (_startAnyway == null) {
+            _startAnyway = hasTouch()
+                ? [loadText(Rez.Strings.StartAnywayTouch), loadText(Rez.Strings.StartAnywayTouchShort),
+                    loadText(Rez.Strings.StartAnywayTouchTiny), loadText(Rez.Strings.StartAnywayTouchTiniest)]
+                    as Array<String>
+                : [loadText(Rez.Strings.StartAnywayButton), loadText(Rez.Strings.StartAnywayButtonShort),
+                    loadText(Rez.Strings.StartAnywayButtonTiny), loadText(Rez.Strings.StartAnywayButtonTiniest)]
+                    as Array<String>;
+        }
+        return _startAnyway as Array<String>;
     }
 
     //! The start screen's footer: what starts a nap on this watch. Loaded
@@ -1227,8 +1262,8 @@ class PowerNapView extends WatchUi.View {
     }
 
     //! Vibration is switched off in the watch settings. A watch that does
-    //! not say gets no warning.
-    private function vibrationOff() as Boolean {
+    //! not say gets no warning, and its START is not asked twice.
+    function vibrationOff() as Boolean {
         return vibrateOnSetting() == false;
     }
 

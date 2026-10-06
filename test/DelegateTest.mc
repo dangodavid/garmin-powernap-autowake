@@ -50,6 +50,9 @@ class DelegateRig {
         detector.testUseFakeRuntime();
         view = new PowerNapView(detector, alarm);
         view.testSetPendingDuration(pending);
+        // Vibration on, whatever the simulator's settings say: with it off
+        // the first START only asks (tests switch it off explicitly).
+        view.testForceVibrateOn(true);
         delegate = new PowerNapDelegate(view, detector, alarm);
         delegate.testDisableExit();
     }

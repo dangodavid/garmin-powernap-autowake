@@ -75,6 +75,9 @@ const OVERLAP_SESSION_HOUR = 10;
 //! lays it out and with the debug label a debug build adds, each also with
 //! the exit popup over it, and each with either warning, both or neither:
 //! vibration on and off in the watch settings, a full and a low battery.
+//! With vibration off, also with the popup the first START shows there
+//! ("Vibration off. START again to begin anyway"), with a full and a low
+//! battery.
 (:test)
 function testOverlap_startScreen(logger as Test.Logger) as Boolean {
     var dc = layoutHelperDc();
@@ -91,10 +94,16 @@ function testOverlap_startScreen(logger as Test.Logger) as Boolean {
         for (var i = 0; i < durations.size(); i++) {
             v.testSetPendingDuration(durations[i]);
             var name = "start " + durations[i] + " min" + build;
-            ok = overlapHelperStart(name, v, d, dc, times, null, logger) && ok;
+            ok = overlapHelperStart(name, v, d, dc, times, null, false, logger) && ok;
             v.pressConfirm(ConfirmPress.CONTEXT_EXIT);
             v.showHint(PowerNapView.HINT_EXIT);
-            ok = overlapHelperStart(name + " + exit popup", v, d, dc, times, PowerNapView.HINT_EXIT, logger) && ok;
+            ok = overlapHelperStart(name + " + exit popup", v, d, dc, times, PowerNapView.HINT_EXIT, false, logger)
+                && ok;
+            v.testAdvanceMs(4100);
+            v.pressConfirm(ConfirmPress.CONTEXT_START);
+            v.showHint(v.startAnywayTexts());
+            ok = overlapHelperStart(name + " + start popup", v, d, dc, times, v.startAnywayTexts(), true, logger)
+                && ok;
             v.testAdvanceMs(4100);
         }
     }
@@ -439,17 +448,19 @@ function overlapHelperAlarm(name as String, d as SleepDetector, dc as Graphics.D
 
 // -- Inputs ---------------------------------------------------------------------
 
-//! The start screen with vibration on and off in the watch settings, in
-//! both formats and with both batteries - so with no warning, either one or
-//! both - its clock and its "Alarm by" promise both at the widest time of
-//! day: the detector is pinned so that the promise lands on it. `hint`: the
-//! texts of the popup showing over it, or null.
+//! The start screen with vibration on and off in the watch settings (only
+//! off: `vibrationOffOnly`), in both formats and with both batteries - so
+//! with no warning, either one or both - its clock and its "Alarm by"
+//! promise both at the widest time of day: the detector is pinned so that
+//! the promise lands on it. `hint`: the texts of the popup showing over it,
+//! or null.
 (:debug)
 function overlapHelperStart(name as String, v as PowerNapView, d as SleepDetector, dc as Graphics.Dc,
-                            times as Array<Number>, hint as Array<String>?, logger as Test.Logger) as Boolean {
+                            times as Array<Number>, hint as Array<String>?, vibrationOffOnly as Boolean,
+                            logger as Test.Logger) as Boolean {
     var nap = v.testGetPendingDuration();
     var ok = true;
-    for (var vib = 0; vib < 2; vib++) {
+    for (var vib = vibrationOffOnly ? 1 : 0; vib < 2; vib++) {
         v.testForceVibrateOn(vib == 0);
         var vibName = name + ((vib == 0) ? "" : ", vibration off");
         for (var f = 0; f < 2; f++) {
