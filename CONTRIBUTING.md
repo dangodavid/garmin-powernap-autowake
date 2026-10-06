@@ -416,7 +416,7 @@ out - is a `.prg`, and carries its commit in its file name, so that a week
 later it still says what it is:
 
 ```bash
-monkeyc -o "bin/PowerNap-1.1.0-$(git rev-parse --short HEAD)-fenix8pro47mm.prg" \
+monkeyc -o "bin/PowerNap-1.2.0-$(git rev-parse --short HEAD)-fenix8pro47mm.prg" \
   -f monkey.jungle -d fenix8pro47mm -y ~/developer_key.der -r -l 3
 ```
 

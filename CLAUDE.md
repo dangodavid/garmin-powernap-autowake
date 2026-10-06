@@ -225,6 +225,7 @@ CHANGELOG.md            # what changed for the wearer, from 1.1.0 on (not filled
 docs/history/           # superseded documents, kept for provenance only; each one
                         #   opens with a header saying CLAUDE.md takes precedence
   PLAN-v1.1.0.md        #   the v1.1.0 brief (W1-W7, D1-D4), finished 2026-09-19
+  STORE-1.2.0.md        #   the 1.2.0 texts for the store's upload form ("What's new")
 ```
 
 ## Key Configuration (properties.xml defaults)

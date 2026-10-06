@@ -27,8 +27,8 @@ This file starts at 1.1.0; it is not filled in backwards.
 - **"Vibration off" on the start screen** when vibration is switched off in
   the watch settings: the alarm could not be felt, and now you know before
   you fall asleep. START (or a tap) then asks once more - "Vibration off.
-  START again to begin anyway" - and only a second press within 4 seconds
-  begins the nap; without it nothing starts.
+  START again to begin anyway", or TAP again on a touchscreen - and only a
+  second press within 4 seconds begins the nap; without it nothing starts.
 - **A gentler start to the alarm**: it now opens with two short pulses at
   7 % (the faintest felt lying down when this was measured on a fēnix 8
   Pro) instead of two at 22 %, and climbs to 22 % through 9, 11, 13, 16
