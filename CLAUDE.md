@@ -167,7 +167,8 @@ test/
                         #   12/24 h x full/low battery (the start screen also x
                         #   vibration on/off), widest time, longest content;
                         #   the popup: whole rows only, the exit popup's font, the
-                        #   longest text that fits on one or two lines; and that
+                        #   longest text that fits on one or two lines, broken at
+                        #   its mark where it has one and both lines fit; and that
                         #   font, recomputed, printed for the protocol-set check
   StayAwakeTest.mc      # doze rules, rolling HR reference, nudge, back on guard
   DelegateTest.mc       # buttons/taps through the real delegate + view + detector
@@ -572,13 +573,21 @@ is BACK". Opening the menu or the preview forgets an armed BACK
   longest variant that fits in that font on one line, else broken at a
   space onto two (`bannerBreaks`: the most even break that fits); a shorter
   variant only when a longer one fits under no row even on two lines, never
-  a smaller font. On 2026-10-05 the longest variant fitted every popup
+  a smaller font. A text may mark the break it prefers with
+  `ScreenLayout.BREAK_MARK`, a `|` in strings.xml that reads as a space
+  (owner brief of 2026-10-06): it then breaks there, its sheet starting at
+  the lowest row where both of those lines fit (or where it fits on one
+  line), whenever they fit under any row; otherwise by the most even rule,
+  unchanged. Only the start popup's texts carry a mark, after "Vibration
+  off." (never between TAP and again); measured on all 43 on 2026-10-06, it breaks at the mark on 42, at every duration and battery, its sheet starting higher where its second line needs a wider row than an even break would (fenix847mm: row 260 instead of 307); on the 176 px Instinct 3 Solar its lines fit under no row and it breaks most evenly, as before. Every other popup
+  is unmarked and breaks as before. On 2026-10-05 the longest variant fitted every popup
   screen of all 43 products, on two lines on most (fēnix 8 47 mm: "Press
   BACK again" / "to end Stay Awake"). Variants:
   `HINT_EXIT` `["Press BACK again to exit", "BACK again to exit", "BACK again: exit"]`,
   `HINT_STOP` `["Press START again to stop", "START again to stop", "START again: stop"]`,
   from the resources `StartAnywayButton` / `StartAnywayTouch` ("Vibration
-  off. START again to begin anyway", TAP where the start hint says TAP),
+  off.|START again to begin anyway", the mark its preferred break, TAP
+  where the start hint says TAP),
   with their Short, Tiny and Tiniest variants down to "Vibe off: START
   again" (`startAnywayTexts()`, the popup of a first START with vibration
   off; while it is up a tap anywhere on its sheet starts, as the footer's
@@ -820,11 +829,16 @@ screen's clock and arrows, the lens clock). `ScreenLayout.testBoxes()` and
 display at its ink rows (15-85 %, the engine's own model). The popup is a
 layer of its own (it covers what is under it by design): its text inside
 its sheet and inside the display, and on every screen that shows one the
-three rules it is placed by (`overlapHelperPopup`): its top edge is the top
+rules it is placed by (`overlapHelperPopup`): its top edge is the top
 edge of a row and cuts none, the sheet runs to the bottom edge and starts
-no higher than its text needs; its font is the exit popup's (recomputed by
-the test's own geometry); the next longer variant would fit under no row
-in that font, not even on two lines. Checked by mutation on 2026-10-05: a
+no higher than its text needs (a marked text: than its own break needs,
+where that fits); its font is the exit popup's (recomputed by the test's
+own geometry); the next longer variant would fit under no row in that
+font, not even on two lines; and a marked text breaks at its mark when
+both lines fit there, else most evenly (`overlapHelperPopupBreak`). The
+start popup is checked with its mark and without it
+(`testOverlap_startPopupBreaksAtItsMark`, which also prints how many of
+its screens broke at the mark). Checked by mutation on 2026-10-05: a
 sheet starting on any pixel row, a text never broken onto two lines, and
 the font of the shortest exit text each fail the four OverlapTest functions
 that show a popup, on fenix847mm; every popup in XTINY fails them on
