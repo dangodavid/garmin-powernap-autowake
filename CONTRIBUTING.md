@@ -484,7 +484,7 @@ not the number of assertions, and five files multiply what one function checks:
 - `QuietOnsetTest.mc` asserts after **every simulated second** of each
   scenario, until its alarm is due;
 - `AlarmManagerTest.mc` walks the whole `RAMP` table inside single functions, so
-  one test covers all fifteen steps; `StayAwakeTest.mc` walks the doze alarm
+  one test covers all sixteen steps; `StayAwakeTest.mc` walks the doze alarm
   ring by ring.
 
 So the function count is a floor, not a measure of coverage: a single-digit file
@@ -495,7 +495,7 @@ can be carrying more assertions than a file with thirty functions.
 | `OnsetTest.mc` | Calibration and sleep onset: the HR baseline as the mean of the first two minutes, what makes a minute "still" (mean motion below the threshold and at most 5 active seconds), and the two ways in - 2 still minutes with the HR drop, or 5 still minutes without it. Onset is the decision the whole nap hangs off; detect it early and the alarm rings early. |
 | `WakeTest.mc` | Wake episodes and re-entry: what ends a sleep segment (10 active seconds, a 100 mg minute mean, or a 10 BPM rise held for 2 minutes), that the countdown keeps running through a wake, and that re-entry takes 2 still minutes. The segment arithmetic here is where the summary's "actual sleep" comes from. |
 | `TimingTest.mc` | Wall-clock alarm timing: the planned end, the hard deadline cap from `AlarmCap`, and the smart-wake window. The clock is frozen on a whole minute, so every expectation is exact. This is the file that holds the promise the start screen makes - the alarm never rings after "Alarm by HH:MM". |
-| `AlarmManagerTest.mc` | The escalation ramp: the owner's constraints (at least 8 steps below full; the first step and the first ring exactly the pulse calibrated on the wrist, 7 % for 120 ms; intensity and pulse never decreasing, and no step rising more than the 1.1.0 ramp's largest, 15 points; the maximum and every step from 22 % up as in 1.1.0; the wait never growing; full strength by 178 s, 1.1.0's 118 s + 60 s, and not before 100 s - the limits computed from the 1.1.0 table kept in the test), the exact ring schedule, the persistent phase, the nudge, the backlight rule and the "Test alarm" preview. Tuning the table is safe only because these tests fail when a change leaves the approved envelope; each limit was checked by mutation on 2026-10-06. |
+| `AlarmManagerTest.mc` | The escalation ramp: the owner's constraints (at least 8 steps below full; the first step and the first ring exactly the pulse calibrated on the wrist, 7 % for 120 ms; intensity and pulse never decreasing, every step 8-30 % above the one before it up to full strength, and no step rising more than the 1.1.0 ramp's largest, 15 points; the maximum and every step from 22 % up as in 1.1.0; the wait never growing; full strength by 178 s, 1.1.0's 118 s + 60 s, and not before 100 s - the limits computed from the 1.1.0 table kept in the test), the exact ring schedule, the persistent phase, the nudge, the backlight rule and the "Test alarm" preview: the same rings 3 s apart, each step's screen showing when that step starts in the real alarm, held to an alarm rung ring by ring. Tuning the table is safe only because these tests fail when a change leaves the approved envelope; each limit was checked by mutation on 2026-10-06. |
 | `SummaryTest.mc` | Finish and cancel from every state, the statistics (planned completion, sleep efficiency, actual sleep, wake episodes, average and minimum sleep HR), that they freeze once the nap has ended, and `RingMath`'s angle maths for the progress ring. |
 | `RegressionTest.mc` | One test per confirmed review finding: HR-plateau wake ping-pong, the sleep-HR fold exclusion, frozen settings and clamping, the app lifecycle (`onInactive`/`onActive`), the alarm on a watch that cannot vibrate, the Alarm Type value a watch keeps from 1.1.0 (it changes nothing), the per-phase vibration patterns, `ringNow()`, and the two-press guard. These exist so that a fixed bug cannot come back quietly. |
 | `LayoutTest.mc` | Every screen state - start, calibrating, monitoring, sleeping, alarm, summary, Stay Awake, peek card, alarm preview - laid out against a `Dc` of the running device, each also with the popup it can show over it. It asserts that no text is truncated, that nothing leaves the screen or the round chord, and that the layout stays inside its work budget, because every screen redraws at 1 Hz and the Instinct watchdog is 240k bytecodes per event. Its inputs are its own: it forces the battery level and the vibration setting and pins the clock, so a screen never passes or fails on what the simulator happened to be that day. It also holds the start screen's "Vibration off" to its rule: shown exactly when the watch reports vibration off, never on a nap screen, and the one that stays when it and "Low battery" do not both fit. |
@@ -532,7 +532,7 @@ only it named 83 lines.
 | `PowerNapView.mc` | Start screen + 4 nap screens built as prioritised line lists; live 1 Hz refresh during a nap, minute-aligned refresh on the start screen; remembers the duration in `Application.Storage`; owns the two-press `ConfirmPress` |
 | `PowerNapDelegate.mc` | `InputDelegate` (not `BehaviorDelegate`): routes physical button presses and tap coordinates to view actions |
 | `SleepDetector.mc` | Core engine: wall-clock timing, per-minute sensor aggregation, onset / wake / smart-wake logic, deadline alarm |
-| `AlarmManager.mc` | Ramp-table crescendo (14 steps to full strength in 168 s, then persistent); the Stay Awake doze alarm and nudge on their own copy of the 1.1.0 rows; restarts its own timer when the wait changes; AMOLED-safe backlight handling; quiet onset gate |
+| `AlarmManager.mc` | Ramp-table crescendo (15 steps to full strength in 178 s, then persistent); the Stay Awake doze alarm and nudge on their own copy of the 1.1.0 rows; restarts its own timer when the wait changes; AMOLED-safe backlight handling; quiet onset gate |
 | `ScreenLayout.mc` | Line layout that fits any screen (drops/shrinks by priority, round chord, Instinct subscreen) + `Palette` |
 | `ConfirmPress.mc` | Two-press confirmation for stopping a nap or the alarm |
 | `RingMath.mc` | Angle math for the summary ring |
@@ -590,13 +590,13 @@ One table, `RAMP`, one row per step `[intensity %, pulse ms, pulses, gap ms, int
 | Step | Intensity | Pulses | Wait after each ring | First ring at |
 |------|-----------|--------|----------------------|---------------|
 | 0 | 7 % | 1 × 120 ms | 10 s | 0 s (the pulse calibrated on the wrist, 2026-10-06) |
-| 1-4 | 10 → 19 % | 1 × 120 ms, one ring each | 10 s | 10 → 40 s |
-| 5 | 22 % | 2 × 120 ms | 10 s | 50 s (the 1.1.0 ramp from here on, unchanged) |
-| 6-12 | 28 → 92 % | 2-3 × 140-320 ms | 9 → 5 s | 70 → 158 s |
-| 13 | 100 % | 3 × 350 ms | 5 s | 168 s (36 rings = 3 min) |
-| 14 (persistent) | 100 % | 3 × 350 ms | 30 s | 348 s |
+| 1-5 | 9, 11, 13, 16, 19 % | 1 × 120 ms, one ring each | 10 s | 10 → 50 s |
+| 6 | 22 % | 2 × 120 ms | 10 s | 60 s (the 1.1.0 ramp from here on, unchanged) |
+| 7-13 | 28 → 92 % | 2-3 × 140-320 ms | 9 → 5 s | 80 → 168 s |
+| 14 | 100 % | 3 × 350 ms | 5 s | 178 s (36 rings = 3 min) |
+| 15 (persistent) | 100 % | 3 × 350 ms | 30 s | 358 s |
 
-The wait after a ring is that of its step; when it changes the repeat timer is restarted. The backlight comes on from 50 %. Display phases: 0 below 40 %, 1 below 65 %, 2 below 100 %, 3 at full. The Stay Awake doze alarm and nudge do not read `RAMP`: they ring their own copy of the 1.1.0 rows they used (`DOZE_RAMP`, from 63 %; `NUDGE_ROW`, 35 %).
+Every step is 8-30 % above the one before it, up to full strength. The wait after a ring is that of its step; when it changes the repeat timer is restarted. The backlight comes on from 50 %. Display phases: 0 below 40 %, 1 below 65 %, 2 below 100 %, 3 at full. The Stay Awake doze alarm and nudge do not read `RAMP`: they ring their own copy of the 1.1.0 rows they used (`DOZE_RAMP`, from 63 %; `NUDGE_ROW`, 35 %).
 
 **AMOLED rule:** the vibration runs first, in its own try block; `Attention.backlight(true)` runs last, in its own try block, only from the 50 % step and only on the first two such rings and every 6th after. Burn-in protected displays throw after the display has been held on for about a minute; a backlight call placed before the vibration in a shared try block silences the alarm.
 
