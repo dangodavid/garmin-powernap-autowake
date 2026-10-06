@@ -26,7 +26,9 @@ This file starts at 1.1.0; it is not filled in backwards.
   wrong sound is worse than none.
 - **"Vibration off" on the start screen** when vibration is switched off in
   the watch settings: the alarm could not be felt, and now you know before
-  you fall asleep. It is a warning only; the nap still starts.
+  you fall asleep. START (or a tap) then asks once more - "Vibration off.
+  START again to begin anyway" - and only a second press within 4 seconds
+  begins the nap; without it nothing starts.
 
 ## 1.1.0 - 2026-09-20
 

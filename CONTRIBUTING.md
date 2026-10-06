@@ -475,7 +475,8 @@ not the number of assertions, and five files multiply what one function checks:
   sweep runs the same functions once per product in the manifest;
 - `OverlapTest.mc` does the same, and checks each screen in both clock formats,
   with a full and a low battery (the start screen also with vibration on and
-  off), and every popup and armed footer it can carry -
+  off, and then also with the popup of a first START), and every popup and
+  armed footer it can carry -
   some four hundred screens per device in six functions, plus a seventh that
   only measures the exit popup's font for the protocol-set check;
 - `InvariantTest.mc` runs a handful of fixed seeds per function and asserts
@@ -504,7 +505,7 @@ can be carrying more assertions than a file with thirty functions.
 | `MotionTest.mc` | `MotionMath.batchMotion` on raw 25-sample accelerometer batches and the path that turns one batch into one motion second: null axes skipped, ragged arrays, too few usable samples, and above all that a constant sensor offset changes nothing. The old measure read a watch with a +40 mg offset as permanently moving, so a still sleeper was never still on the High setting. |
 | `InvariantTest.mc` | Seeded random naps from a small Markov model (awake -> drowsy -> asleep, with wakes, stirs, HR dropouts and minutes with no accelerometer data), checked after every simulated second against the rules that must hold whatever the sensors say - above all that the alarm always fires and never after the deadline. Plus negative tests. A failure prints its seed, so the case replays exactly. |
 | `TraceTest.mc` | Replays of naps recorded on a real watch, minute by minute through `testReplayMinute`. The file header documents how to record one. It exists so that a nap that behaved wrong on the wrist becomes a permanent test instead of an anecdote. |
-| `StartScreenTest.mc` | The start screen's promise: that `AlarmCap` is the single formula behind both the preview and the running nap, so a nap started in the minute the preview was drawn in keeps exactly that time; the minute-aligned refresh; the duration remembered in `Application.Storage`; that the whole flow can be driven from the buttons alone; and that "Vibration off" warns without locking START. |
+| `StartScreenTest.mc` | The start screen's promise: that `AlarmCap` is the single formula behind both the preview and the running nap, so a nap started in the minute the preview was drawn in keeps exactly that time; the minute-aligned refresh; the duration remembered in `Application.Storage`; that the whole flow can be driven from the buttons alone; and that with vibration off START asks once before it begins the nap - the first press only shows the popup, a second inside 4 s begins, after the window nothing does - while with vibration on it begins at once. |
 
 **The static test.** One test reads the code instead of running it:
 `tools/no-sound.sh`. Since 1.2.0 the alarm only vibrates - the sound did not
